@@ -4,15 +4,27 @@
   background: #eef2f7;
 }
 
-* { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
+* {
+  box-sizing: border-box;
 }
 
-button, input { font: inherit; }
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 320px;
+}
+
+body {
+  overflow: hidden;
+}
+
+button,
+input {
+  font: inherit;
+}
 
 button {
   border: 1px solid #cad2df;
@@ -23,16 +35,19 @@ button {
 }
 
 button:disabled {
-  opacity: .45;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
 .app-shell {
-  min-height: 100vh;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .topbar {
   height: 76px;
+  flex: 0 0 76px;
   background: #121a2a;
   color: white;
   display: flex;
@@ -48,11 +63,12 @@ button:disabled {
 
 .eyebrow {
   font-size: 11px;
-  letter-spacing: .12em;
-  opacity: .7;
+  letter-spacing: 0.12em;
+  opacity: 0.7;
 }
 
-.upload-button, .drop-zone {
+.upload-button,
+.drop-zone {
   cursor: pointer;
 }
 
@@ -71,15 +87,17 @@ button:disabled {
 
 .workspace {
   display: grid;
-  grid-template-columns: 280px 1fr;
-  min-height: calc(100vh - 76px);
+  grid-template-columns: 280px minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .sidebar {
+  min-height: 0;
+  overflow-y: auto;
   background: white;
   border-right: 1px solid #d8dee8;
   padding: 18px;
-  overflow-y: auto;
 }
 
 .sidebar h2 {
@@ -94,7 +112,7 @@ button:disabled {
   margin-bottom: 12px;
 }
 
-.sidebar input {
+.sidebar input:not(.zoom-slider) {
   width: 100%;
   margin-top: 6px;
   border: 1px solid #cad2df;
@@ -118,6 +136,60 @@ button:disabled {
   font-size: 13px;
 }
 
+.wide-control {
+  width: 100%;
+}
+
+.rotate-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.zoom-control {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid #e1e6ee;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.zoom-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.zoom-slider {
+  width: 100%;
+  margin: 0;
+  cursor: pointer;
+  accent-color: #2f6feb;
+}
+
+.zoom-slider:disabled {
+  cursor: not-allowed;
+}
+
+.zoom-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  color: #7c899d;
+  font-size: 10px;
+}
+
+.view-status {
+  margin-top: 8px;
+  text-align: center;
+  color: #718096;
+  font-size: 11px;
+}
+
 .future-tool {
   width: 100%;
   margin-bottom: 8px;
@@ -133,21 +205,29 @@ button:disabled {
 
 .drawing-stage {
   min-width: 0;
-  overflow: auto;
+  min-height: 0;
   position: relative;
+  overflow: hidden;
+  user-select: none;
+  touch-action: none;
+  cursor: grab;
   background:
     linear-gradient(#dfe5ec 1px, transparent 1px),
     linear-gradient(90deg, #dfe5ec 1px, transparent 1px),
     #eef2f7;
   background-size: 24px 24px;
-  padding: 28px;
+}
+
+.drawing-stage.is-panning {
+  cursor: grabbing;
 }
 
 .drop-zone {
-  min-height: 440px;
+  position: absolute;
+  inset: 28px;
   border: 2px dashed #a9b6c9;
   border-radius: 16px;
-  background: rgba(255,255,255,.8);
+  background: rgba(255, 255, 255, 0.82);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -165,32 +245,48 @@ button:disabled {
   color: #728199;
 }
 
-.canvas-wrap {
-  width: max-content;
-  min-width: 100%;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
+.drawing-positioner {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform-origin: center center;
+  will-change: transform;
 }
 
 canvas {
+  display: block;
   background: white;
-  box-shadow: 0 8px 30px rgba(17, 24, 39, .12);
+  box-shadow: 0 8px 30px rgba(17, 24, 39, 0.14);
 }
 
 @media (max-width: 800px) {
+  body {
+    overflow: auto;
+  }
+
+  .app-shell {
+    height: auto;
+    min-height: 100%;
+  }
+
+  .topbar {
+    height: auto;
+    min-height: 76px;
+    padding: 14px;
+    gap: 14px;
+  }
+
   .workspace {
     grid-template-columns: 1fr;
   }
 
   .sidebar {
+    overflow: visible;
     border-right: 0;
     border-bottom: 1px solid #d8dee8;
   }
 
-  .topbar {
-    height: auto;
-    padding: 14px;
-    gap: 14px;
+  .drawing-stage {
+    min-height: 640px;
   }
 }

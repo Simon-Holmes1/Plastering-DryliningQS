@@ -7,19 +7,43 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 ).toString()
 
 type PdfDoc = Awaited<ReturnType<typeof pdfjsLib.getDocument>['promise']>
-type FitMode = 'manual' | 'page' | 'width'
+type ViewMode = 'fit-page' | 'manual'
+
+type Pan = {
+  x: number
+  y: number
+}
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const stageRef = useRef<HTMLElement | null>(null)
+  const renderTaskRef = useRef<any>(null)
+
+  const panStartRef = useRef({
+    active: false,
+    pointerId: -1,
+    clientX: 0,
+    clientY: 0,
+    panX: 0,
+    panY: 0,
+  })
 
   const [pdf, setPdf] = useState<PdfDoc | null>(null)
   const [fileName, setFileName] = useState('')
   const [pageNumber, setPageNumber] = useState(1)
 
-  const [scale, setScale] = useState(1.25)
+  const [scale, setScale] = useState(1)
   const [rotation, setRotation] = useState(0)
-  const [fitMode, setFitMode] = useState<FitMode>('manual')
+  const [viewMode, setViewMode] = useState<ViewMode>('fit-page')
+  const [stageResizeTick, setStageResizeTick] = useState(0)
+
+  const [pan, setPan] = useState<Pan>({ x: 0, y: 0 })
+  const [isPanning, setIsPanning] = useState(false)
+
+  const [viewportSize, setViewportSize] = useState({
+    width: 0,
+    height: 0,
+  })
 
   const [status, setStatus] = useState('Upload a PDF drawing to begin.')
 
@@ -34,7 +58,8 @@ export default function App() {
       setFileName(file.name)
       setPageNumber(1)
       setRotation(0)
-      setFitMode('page')
+      setViewMode('fit-page')
+      setPan({ x: 0, y: 0 })
 
       setStatus(
         `Loaded ${loadedPdf.numPages} page${loadedPdf.numPages === 1 ? '' : 's'}.`
@@ -45,8 +70,7 @@ export default function App() {
     }
   }
 
-  async function calculateFitScale(
-    mode: 'page' | 'width',
+  async function calculateFitPageScale(
     document: PdfDoc,
     pageNo: number,
     pageRotation: number
@@ -61,102 +85,183 @@ export default function App() {
       rotation: pageRotation,
     })
 
-    const horizontalPadding = 56
-    const verticalPadding = 56
+    const padding = 32
+    const availableWidth = Math.max(100, stage.clientWidth - padding * 2)
+    const availableHeight = Math.max(100, stage.clientHeight - padding * 2)
 
-    const availableWidth = Math.max(
-      100,
-      stage.clientWidth - horizontalPadding
+    return Math.min(
+      availableWidth / baseViewport.width,
+      availableHeight / baseViewport.height
     )
-
-    const availableHeight = Math.max(
-      100,
-      stage.clientHeight - verticalPadding
-    )
-
-    const widthScale = availableWidth / baseViewport.width
-    const heightScale = availableHeight / baseViewport.height
-
-    if (mode === 'width') {
-      return widthScale
-    }
-
-    return Math.min(widthScale, heightScale)
   }
 
-  async function applyFit(mode: 'page' | 'width') {
+  function fitPage() {
     if (!pdf) return
 
-    const fittedScale = await calculateFitScale(
-      mode,
-      pdf,
-      pageNumber,
-      rotation
-    )
-
-    setFitMode(mode)
-    setScale(fittedScale)
-  }
-
-  function zoomOut() {
-    setFitMode('manual')
-    setScale((current) =>
-      Math.max(0.1, +(current - 0.25).toFixed(2))
-    )
-  }
-
-  function zoomIn() {
-    setFitMode('manual')
-    setScale((current) =>
-      Math.min(6, +(current + 0.25).toFixed(2))
-    )
+    setViewMode('fit-page')
+    setPan({ x: 0, y: 0 })
+    setStageResizeTick((tick) => tick + 1)
   }
 
   function rotateLeft() {
+    if (!pdf) return
+
     setRotation((current) => (current + 270) % 360)
+    setViewMode('fit-page')
+    setPan({ x: 0, y: 0 })
   }
 
   function rotateRight() {
+    if (!pdf) return
+
     setRotation((current) => (current + 90) % 360)
+    setViewMode('fit-page')
+    setPan({ x: 0, y: 0 })
   }
+
+  function previousPage() {
+    if (!pdf || pageNumber <= 1) return
+
+    setPageNumber((current) => current - 1)
+    setViewMode('fit-page')
+    setPan({ x: 0, y: 0 })
+  }
+
+  function nextPage() {
+    if (!pdf || pageNumber >= pdf.numPages) return
+
+    setPageNumber((current) => current + 1)
+    setViewMode('fit-page')
+    setPan({ x: 0, y: 0 })
+  }
+
+  function handleZoomSlider(value: string) {
+    const percent = Number(value)
+
+    if (!Number.isFinite(percent)) return
+
+    setViewMode('manual')
+    setScale(percent / 100)
+  }
+
+  function startPan(event: React.PointerEvent<HTMLElement>) {
+    if (!pdf || event.button !== 0) return
+
+    panStartRef.current = {
+      active: true,
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      panX: pan.x,
+      panY: pan.y,
+    }
+
+    setIsPanning(true)
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function movePan(event: React.PointerEvent<HTMLElement>) {
+    const start = panStartRef.current
+
+    if (!start.active || start.pointerId !== event.pointerId) return
+
+    setPan({
+      x: start.panX + (event.clientX - start.clientX),
+      y: start.panY + (event.clientY - start.clientY),
+    })
+  }
+
+  function endPan(event: React.PointerEvent<HTMLElement>) {
+    const start = panStartRef.current
+
+    if (!start.active || start.pointerId !== event.pointerId) return
+
+    start.active = false
+    setIsPanning(false)
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  useEffect(() => {
+    if (!pdf || viewMode !== 'fit-page') return
+
+    let cancelled = false
+
+    async function applyFitPage() {
+      const fittedScale = await calculateFitPageScale(
+        pdf!,
+        pageNumber,
+        rotation
+      )
+
+      if (!cancelled) {
+        setScale(fittedScale)
+      }
+    }
+
+    applyFitPage()
+
+    return () => {
+      cancelled = true
+    }
+  }, [pdf, pageNumber, rotation, viewMode, stageResizeTick])
+
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return
+
+    let resizeTimer: number | undefined
+
+    const observer = new ResizeObserver(() => {
+      window.clearTimeout(resizeTimer)
+
+      resizeTimer = window.setTimeout(() => {
+        setStageResizeTick((tick) => tick + 1)
+      }, 80)
+    })
+
+    observer.observe(stage)
+
+    return () => {
+      window.clearTimeout(resizeTimer)
+      observer.disconnect()
+    }
+  }, [])
 
   useEffect(() => {
     if (!pdf || !canvasRef.current) return
 
-    let cancelled = false
+    let disposed = false
 
     async function renderPage() {
-      const page = await pdf!.getPage(pageNumber)
-      if (cancelled) return
+      const page = await pdf.getPage(pageNumber)
 
-      let renderScale = scale
-
-      if (fitMode === 'page' || fitMode === 'width') {
-        renderScale = await calculateFitScale(
-          fitMode,
-          pdf!,
-          pageNumber,
-          rotation
-        )
-
-        if (cancelled) return
-
-        setScale(renderScale)
-      }
+      if (disposed) return
 
       const viewport = page.getViewport({
-        scale: renderScale,
+        scale,
         rotation,
       })
 
-      const canvas = canvasRef.current!
-      const context = canvas.getContext('2d')!
+      if (disposed) return
+
+      setViewportSize({
+        width: viewport.width,
+        height: viewport.height,
+      })
+
+      const canvas = canvasRef.current
+      if (!canvas) return
+
+      const context = canvas.getContext('2d')
+      if (!context) return
 
       const outputScale = window.devicePixelRatio || 1
 
       canvas.width = Math.floor(viewport.width * outputScale)
       canvas.height = Math.floor(viewport.height * outputScale)
-
       canvas.style.width = `${Math.floor(viewport.width)}px`
       canvas.style.height = `${Math.floor(viewport.height)}px`
 
@@ -172,36 +277,44 @@ export default function App() {
             ] as [number, number, number, number, number, number])
           : undefined
 
-      await page.render({
-  canvas,
-  canvasContext: context,
-  viewport,
-  transform,
-}).promise
+      try {
+        renderTaskRef.current?.cancel()
+      } catch {
+        // Nothing to cancel.
+      }
+
+      const renderTask = page.render({
+        canvas,
+        canvasContext: context,
+        viewport,
+        transform,
+      })
+
+      renderTaskRef.current = renderTask
+
+      try {
+        await renderTask.promise
+      } catch (error: any) {
+        if (error?.name !== 'RenderingCancelledException') {
+          console.error(error)
+        }
+      }
     }
 
     renderPage()
 
     return () => {
-      cancelled = true
+      disposed = true
+
+      try {
+        renderTaskRef.current?.cancel()
+      } catch {
+        // Ignore cancellation errors during cleanup.
+      }
     }
-  }, [pdf, pageNumber, scale, rotation, fitMode])
+  }, [pdf, pageNumber, scale, rotation])
 
-  useEffect(() => {
-    if (!pdf || fitMode === 'manual') return
-
-    function handleResize() {
-      if (fitMode === 'page' || fitMode === 'width') {
-  applyFit(fitMode)
-}
-    }
-
-    window.addEventListener('resize', handleResize)
-
-    return () => {
-      window.removeEventListener('resize', handleResize)
-    }
-  }, [pdf, fitMode, pageNumber, rotation])
+  const zoomPercent = Math.max(25, Math.min(500, Math.round(scale * 100)))
 
   return (
     <div className="app-shell">
@@ -259,11 +372,8 @@ export default function App() {
           <div className="tool-row">
             <button
               disabled={!pdf || pageNumber <= 1}
-              onClick={() =>
-                setPageNumber((current) =>
-                  Math.max(1, current - 1)
-                )
-              }
+              onClick={previousPage}
+              title="Previous page"
             >
               ←
             </button>
@@ -275,76 +385,66 @@ export default function App() {
 
             <button
               disabled={!pdf || pageNumber >= (pdf?.numPages ?? 1)}
-              onClick={() =>
-                setPageNumber((current) =>
-                  Math.min(
-                    pdf?.numPages ?? 1,
-                    current + 1
-                  )
-                )
-              }
+              onClick={nextPage}
+              title="Next page"
             >
               →
             </button>
           </div>
 
-          <div className="tool-row">
-            <button
-              disabled={!pdf}
-              onClick={zoomOut}
-              title="Zoom out"
-            >
-              −
-            </button>
-
-            <span>{Math.round(scale * 100)}%</span>
-
-            <button
-              disabled={!pdf}
-              onClick={zoomIn}
-              title="Zoom in"
-            >
-              +
-            </button>
-          </div>
-
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: '8px',
-              marginTop: '10px',
-            }}
+          <button
+            className="wide-control"
+            disabled={!pdf}
+            onClick={fitPage}
           >
-            <button
-              disabled={!pdf}
-              onClick={() => applyFit('page')}
-            >
-              Fit Page
-            </button>
+            Fit Page
+          </button>
 
-            <button
-              disabled={!pdf}
-              onClick={() => applyFit('width')}
-            >
-              Fit Width
-            </button>
-
+          <div className="rotate-row">
             <button
               disabled={!pdf}
               onClick={rotateLeft}
-              title="Rotate left"
+              title="Rotate 90° left and refit page"
             >
-              ↶ Rotate
+              ↶ 90°
             </button>
 
             <button
               disabled={!pdf}
               onClick={rotateRight}
-              title="Rotate right"
+              title="Rotate 90° right and refit page"
             >
-              Rotate ↷
+              90° ↷
             </button>
+          </div>
+
+          <div className="zoom-control">
+            <div className="zoom-heading">
+              <span>Zoom</span>
+              <strong>{Math.round(scale * 100)}%</strong>
+            </div>
+
+            <input
+              className="zoom-slider"
+              type="range"
+              min="25"
+              max="500"
+              step="5"
+              value={zoomPercent}
+              disabled={!pdf}
+              onChange={(event) => handleZoomSlider(event.target.value)}
+            />
+
+            <div className="zoom-labels">
+              <span>25%</span>
+              <span>500%</span>
+            </div>
+          </div>
+
+          <div className="view-status">
+            {pdf
+              ? `${viewMode === 'fit-page' ? 'Fit page' : 'Manual zoom'} · ${rotation}°`
+              : 'No drawing loaded'}
           </div>
 
           <hr />
@@ -372,17 +472,16 @@ export default function App() {
 
         <section
           ref={stageRef}
-          className="drawing-stage"
+          className={`drawing-stage${isPanning ? ' is-panning' : ''}`}
+          onPointerDown={startPan}
+          onPointerMove={movePan}
+          onPointerUp={endPan}
+          onPointerCancel={endPan}
         >
           {!pdf && (
             <label className="drop-zone">
-              <strong>
-                Upload a construction drawing
-              </strong>
-
-              <span>
-                PDF only for the first prototype
-              </span>
+              <strong>Upload a construction drawing</strong>
+              <span>PDF only for the first prototype</span>
 
               <input
                 type="file"
@@ -399,7 +498,14 @@ export default function App() {
           )}
 
           {pdf && (
-            <div className="canvas-wrap">
+            <div
+              className="drawing-positioner"
+              style={{
+                width: viewportSize.width,
+                height: viewportSize.height,
+                transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px))`,
+              }}
+            >
               <canvas ref={canvasRef} />
             </div>
           )}
