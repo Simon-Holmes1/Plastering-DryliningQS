@@ -9,6 +9,20 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 type PdfDoc = Awaited<ReturnType<typeof pdfjsLib.getDocument>['promise']>
 type ViewMode = 'fit-page' | 'manual'
 
+type Point = {
+  x: number
+  y: number
+}
+
+type Calibration = {
+  pointA: Point
+  pointB: Point
+  distanceMm: number
+  mmPerPdfUnit: number
+  locked: boolean
+  needsRecalibration: boolean
+}
+
 type Pan = {
   x: number
   y: number
@@ -18,9 +32,19 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const stageRef = useRef<HTMLElement | null>(null)
   const renderTaskRef = useRef<any>(null)
+  const viewportRef = useRef<any>(null)
+  const drawingRef = useRef<HTMLDivElement | null>(null)
+  const calibrationDragRef = useRef<{
+    point: 'A' | 'B' | null
+    pointerId: number
+  }>({
+    point: null,
+    pointerId: -1,
+  })
 
   const panStartRef = useRef({
     active: false,
+    moved: false,
     pointerId: -1,
     clientX: 0,
     clientY: 0,
@@ -47,6 +71,14 @@ export default function App() {
 
   const [status, setStatus] = useState('Upload a PDF drawing to begin.')
 
+  const [calibrationMode, setCalibrationMode] = useState(false)
+  const [calibrationPoints, setCalibrationPoints] = useState<Point[]>([])
+  const [pendingCalibration, setPendingCalibration] =
+    useState<{ pointA: Point; pointB: Point } | null>(null)
+  const [calibrationDistance, setCalibrationDistance] = useState('')
+  const [recalibrationDistance, setRecalibrationDistance] = useState('')
+  const [calibrations, setCalibrations] = useState<Record<number, Calibration>>({})
+
   async function openPdf(file: File) {
     try {
       setStatus('Loading drawing…')
@@ -60,6 +92,12 @@ export default function App() {
       setRotation(0)
       setViewMode('fit-page')
       setPan({ x: 0, y: 0 })
+      setCalibrationMode(false)
+      setCalibrationPoints([])
+      setPendingCalibration(null)
+      setCalibrationDistance('')
+      setRecalibrationDistance('')
+      setCalibrations({})
 
       setStatus(
         `Loaded ${loadedPdf.numPages} page${loadedPdf.numPages === 1 ? '' : 's'}.`
@@ -149,6 +187,7 @@ export default function App() {
 
     panStartRef.current = {
       active: true,
+      moved: false,
       pointerId: event.pointerId,
       clientX: event.clientX,
       clientY: event.clientY,
@@ -165,10 +204,44 @@ export default function App() {
 
     if (!start.active || start.pointerId !== event.pointerId) return
 
+    const dx = event.clientX - start.clientX
+    const dy = event.clientY - start.clientY
+
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+      start.moved = true
+    }
+
     setPan({
-      x: start.panX + (event.clientX - start.clientX),
-      y: start.panY + (event.clientY - start.clientY),
+      x: start.panX + dx,
+      y: start.panY + dy,
     })
+  }
+
+  function addCalibrationPoint(clientX: number, clientY: number) {
+    if (!calibrationMode) return
+
+    const newPoint = clientToPdfPoint(clientX, clientY)
+    if (!newPoint) return
+
+    if (calibrationPoints.length === 0) {
+      setCalibrationPoints([newPoint])
+      setStatus(
+        'Calibration: first point set. Pan or zoom as needed, then click the second point.'
+      )
+      return
+    }
+
+    const pointA = calibrationPoints[0]
+    const pointB = newPoint
+
+    setCalibrationPoints([pointA, pointB])
+    setPendingCalibration({ pointA, pointB })
+    setCalibrationDistance('')
+    setCalibrationMode(false)
+
+    setStatus(
+      'Enter the known distance in millimetres to complete calibration.'
+    )
   }
 
   function endPan(event: React.PointerEvent<HTMLElement>) {
@@ -176,12 +249,343 @@ export default function App() {
 
     if (!start.active || start.pointerId !== event.pointerId) return
 
+    const wasMoved = start.moved
+
     start.active = false
     setIsPanning(false)
 
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
+
+    if (calibrationMode && !wasMoved) {
+      addCalibrationPoint(event.clientX, event.clientY)
+    }
+  }
+
+  function clientToPdfPoint(clientX: number, clientY: number): Point | null {
+    if (!viewportRef.current || !drawingRef.current) return null
+
+    const rect = drawingRef.current.getBoundingClientRect()
+    const viewportX = clientX - rect.left
+    const viewportY = clientY - rect.top
+
+    if (
+      viewportX < 0 ||
+      viewportY < 0 ||
+      viewportX > rect.width ||
+      viewportY > rect.height
+    ) {
+      return null
+    }
+
+    const [pdfX, pdfY] =
+      viewportRef.current.convertToPdfPoint(viewportX, viewportY)
+
+    return { x: pdfX, y: pdfY }
+  }
+
+  function updateCalibrationPoint(which: 'A' | 'B', point: Point) {
+    if (pendingCalibration) {
+      setPendingCalibration((current) => {
+        if (!current) return current
+        return which === 'A'
+          ? { ...current, pointA: point }
+          : { ...current, pointB: point }
+      })
+
+      setCalibrationPoints((current) => {
+        if (current.length < 2) return current
+        return which === 'A'
+          ? [point, current[1]]
+          : [current[0], point]
+      })
+      return
+    }
+
+    const saved = calibrations[pageNumber]
+
+    if (saved) {
+      if (saved.locked) return
+
+      setCalibrations((current) => {
+        const existing = current[pageNumber]
+        if (!existing || existing.locked) return current
+
+        const pointA = which === 'A' ? point : existing.pointA
+        const pointB = which === 'B' ? point : existing.pointB
+
+        return {
+          ...current,
+          [pageNumber]: {
+            ...existing,
+            pointA,
+            pointB,
+            needsRecalibration: true,
+          },
+        }
+      })
+
+      setRecalibrationDistance('')
+      setStatus(
+        'Calibration points changed — enter the new known distance and recalibrate before taking measurements.'
+      )
+      return
+    }
+
+    if (calibrationPoints.length === 1 && which === 'A') {
+      setCalibrationPoints([point])
+    }
+  }
+
+  function startCalibrationHandleDrag(
+    event: React.PointerEvent<SVGCircleElement>,
+    which: 'A' | 'B'
+  ) {
+    event.stopPropagation()
+    event.preventDefault()
+
+    const saved = calibrations[pageNumber]
+    if (saved?.locked && !pendingCalibration) {
+      setStatus('Calibration is locked. Unlock it before moving the points.')
+      return
+    }
+
+    calibrationDragRef.current = {
+      point: which,
+      pointerId: event.pointerId,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function moveCalibrationHandle(
+    event: React.PointerEvent<SVGCircleElement>
+  ) {
+    const drag = calibrationDragRef.current
+    if (!drag.point || drag.pointerId !== event.pointerId) return
+
+    event.stopPropagation()
+    event.preventDefault()
+
+    const point = clientToPdfPoint(event.clientX, event.clientY)
+    if (point) updateCalibrationPoint(drag.point, point)
+  }
+
+  function endCalibrationHandleDrag(
+    event: React.PointerEvent<SVGCircleElement>
+  ) {
+    const drag = calibrationDragRef.current
+    if (!drag.point || drag.pointerId !== event.pointerId) return
+
+    event.stopPropagation()
+    event.preventDefault()
+
+    calibrationDragRef.current = {
+      point: null,
+      pointerId: -1,
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  function handleWheelZoom(event: React.WheelEvent<HTMLElement>) {
+    if (!pdf || !stageRef.current || !drawingRef.current) return
+
+    event.preventDefault()
+
+    const currentScale = scale
+    const zoomFactor = event.deltaY < 0 ? 1.15 : 1 / 1.15
+    const nextScale = Math.max(
+      0.25,
+      Math.min(10, currentScale * zoomFactor)
+    )
+
+    if (Math.abs(nextScale - currentScale) < 0.0001) return
+
+    const stageRect = stageRef.current.getBoundingClientRect()
+    const drawingRect = drawingRef.current.getBoundingClientRect()
+
+    const cursorX = event.clientX - stageRect.left
+    const cursorY = event.clientY - stageRect.top
+
+    const drawingLeft = drawingRect.left - stageRect.left
+    const drawingTop = drawingRect.top - stageRect.top
+
+    const localX =
+      drawingRect.width > 0
+        ? (cursorX - drawingLeft) / drawingRect.width
+        : 0.5
+
+    const localY =
+      drawingRect.height > 0
+        ? (cursorY - drawingTop) / drawingRect.height
+        : 0.5
+
+    const scaleRatio = nextScale / currentScale
+    const nextWidth = viewportSize.width * scaleRatio
+    const nextHeight = viewportSize.height * scaleRatio
+
+    const desiredLeft = cursorX - localX * nextWidth
+    const desiredTop = cursorY - localY * nextHeight
+
+    const centredLeft = stageRect.width / 2 - nextWidth / 2
+    const centredTop = stageRect.height / 2 - nextHeight / 2
+
+    setPan({
+      x: desiredLeft - centredLeft,
+      y: desiredTop - centredTop,
+    })
+
+    setViewMode('manual')
+    setScale(nextScale)
+  }
+
+  function startCalibration() {
+    if (!pdf) return
+
+    setCalibrationPoints([])
+    setPendingCalibration(null)
+    setCalibrationDistance('')
+    setCalibrationMode(true)
+    setStatus('Calibration: click the first end of a known dimension.')
+  }
+
+  function cancelCalibration() {
+    setCalibrationMode(false)
+    setCalibrationPoints([])
+    setPendingCalibration(null)
+    setCalibrationDistance('')
+    setStatus('Calibration cancelled.')
+  }
+
+  function saveCalibration() {
+    if (!pendingCalibration) return
+
+    const distanceMm = Number(calibrationDistance.trim())
+
+    if (!Number.isFinite(distanceMm) || distanceMm <= 0) {
+      setStatus('Enter a valid distance greater than 0 mm.')
+      return
+    }
+
+    const { pointA, pointB } = pendingCalibration
+    const dx = pointB.x - pointA.x
+    const dy = pointB.y - pointA.y
+    const pdfDistance = Math.sqrt(dx * dx + dy * dy)
+
+    if (!Number.isFinite(pdfDistance) || pdfDistance <= 0) {
+      setStatus('Calibration points must be different.')
+      return
+    }
+
+    setCalibrations((current) => ({
+      ...current,
+      [pageNumber]: {
+        pointA,
+        pointB,
+        distanceMm,
+        mmPerPdfUnit: distanceMm / pdfDistance,
+        locked: true,
+        needsRecalibration: false,
+      },
+    }))
+
+    setPendingCalibration(null)
+    setCalibrationPoints([])
+    setCalibrationDistance('')
+    setStatus(`Page ${pageNumber} calibrated to ${distanceMm.toLocaleString()} mm ✓`)
+  }
+
+  function unlockCalibration() {
+    setRecalibrationDistance('')
+
+    setCalibrations((current) => {
+      const existing = current[pageNumber]
+      if (!existing) return current
+
+      return {
+        ...current,
+        [pageNumber]: {
+          ...existing,
+          locked: false,
+        },
+      }
+    })
+
+    setStatus(
+      'Calibration unlocked. Drag A or B to fine-tune. If either point moves, recalibration will be required.'
+    )
+  }
+
+  function lockCalibration() {
+    setCalibrations((current) => {
+      const existing = current[pageNumber]
+      if (!existing || existing.needsRecalibration) return current
+
+      return {
+        ...current,
+        [pageNumber]: {
+          ...existing,
+          locked: true,
+        },
+      }
+    })
+
+    setStatus('Calibration locked.')
+  }
+
+  function recalibrateCurrentPoints() {
+    const existing = calibrations[pageNumber]
+    if (!existing) return
+
+    const newDistanceMm = Number(recalibrationDistance.trim())
+
+    if (!Number.isFinite(newDistanceMm) || newDistanceMm <= 0) {
+      setStatus('Enter the new known distance in millimetres before recalibrating.')
+      return
+    }
+
+    const dx = existing.pointB.x - existing.pointA.x
+    const dy = existing.pointB.y - existing.pointA.y
+    const pdfDistance = Math.sqrt(dx * dx + dy * dy)
+
+    if (!Number.isFinite(pdfDistance) || pdfDistance <= 0) {
+      setStatus('Calibration points must be different.')
+      return
+    }
+
+    setCalibrations((current) => ({
+      ...current,
+      [pageNumber]: {
+        ...existing,
+        distanceMm: newDistanceMm,
+        mmPerPdfUnit: newDistanceMm / pdfDistance,
+        locked: true,
+        needsRecalibration: false,
+      },
+    }))
+
+    setRecalibrationDistance('')
+
+    setStatus(
+      `Page ${pageNumber} recalibrated to ${newDistanceMm.toLocaleString()} mm and locked ✓`
+    )
+  }
+
+  function clearCalibration() {
+    setCalibrations((current) => {
+      const updated = { ...current }
+      delete updated[pageNumber]
+      return updated
+    })
+
+    setCalibrationPoints([])
+    setPendingCalibration(null)
+    setCalibrationDistance('')
+    setRecalibrationDistance('')
+    setStatus(`Calibration removed from page ${pageNumber}.`)
   }
 
   useEffect(() => {
@@ -244,6 +648,8 @@ export default function App() {
         scale,
         rotation,
       })
+
+      viewportRef.current = viewport
 
       if (disposed) return
 
@@ -314,7 +720,64 @@ export default function App() {
     }
   }, [pdf, pageNumber, scale, rotation])
 
-  const zoomPercent = Math.max(25, Math.min(500, Math.round(scale * 100)))
+  const currentCalibration = calibrations[pageNumber]
+
+  const lineSource =
+    currentCalibration ??
+    (pendingCalibration
+      ? {
+          pointA: pendingCalibration.pointA,
+          pointB: pendingCalibration.pointB,
+        }
+      : null)
+
+  let calibrationLine:
+    | { x1: number; y1: number; x2: number; y2: number }
+    | null = null
+
+  if (lineSource && viewportRef.current) {
+    const [x1, y1] = viewportRef.current.convertToViewportPoint(
+      lineSource.pointA.x,
+      lineSource.pointA.y
+    )
+    const [x2, y2] = viewportRef.current.convertToViewportPoint(
+      lineSource.pointB.x,
+      lineSource.pointB.y
+    )
+
+    calibrationLine = { x1, y1, x2, y2 }
+  }
+
+  let pointAHandle: { x: number; y: number } | null = null
+  let pointBHandle: { x: number; y: number } | null = null
+
+  const handleSourceA =
+    currentCalibration?.pointA ??
+    pendingCalibration?.pointA ??
+    (calibrationPoints.length >= 1 ? calibrationPoints[0] : null)
+
+  const handleSourceB =
+    currentCalibration?.pointB ??
+    pendingCalibration?.pointB ??
+    (calibrationPoints.length >= 2 ? calibrationPoints[1] : null)
+
+  if (handleSourceA && viewportRef.current) {
+    const [x, y] = viewportRef.current.convertToViewportPoint(
+      handleSourceA.x,
+      handleSourceA.y
+    )
+    pointAHandle = { x, y }
+  }
+
+  if (handleSourceB && viewportRef.current) {
+    const [x, y] = viewportRef.current.convertToViewportPoint(
+      handleSourceB.x,
+      handleSourceB.y
+    )
+    pointBHandle = { x, y }
+  }
+
+  const zoomPercent = Math.max(25, Math.min(1000, Math.round(scale * 100)))
 
   return (
     <div className="app-shell">
@@ -428,7 +891,7 @@ export default function App() {
               className="zoom-slider"
               type="range"
               min="25"
-              max="500"
+              max="1000"
               step="5"
               value={zoomPercent}
               disabled={!pdf}
@@ -437,7 +900,7 @@ export default function App() {
 
             <div className="zoom-labels">
               <span>25%</span>
-              <span>500%</span>
+              <span>1000%</span>
             </div>
           </div>
 
@@ -449,11 +912,117 @@ export default function App() {
 
           <hr />
 
-          <h2>Next tools</h2>
+          <h2>Measurement</h2>
 
-          <button className="future-tool" disabled>
-            Calibrate
+          <button
+            className="future-tool"
+            disabled={!pdf}
+            onClick={calibrationMode ? cancelCalibration : startCalibration}
+          >
+            {calibrationMode ? 'Cancel Calibration' : 'Calibrate'}
           </button>
+
+          {pendingCalibration && (
+            <div className="calibration-panel">
+              <label>
+                Known distance (mm)
+                <input
+                  autoFocus
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={calibrationDistance}
+                  onChange={(event) => setCalibrationDistance(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      saveCalibration()
+                    }
+                  }}
+                  placeholder="e.g. 3600"
+                />
+              </label>
+
+              <button onClick={saveCalibration}>
+                Save Calibration
+              </button>
+            </div>
+          )}
+
+          {currentCalibration && (
+            <div
+              className={`calibration-panel ${
+                currentCalibration.needsRecalibration
+                  ? 'needs-recalibration'
+                  : 'calibrated'
+              }`}
+            >
+              <strong>
+                {currentCalibration.needsRecalibration
+                  ? '⚠ Recalibration required'
+                  : currentCalibration.locked
+                  ? '✓ Page calibrated · Locked'
+                  : 'Calibration unlocked'}
+              </strong>
+
+              <div>
+                Known distance: {currentCalibration.distanceMm.toLocaleString()} mm
+              </div>
+
+              {currentCalibration.needsRecalibration ? (
+                <>
+                  <div className="calibration-warning">
+                    A calibration point has moved. Enter the known distance for
+                    the points in their new positions before taking measurements.
+                  </div>
+
+                  <label>
+                    New known distance (mm)
+                    <input
+                      autoFocus
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={recalibrationDistance}
+                      onChange={(event) =>
+                        setRecalibrationDistance(event.target.value)
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          recalibrateCurrentPoints()
+                        }
+                      }}
+                      placeholder="e.g. 3600"
+                    />
+                  </label>
+
+                  <button onClick={recalibrateCurrentPoints}>
+                    Recalibrate & Lock
+                  </button>
+                </>
+              ) : currentCalibration.locked ? (
+                <button onClick={unlockCalibration}>
+                  Unlock Calibration
+                </button>
+              ) : (
+                <>
+                  <div className="calibration-note">
+                    Drag point A or B to fine-tune its position.
+                  </div>
+
+                  <button onClick={lockCalibration}>
+                    Lock Calibration
+                  </button>
+                </>
+              )}
+
+              <button
+                className="secondary-calibration-button"
+                onClick={clearCalibration}
+              >
+                Clear Calibration
+              </button>
+            </div>
+          )}
 
           <button className="future-tool" disabled>
             Length
@@ -472,11 +1041,12 @@ export default function App() {
 
         <section
           ref={stageRef}
-          className={`drawing-stage${isPanning ? ' is-panning' : ''}`}
+          className={`drawing-stage${isPanning ? ' is-panning' : ''}${calibrationMode ? ' calibration-active' : ''}`}
           onPointerDown={startPan}
           onPointerMove={movePan}
           onPointerUp={endPan}
           onPointerCancel={endPan}
+          onWheel={handleWheelZoom}
         >
           {!pdf && (
             <label className="drop-zone">
@@ -499,6 +1069,7 @@ export default function App() {
 
           {pdf && (
             <div
+              ref={drawingRef}
               className="drawing-positioner"
               style={{
                 width: viewportSize.width,
@@ -507,6 +1078,98 @@ export default function App() {
               }}
             >
               <canvas ref={canvasRef} />
+
+              <svg
+                className="measurement-overlay"
+                width={viewportSize.width}
+                height={viewportSize.height}
+                style={{
+                  pointerEvents: 'none',
+                }}
+              >
+                {calibrationLine && (
+                  <line
+                    x1={calibrationLine.x1}
+                    y1={calibrationLine.y1}
+                    x2={calibrationLine.x2}
+                    y2={calibrationLine.y2}
+                    stroke="#e11d48"
+                    strokeWidth="3"
+                  />
+                )}
+
+                {pointAHandle && (
+                  <>
+                    <circle
+                      cx={pointAHandle.x}
+                      cy={pointAHandle.y}
+                      r="9"
+                      fill="#f59e0b"
+                      stroke="#ffffff"
+                      strokeWidth="2"
+                      style={{
+                        pointerEvents: 'all',
+                        cursor:
+                          currentCalibration?.locked && !pendingCalibration
+                            ? 'not-allowed'
+                            : 'move',
+                      }}
+                      onPointerDown={(event) =>
+                        startCalibrationHandleDrag(event, 'A')
+                      }
+                      onPointerMove={moveCalibrationHandle}
+                      onPointerUp={endCalibrationHandleDrag}
+                      onPointerCancel={endCalibrationHandleDrag}
+                    />
+                    <text
+                      x={pointAHandle.x + 12}
+                      y={pointAHandle.y - 10}
+                      fontSize="13"
+                      fontWeight="700"
+                      fill="#b45309"
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      A
+                    </text>
+                  </>
+                )}
+
+                {pointBHandle && (
+                  <>
+                    <circle
+                      cx={pointBHandle.x}
+                      cy={pointBHandle.y}
+                      r="9"
+                      fill="#e11d48"
+                      stroke="#ffffff"
+                      strokeWidth="2"
+                      style={{
+                        pointerEvents: 'all',
+                        cursor:
+                          currentCalibration?.locked && !pendingCalibration
+                            ? 'not-allowed'
+                            : 'move',
+                      }}
+                      onPointerDown={(event) =>
+                        startCalibrationHandleDrag(event, 'B')
+                      }
+                      onPointerMove={moveCalibrationHandle}
+                      onPointerUp={endCalibrationHandleDrag}
+                      onPointerCancel={endCalibrationHandleDrag}
+                    />
+                    <text
+                      x={pointBHandle.x + 12}
+                      y={pointBHandle.y - 10}
+                      fontSize="13"
+                      fontWeight="700"
+                      fill="#be123c"
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      B
+                    </text>
+                  </>
+                )}
+              </svg>
             </div>
           )}
         </section>

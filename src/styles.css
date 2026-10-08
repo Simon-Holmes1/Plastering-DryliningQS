@@ -290,3 +290,68 @@ canvas {
     min-height: 640px;
   }
 }
+
+
+.calibration-panel {
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid #cad2df;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.calibration-panel.calibrated {
+  background: #eaf7ee;
+  border-color: #b7dec2;
+}
+
+.calibration-panel label {
+  margin-bottom: 8px;
+}
+
+.calibration-panel button {
+  width: 100%;
+}
+
+.measurement-overlay {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+
+.drawing-stage.calibration-active {
+  cursor: crosshair;
+}
+
+.drawing-stage.calibration-active.is-panning {
+  cursor: grabbing;
+}
+
+
+.calibration-panel.needs-recalibration {
+  background: #fff4e5;
+  border-color: #f0a23a;
+}
+
+.calibration-warning {
+  margin: 8px 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: #fff0d5;
+  color: #8a4b08;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.calibration-note {
+  margin: 8px 0;
+  color: #607086;
+}
+
+.secondary-calibration-button {
+  margin-top: 8px;
+  background: transparent;
+}
