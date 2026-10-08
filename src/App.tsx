@@ -24,8 +24,10 @@ type Calibration = {
 }
 
 type LengthMeasurement = {
+  id: string
   pointA: Point
   pointB: Point
+  locked: boolean
 }
 
 type Pan = {
@@ -49,11 +51,15 @@ export default function App() {
 
   const lengthDragRef = useRef<{
     point: 'A' | 'B' | null
+    measurementId: string | null
     pointerId: number
   }>({
     point: null,
+    measurementId: null,
     pointerId: -1,
   })
+
+  const nextLengthNumberRef = useRef(1)
 
   const panStartRef = useRef({
     active: false,
@@ -95,7 +101,7 @@ export default function App() {
   const [lengthMode, setLengthMode] = useState(false)
   const [lengthPoints, setLengthPoints] = useState<Point[]>([])
   const [lengthMeasurements, setLengthMeasurements] =
-    useState<Record<number, LengthMeasurement | null>>({})
+    useState<Record<number, LengthMeasurement[]>>({})
 
   async function openPdf(file: File) {
     try {
@@ -119,6 +125,7 @@ export default function App() {
       setLengthMode(false)
       setLengthPoints([])
       setLengthMeasurements({})
+      nextLengthNumberRef.current = 1
 
       setStatus(
         `Loaded ${loadedPdf.numPages} page${loadedPdf.numPages === 1 ? '' : 's'}.`
@@ -424,7 +431,7 @@ export default function App() {
     const zoomFactor = event.deltaY < 0 ? 1.15 : 1 / 1.15
     const nextScale = Math.max(
       0.25,
-      Math.min(10, currentScale * zoomFactor)
+      Math.min(15, currentScale * zoomFactor)
     )
 
     if (Math.abs(nextScale - currentScale) < 0.0001) return
@@ -530,18 +537,29 @@ export default function App() {
 
     const pointA = lengthPoints[0]
     const pointB = newPoint
+    const id = `L${String(nextLengthNumberRef.current).padStart(3, '0')}`
+    nextLengthNumberRef.current += 1
 
     setLengthMeasurements((current) => ({
       ...current,
-      [pageNumber]: { pointA, pointB },
+      [pageNumber]: [
+        ...(current[pageNumber] ?? []),
+        { id, pointA, pointB, locked: true },
+      ],
     }))
 
     setLengthPoints([])
     setLengthMode(false)
-    setStatus('Length measured. Drag either end point to fine-tune it.')
+    setStatus(
+      `${id} measured and locked. Untick Lock if you want to fine-tune its end points.`
+    )
   }
 
-  function updateLengthPoint(which: 'A' | 'B', point: Point) {
+  function updateLengthPoint(
+    which: 'A' | 'B',
+    point: Point,
+    measurementId: string | null
+  ) {
     const calibration = calibrations[pageNumber]
 
     if (
@@ -555,28 +573,31 @@ export default function App() {
       return
     }
 
-    if (lengthPoints.length === 1 && which === 'A') {
+    if (!measurementId && lengthPoints.length === 1 && which === 'A') {
       setLengthPoints([point])
       return
     }
 
-    setLengthMeasurements((current) => {
-      const existing = current[pageNumber]
-      if (!existing) return current
+    if (!measurementId) return
 
-      return {
-        ...current,
-        [pageNumber]:
-          which === 'A'
-            ? { ...existing, pointA: point }
-            : { ...existing, pointB: point },
-      }
-    })
+    setLengthMeasurements((current) => ({
+      ...current,
+      [pageNumber]: (current[pageNumber] ?? []).map((measurement) => {
+        if (measurement.id !== measurementId || measurement.locked) {
+          return measurement
+        }
+
+        return which === 'A'
+          ? { ...measurement, pointA: point }
+          : { ...measurement, pointB: point }
+      }),
+    }))
   }
 
   function startLengthHandleDrag(
     event: React.PointerEvent<SVGCircleElement>,
-    which: 'A' | 'B'
+    which: 'A' | 'B',
+    measurementId: string | null
   ) {
     event.stopPropagation()
     event.preventDefault()
@@ -594,8 +615,19 @@ export default function App() {
       return
     }
 
+    if (measurementId) {
+      const measurement = (lengthMeasurements[pageNumber] ?? []).find(
+        (item) => item.id === measurementId
+      )
+
+      if (measurement?.locked) {
+        return
+      }
+    }
+
     lengthDragRef.current = {
       point: which,
+      measurementId,
       pointerId: event.pointerId,
     }
 
@@ -615,7 +647,7 @@ export default function App() {
     const point = clientToPdfPoint(event.clientX, event.clientY)
 
     if (point) {
-      updateLengthPoint(drag.point, point)
+      updateLengthPoint(drag.point, point, drag.measurementId)
     }
   }
 
@@ -631,6 +663,7 @@ export default function App() {
 
     lengthDragRef.current = {
       point: null,
+      measurementId: null,
       pointerId: -1,
     }
 
@@ -639,16 +672,51 @@ export default function App() {
     }
   }
 
-  function clearLengthMeasurement() {
+  function toggleLengthLock(measurementId: string) {
+    let lockedNow = false
+
+    setLengthMeasurements((current) => ({
+      ...current,
+      [pageNumber]: (current[pageNumber] ?? []).map((measurement) => {
+        if (measurement.id !== measurementId) return measurement
+
+        lockedNow = !measurement.locked
+
+        return {
+          ...measurement,
+          locked: lockedNow,
+        }
+      }),
+    }))
+
+    setStatus(
+      lockedNow
+        ? `${measurementId} locked. Its end points will no longer block new measurements.`
+        : `${measurementId} unlocked. You can drag its end points again.`
+    )
+  }
+
+  function deleteLengthMeasurement(measurementId: string) {
+    setLengthMeasurements((current) => ({
+      ...current,
+      [pageNumber]: (current[pageNumber] ?? []).filter(
+        (measurement) => measurement.id !== measurementId
+      ),
+    }))
+
+    setStatus(`${measurementId} deleted.`)
+  }
+
+  function clearAllLengths() {
     setLengthMode(false)
     setLengthPoints([])
 
     setLengthMeasurements((current) => ({
       ...current,
-      [pageNumber]: null,
+      [pageNumber]: [],
     }))
 
-    setStatus('Length measurement cleared.')
+    setStatus('All length measurements cleared from this page.')
   }
 
   function startCalibration() {
@@ -989,76 +1057,64 @@ export default function App() {
     pointBHandle = { x, y }
   }
 
-  const currentLengthMeasurement = lengthMeasurements[pageNumber] ?? null
-
-  const lengthSourceA =
-    currentLengthMeasurement?.pointA ??
-    (lengthPoints.length >= 1 ? lengthPoints[0] : null)
-
-  const lengthSourceB =
-    currentLengthMeasurement?.pointB ??
-    (lengthPoints.length >= 2 ? lengthPoints[1] : null)
-
-  let lengthAHandle: { x: number; y: number } | null = null
-  let lengthBHandle: { x: number; y: number } | null = null
-  let lengthLine:
-    | { x1: number; y1: number; x2: number; y2: number }
-    | null = null
-
-  if (lengthSourceA && viewportRef.current) {
-    const [x, y] = viewportRef.current.convertToViewportPoint(
-      lengthSourceA.x,
-      lengthSourceA.y
-    )
-    lengthAHandle = { x, y }
-  }
-
-  if (lengthSourceB && viewportRef.current) {
-    const [x, y] = viewportRef.current.convertToViewportPoint(
-      lengthSourceB.x,
-      lengthSourceB.y
-    )
-    lengthBHandle = { x, y }
-  }
-
-  if (lengthSourceA && lengthSourceB && viewportRef.current) {
-    const [x1, y1] = viewportRef.current.convertToViewportPoint(
-      lengthSourceA.x,
-      lengthSourceA.y
-    )
-    const [x2, y2] = viewportRef.current.convertToViewportPoint(
-      lengthSourceB.x,
-      lengthSourceB.y
-    )
-
-    lengthLine = { x1, y1, x2, y2 }
-  }
+  const currentLengthMeasurements = lengthMeasurements[pageNumber] ?? []
 
   const lengthCalibrationValid =
     !!currentCalibration &&
     currentCalibration.locked &&
     !currentCalibration.needsRecalibration
 
-  let measuredLengthMm: number | null = null
+  const renderedLengths = currentLengthMeasurements.map((measurement) => {
+    let line:
+      | { x1: number; y1: number; x2: number; y2: number }
+      | null = null
+    let pointAHandle: { x: number; y: number } | null = null
+    let pointBHandle: { x: number; y: number } | null = null
 
-  if (
-    currentLengthMeasurement &&
-    lengthCalibrationValid &&
-    currentCalibration
-  ) {
-    const dx =
-      currentLengthMeasurement.pointB.x -
-      currentLengthMeasurement.pointA.x
-    const dy =
-      currentLengthMeasurement.pointB.y -
-      currentLengthMeasurement.pointA.y
-    const pdfDistance = Math.sqrt(dx * dx + dy * dy)
+    if (viewportRef.current) {
+      const [x1, y1] = viewportRef.current.convertToViewportPoint(
+        measurement.pointA.x,
+        measurement.pointA.y
+      )
+      const [x2, y2] = viewportRef.current.convertToViewportPoint(
+        measurement.pointB.x,
+        measurement.pointB.y
+      )
 
-    measuredLengthMm =
-      pdfDistance * currentCalibration.mmPerPdfUnit
+      line = { x1, y1, x2, y2 }
+      pointAHandle = { x: x1, y: y1 }
+      pointBHandle = { x: x2, y: y2 }
+    }
+
+    let lengthMm: number | null = null
+
+    if (lengthCalibrationValid && currentCalibration) {
+      const dx = measurement.pointB.x - measurement.pointA.x
+      const dy = measurement.pointB.y - measurement.pointA.y
+      const pdfDistance = Math.sqrt(dx * dx + dy * dy)
+      lengthMm = pdfDistance * currentCalibration.mmPerPdfUnit
+    }
+
+    return {
+      ...measurement,
+      line,
+      pointAHandle,
+      pointBHandle,
+      lengthMm,
+    }
+  })
+
+  let temporaryLengthAHandle: { x: number; y: number } | null = null
+
+  if (lengthPoints.length === 1 && viewportRef.current) {
+    const [x, y] = viewportRef.current.convertToViewportPoint(
+      lengthPoints[0].x,
+      lengthPoints[0].y
+    )
+    temporaryLengthAHandle = { x, y }
   }
 
-  const zoomPercent = Math.max(25, Math.min(1000, Math.round(scale * 100)))
+  const zoomPercent = Math.max(25, Math.min(1500, Math.round(scale * 100)))
 
   return (
     <div className="app-shell">
@@ -1172,7 +1228,7 @@ export default function App() {
               className="zoom-slider"
               type="range"
               min="25"
-              max="1000"
+              max="1500"
               step="5"
               value={zoomPercent}
               disabled={!pdf}
@@ -1181,7 +1237,7 @@ export default function App() {
 
             <div className="zoom-labels">
               <span>25%</span>
-              <span>1000%</span>
+              <span>1500%</span>
             </div>
           </div>
 
@@ -1318,49 +1374,96 @@ export default function App() {
                 : startLengthMeasurement
             }
           >
-            {lengthMode
-              ? 'Cancel Length'
-              : currentLengthMeasurement
-              ? 'New Length'
-              : 'Length'}
+            {lengthMode ? 'Cancel Length' : '+ Add Length'}
           </button>
 
-          {currentLengthMeasurement && (
+          {currentLengthMeasurements.length > 0 && (
             <div
               className={`length-panel ${
                 lengthCalibrationValid ? '' : 'invalid'
               }`}
             >
-              <strong>
-                {lengthCalibrationValid
-                  ? 'Length measurement'
-                  : '⚠ Length unavailable'}
-              </strong>
+              <div className="length-panel-heading">
+                <strong>
+                  Lengths ({currentLengthMeasurements.length})
+                </strong>
 
-              {measuredLengthMm !== null ? (
-                <>
-                  <div className="length-primary">
-                    {(measuredLengthMm / 1000).toFixed(3)} m
-                  </div>
-                  <div className="length-secondary">
-                    {Math.round(measuredLengthMm).toLocaleString()} mm
-                  </div>
-                  <div className="length-note">
-                    Drag either end point to fine-tune.
-                  </div>
-                </>
-              ) : (
+                <button
+                  className="clear-all-lengths"
+                  onClick={clearAllLengths}
+                >
+                  Clear all
+                </button>
+              </div>
+
+              {!lengthCalibrationValid && (
                 <div className="calibration-warning">
-                  Recalibrate and lock this page before using this measurement.
+                  Recalibrate and lock this page before using these measurements.
                 </div>
               )}
 
-              <button
-                className="secondary-calibration-button"
-                onClick={clearLengthMeasurement}
-              >
-                Clear Length
-              </button>
+              <div className="length-list">
+                {renderedLengths.map((measurement) => (
+                  <div
+                    className="length-list-item"
+                    key={measurement.id}
+                  >
+                    <div>
+                      <strong>{measurement.id}</strong>
+
+                      {measurement.lengthMm !== null ? (
+                        <>
+                          <div className="length-primary">
+                            {(measurement.lengthMm / 1000).toFixed(3)} m
+                          </div>
+                          <div className="length-secondary">
+                            {Math.round(measurement.lengthMm).toLocaleString()} mm
+                          </div>
+                        </>
+                      ) : (
+                        <div className="length-secondary">
+                          Calibration required
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="length-item-actions">
+                      <label
+                        className="length-lock-control"
+                        title={
+                          measurement.locked
+                            ? 'Unlock this measurement to move its end points'
+                            : 'Lock this measurement so its end points do not block new clicks'
+                        }
+                      >
+                        <input
+                          type="checkbox"
+                          checked={measurement.locked}
+                          onChange={() =>
+                            toggleLengthLock(measurement.id)
+                          }
+                        />
+                        <span>Lock</span>
+                      </label>
+
+                      <button
+                        className="delete-length-button"
+                        onClick={() =>
+                          deleteLengthMeasurement(measurement.id)
+                        }
+                        title={`Delete ${measurement.id}`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="length-note">
+                Fine-tune a measurement, then tick Lock. Locked end points do not
+                intercept clicks, so another length can start from the same corner.
+              </div>
             </div>
           )}
 
@@ -1505,74 +1608,136 @@ export default function App() {
                     </text>
                   </>
                 )}
-                {lengthLine && (
-                  <>
-                    <line
-                      x1={lengthLine.x1}
-                      y1={lengthLine.y1}
-                      x2={lengthLine.x2}
-                      y2={lengthLine.y2}
-                      stroke="#2563eb"
-                      strokeWidth="3"
-                    />
+                {renderedLengths.map((measurement) => (
+                  <g key={measurement.id}>
+                    {measurement.line && (
+                      <>
+                        <line
+                          x1={measurement.line.x1}
+                          y1={measurement.line.y1}
+                          x2={measurement.line.x2}
+                          y2={measurement.line.y2}
+                          stroke="#2563eb"
+                          strokeWidth="3"
+                        />
 
-                    <g
-                      transform={`translate(${
-                        (lengthLine.x1 + lengthLine.x2) / 2
-                      }, ${
-                        (lengthLine.y1 + lengthLine.y2) / 2
-                      })`}
-                      style={{ pointerEvents: 'none' }}
-                    >
-                      <rect
-                        x="-46"
-                        y="-14"
-                        width="92"
-                        height="24"
-                        rx="5"
-                        fill="rgba(255,255,255,0.94)"
-                        stroke="#2563eb"
-                        strokeWidth="1"
+                        <g
+                          transform={`translate(${
+                            (measurement.line.x1 + measurement.line.x2) / 2
+                          }, ${
+                            (measurement.line.y1 + measurement.line.y2) / 2
+                          })`}
+                          style={{ pointerEvents: 'none' }}
+                        >
+                          <rect
+                            x="-58"
+                            y="-14"
+                            width="116"
+                            height="24"
+                            rx="5"
+                            fill="rgba(255,255,255,0.94)"
+                            stroke="#2563eb"
+                            strokeWidth="1"
+                          />
+                          <text
+                            x="0"
+                            y="3"
+                            textAnchor="middle"
+                            fontSize="12"
+                            fontWeight="700"
+                            fill="#1d4ed8"
+                          >
+                            {measurement.lengthMm !== null
+                              ? `${measurement.id} · ${(measurement.lengthMm / 1000).toFixed(3)} m`
+                              : `${measurement.id} · invalid`}
+                          </text>
+                        </g>
+                      </>
+                    )}
+
+                    {measurement.pointAHandle && (
+                      <circle
+                        cx={measurement.pointAHandle.x}
+                        cy={measurement.pointAHandle.y}
+                        r={measurement.locked ? 5 : 8}
+                        fill="#2563eb"
+                        stroke="#ffffff"
+                        strokeWidth="2"
+                        style={{
+                          pointerEvents: measurement.locked ? 'none' : 'all',
+                          cursor: measurement.locked
+                            ? 'default'
+                            : lengthCalibrationValid
+                            ? 'move'
+                            : 'not-allowed',
+                        }}
+                        onPointerDown={(event) =>
+                          startLengthHandleDrag(
+                            event,
+                            'A',
+                            measurement.id
+                          )
+                        }
+                        onPointerMove={moveLengthHandle}
+                        onPointerUp={endLengthHandleDrag}
+                        onPointerCancel={endLengthHandleDrag}
                       />
-                      <text
-                        x="0"
-                        y="3"
-                        textAnchor="middle"
-                        fontSize="12"
-                        fontWeight="700"
-                        fill="#1d4ed8"
-                      >
-                        {measuredLengthMm !== null
-                          ? `${(measuredLengthMm / 1000).toFixed(3)} m`
-                          : 'Length'}
-                      </text>
-                    </g>
-                  </>
-                )}
+                    )}
 
-                {lengthAHandle && (
+                    {measurement.pointBHandle && (
+                      <circle
+                        cx={measurement.pointBHandle.x}
+                        cy={measurement.pointBHandle.y}
+                        r={measurement.locked ? 5 : 8}
+                        fill="#2563eb"
+                        stroke="#ffffff"
+                        strokeWidth="2"
+                        style={{
+                          pointerEvents: measurement.locked ? 'none' : 'all',
+                          cursor: measurement.locked
+                            ? 'default'
+                            : lengthCalibrationValid
+                            ? 'move'
+                            : 'not-allowed',
+                        }}
+                        onPointerDown={(event) =>
+                          startLengthHandleDrag(
+                            event,
+                            'B',
+                            measurement.id
+                          )
+                        }
+                        onPointerMove={moveLengthHandle}
+                        onPointerUp={endLengthHandleDrag}
+                        onPointerCancel={endLengthHandleDrag}
+                      />
+                    )}
+                  </g>
+                ))}
+
+                {temporaryLengthAHandle && (
                   <>
                     <circle
-                      cx={lengthAHandle.x}
-                      cy={lengthAHandle.y}
+                      cx={temporaryLengthAHandle.x}
+                      cy={temporaryLengthAHandle.y}
                       r="9"
                       fill="#2563eb"
                       stroke="#ffffff"
                       strokeWidth="2"
                       style={{
                         pointerEvents: 'all',
-                        cursor: lengthCalibrationValid ? 'move' : 'not-allowed',
+                        cursor: 'move',
                       }}
                       onPointerDown={(event) =>
-                        startLengthHandleDrag(event, 'A')
+                        startLengthHandleDrag(event, 'A', null)
                       }
                       onPointerMove={moveLengthHandle}
                       onPointerUp={endLengthHandleDrag}
                       onPointerCancel={endLengthHandleDrag}
                     />
                     <text
-                      x={lengthAHandle.x + 12}
-                      y={lengthAHandle.y - 10}
+                      x={temporaryLengthAHandle.x + 12}
+                      y={temporaryLengthAHandle.y - 10}
                       fontSize="13"
                       fontWeight="700"
                       fill="#1d4ed8"
@@ -1582,40 +1747,6 @@ export default function App() {
                     </text>
                   </>
                 )}
-
-                {lengthBHandle && (
-                  <>
-                    <circle
-                      cx={lengthBHandle.x}
-                      cy={lengthBHandle.y}
-                      r="9"
-                      fill="#2563eb"
-                      stroke="#ffffff"
-                      strokeWidth="2"
-                      style={{
-                        pointerEvents: 'all',
-                        cursor: lengthCalibrationValid ? 'move' : 'not-allowed',
-                      }}
-                      onPointerDown={(event) =>
-                        startLengthHandleDrag(event, 'B')
-                      }
-                      onPointerMove={moveLengthHandle}
-                      onPointerUp={endLengthHandleDrag}
-                      onPointerCancel={endLengthHandleDrag}
-                    />
-                    <text
-                      x={lengthBHandle.x + 12}
-                      y={lengthBHandle.y - 10}
-                      fontSize="13"
-                      fontWeight="700"
-                      fill="#1d4ed8"
-                      style={{ pointerEvents: 'none' }}
-                    >
-                      B
-                    </text>
-                  </>
-                )}
-
               </svg>
             </div>
           )}
