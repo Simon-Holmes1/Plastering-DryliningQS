@@ -322,11 +322,11 @@ canvas {
 }
 
 
-.drawing-stage.calibration-active {
+.drawing-stage.measurement-active {
   cursor: crosshair;
 }
 
-.drawing-stage.calibration-active.is-panning {
+.drawing-stage.measurement-active.is-panning {
   cursor: grabbing;
 }
 
@@ -354,4 +354,38 @@ canvas {
 .secondary-calibration-button {
   margin-top: 8px;
   background: transparent;
+}
+
+
+.length-panel {
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid #9fc0f5;
+  border-radius: 8px;
+  background: #eef5ff;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.length-panel.invalid {
+  background: #fff4e5;
+  border-color: #f0a23a;
+}
+
+.length-primary {
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 800;
+  color: #1d4ed8;
+}
+
+.length-secondary {
+  font-size: 13px;
+  font-weight: 700;
+  color: #40516a;
+}
+
+.length-note {
+  margin: 6px 0 8px;
+  color: #607086;
 }

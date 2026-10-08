@@ -23,6 +23,11 @@ type Calibration = {
   needsRecalibration: boolean
 }
 
+type LengthMeasurement = {
+  pointA: Point
+  pointB: Point
+}
+
 type Pan = {
   x: number
   y: number
@@ -35,6 +40,14 @@ export default function App() {
   const viewportRef = useRef<any>(null)
   const drawingRef = useRef<HTMLDivElement | null>(null)
   const calibrationDragRef = useRef<{
+    point: 'A' | 'B' | null
+    pointerId: number
+  }>({
+    point: null,
+    pointerId: -1,
+  })
+
+  const lengthDragRef = useRef<{
     point: 'A' | 'B' | null
     pointerId: number
   }>({
@@ -79,6 +92,11 @@ export default function App() {
   const [recalibrationDistance, setRecalibrationDistance] = useState('')
   const [calibrations, setCalibrations] = useState<Record<number, Calibration>>({})
 
+  const [lengthMode, setLengthMode] = useState(false)
+  const [lengthPoints, setLengthPoints] = useState<Point[]>([])
+  const [lengthMeasurements, setLengthMeasurements] =
+    useState<Record<number, LengthMeasurement | null>>({})
+
   async function openPdf(file: File) {
     try {
       setStatus('Loading drawing…')
@@ -98,6 +116,9 @@ export default function App() {
       setCalibrationDistance('')
       setRecalibrationDistance('')
       setCalibrations({})
+      setLengthMode(false)
+      setLengthPoints([])
+      setLengthMeasurements({})
 
       setStatus(
         `Loaded ${loadedPdf.numPages} page${loadedPdf.numPages === 1 ? '' : 's'}.`
@@ -258,8 +279,12 @@ export default function App() {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
 
-    if (calibrationMode && !wasMoved) {
-      addCalibrationPoint(event.clientX, event.clientY)
+    if (!wasMoved) {
+      if (calibrationMode) {
+        addCalibrationPoint(event.clientX, event.clientY)
+      } else if (lengthMode) {
+        addLengthPoint(event.clientX, event.clientY)
+      }
     }
   }
 
@@ -442,8 +467,195 @@ export default function App() {
     setScale(nextScale)
   }
 
+  function startLengthMeasurement() {
+    const calibration = calibrations[pageNumber]
+
+    if (
+      !calibration ||
+      !calibration.locked ||
+      calibration.needsRecalibration
+    ) {
+      setStatus(
+        'Length measurement requires a valid locked calibration on this page.'
+      )
+      return
+    }
+
+    setCalibrationMode(false)
+    setCalibrationPoints([])
+    setPendingCalibration(null)
+    setCalibrationDistance('')
+
+    setLengthPoints([])
+    setLengthMode(true)
+    setStatus(
+      'Length: click the first point. You can pan or zoom before placing the second point.'
+    )
+  }
+
+  function cancelLengthMeasurement() {
+    setLengthMode(false)
+    setLengthPoints([])
+    setStatus('Length measurement cancelled.')
+  }
+
+  function addLengthPoint(clientX: number, clientY: number) {
+    if (!lengthMode) return
+
+    const calibration = calibrations[pageNumber]
+
+    if (
+      !calibration ||
+      !calibration.locked ||
+      calibration.needsRecalibration
+    ) {
+      setLengthMode(false)
+      setLengthPoints([])
+      setStatus(
+        'Calibration is not valid. Recalibrate and lock the page before measuring.'
+      )
+      return
+    }
+
+    const newPoint = clientToPdfPoint(clientX, clientY)
+    if (!newPoint) return
+
+    if (lengthPoints.length === 0) {
+      setLengthPoints([newPoint])
+      setStatus(
+        'Length: first point set. Pan or zoom as needed, then click the second point.'
+      )
+      return
+    }
+
+    const pointA = lengthPoints[0]
+    const pointB = newPoint
+
+    setLengthMeasurements((current) => ({
+      ...current,
+      [pageNumber]: { pointA, pointB },
+    }))
+
+    setLengthPoints([])
+    setLengthMode(false)
+    setStatus('Length measured. Drag either end point to fine-tune it.')
+  }
+
+  function updateLengthPoint(which: 'A' | 'B', point: Point) {
+    const calibration = calibrations[pageNumber]
+
+    if (
+      !calibration ||
+      !calibration.locked ||
+      calibration.needsRecalibration
+    ) {
+      setStatus(
+        'Calibration is not valid. Recalibrate and lock the page before editing measurements.'
+      )
+      return
+    }
+
+    if (lengthPoints.length === 1 && which === 'A') {
+      setLengthPoints([point])
+      return
+    }
+
+    setLengthMeasurements((current) => {
+      const existing = current[pageNumber]
+      if (!existing) return current
+
+      return {
+        ...current,
+        [pageNumber]:
+          which === 'A'
+            ? { ...existing, pointA: point }
+            : { ...existing, pointB: point },
+      }
+    })
+  }
+
+  function startLengthHandleDrag(
+    event: React.PointerEvent<SVGCircleElement>,
+    which: 'A' | 'B'
+  ) {
+    event.stopPropagation()
+    event.preventDefault()
+
+    const calibration = calibrations[pageNumber]
+
+    if (
+      !calibration ||
+      !calibration.locked ||
+      calibration.needsRecalibration
+    ) {
+      setStatus(
+        'Calibration is not valid. Recalibrate and lock the page before editing measurements.'
+      )
+      return
+    }
+
+    lengthDragRef.current = {
+      point: which,
+      pointerId: event.pointerId,
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function moveLengthHandle(
+    event: React.PointerEvent<SVGCircleElement>
+  ) {
+    const drag = lengthDragRef.current
+
+    if (!drag.point || drag.pointerId !== event.pointerId) return
+
+    event.stopPropagation()
+    event.preventDefault()
+
+    const point = clientToPdfPoint(event.clientX, event.clientY)
+
+    if (point) {
+      updateLengthPoint(drag.point, point)
+    }
+  }
+
+  function endLengthHandleDrag(
+    event: React.PointerEvent<SVGCircleElement>
+  ) {
+    const drag = lengthDragRef.current
+
+    if (!drag.point || drag.pointerId !== event.pointerId) return
+
+    event.stopPropagation()
+    event.preventDefault()
+
+    lengthDragRef.current = {
+      point: null,
+      pointerId: -1,
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  function clearLengthMeasurement() {
+    setLengthMode(false)
+    setLengthPoints([])
+
+    setLengthMeasurements((current) => ({
+      ...current,
+      [pageNumber]: null,
+    }))
+
+    setStatus('Length measurement cleared.')
+  }
+
   function startCalibration() {
     if (!pdf) return
+
+    setLengthMode(false)
+    setLengthPoints([])
 
     setCalibrationPoints([])
     setPendingCalibration(null)
@@ -777,6 +989,75 @@ export default function App() {
     pointBHandle = { x, y }
   }
 
+  const currentLengthMeasurement = lengthMeasurements[pageNumber] ?? null
+
+  const lengthSourceA =
+    currentLengthMeasurement?.pointA ??
+    (lengthPoints.length >= 1 ? lengthPoints[0] : null)
+
+  const lengthSourceB =
+    currentLengthMeasurement?.pointB ??
+    (lengthPoints.length >= 2 ? lengthPoints[1] : null)
+
+  let lengthAHandle: { x: number; y: number } | null = null
+  let lengthBHandle: { x: number; y: number } | null = null
+  let lengthLine:
+    | { x1: number; y1: number; x2: number; y2: number }
+    | null = null
+
+  if (lengthSourceA && viewportRef.current) {
+    const [x, y] = viewportRef.current.convertToViewportPoint(
+      lengthSourceA.x,
+      lengthSourceA.y
+    )
+    lengthAHandle = { x, y }
+  }
+
+  if (lengthSourceB && viewportRef.current) {
+    const [x, y] = viewportRef.current.convertToViewportPoint(
+      lengthSourceB.x,
+      lengthSourceB.y
+    )
+    lengthBHandle = { x, y }
+  }
+
+  if (lengthSourceA && lengthSourceB && viewportRef.current) {
+    const [x1, y1] = viewportRef.current.convertToViewportPoint(
+      lengthSourceA.x,
+      lengthSourceA.y
+    )
+    const [x2, y2] = viewportRef.current.convertToViewportPoint(
+      lengthSourceB.x,
+      lengthSourceB.y
+    )
+
+    lengthLine = { x1, y1, x2, y2 }
+  }
+
+  const lengthCalibrationValid =
+    !!currentCalibration &&
+    currentCalibration.locked &&
+    !currentCalibration.needsRecalibration
+
+  let measuredLengthMm: number | null = null
+
+  if (
+    currentLengthMeasurement &&
+    lengthCalibrationValid &&
+    currentCalibration
+  ) {
+    const dx =
+      currentLengthMeasurement.pointB.x -
+      currentLengthMeasurement.pointA.x
+    const dy =
+      currentLengthMeasurement.pointB.y -
+      currentLengthMeasurement.pointA.y
+    const pdfDistance = Math.sqrt(dx * dx + dy * dy)
+
+    measuredLengthMm =
+      pdfDistance * currentCalibration.mmPerPdfUnit
+  }
+
   const zoomPercent = Math.max(25, Math.min(1000, Math.round(scale * 100)))
 
   return (
@@ -1024,9 +1305,64 @@ export default function App() {
             </div>
           )}
 
-          <button className="future-tool" disabled>
-            Length
+          <button
+            className="future-tool"
+            disabled={
+              !currentCalibration ||
+              !currentCalibration.locked ||
+              currentCalibration.needsRecalibration
+            }
+            onClick={
+              lengthMode
+                ? cancelLengthMeasurement
+                : startLengthMeasurement
+            }
+          >
+            {lengthMode
+              ? 'Cancel Length'
+              : currentLengthMeasurement
+              ? 'New Length'
+              : 'Length'}
           </button>
+
+          {currentLengthMeasurement && (
+            <div
+              className={`length-panel ${
+                lengthCalibrationValid ? '' : 'invalid'
+              }`}
+            >
+              <strong>
+                {lengthCalibrationValid
+                  ? 'Length measurement'
+                  : '⚠ Length unavailable'}
+              </strong>
+
+              {measuredLengthMm !== null ? (
+                <>
+                  <div className="length-primary">
+                    {(measuredLengthMm / 1000).toFixed(3)} m
+                  </div>
+                  <div className="length-secondary">
+                    {Math.round(measuredLengthMm).toLocaleString()} mm
+                  </div>
+                  <div className="length-note">
+                    Drag either end point to fine-tune.
+                  </div>
+                </>
+              ) : (
+                <div className="calibration-warning">
+                  Recalibrate and lock this page before using this measurement.
+                </div>
+              )}
+
+              <button
+                className="secondary-calibration-button"
+                onClick={clearLengthMeasurement}
+              >
+                Clear Length
+              </button>
+            </div>
+          )}
 
           <button className="future-tool" disabled>
             Area
@@ -1041,7 +1377,7 @@ export default function App() {
 
         <section
           ref={stageRef}
-          className={`drawing-stage${isPanning ? ' is-panning' : ''}${calibrationMode ? ' calibration-active' : ''}`}
+          className={`drawing-stage${isPanning ? ' is-panning' : ''}${calibrationMode || lengthMode ? ' measurement-active' : ''}`}
           onPointerDown={startPan}
           onPointerMove={movePan}
           onPointerUp={endPan}
@@ -1169,6 +1505,117 @@ export default function App() {
                     </text>
                   </>
                 )}
+                {lengthLine && (
+                  <>
+                    <line
+                      x1={lengthLine.x1}
+                      y1={lengthLine.y1}
+                      x2={lengthLine.x2}
+                      y2={lengthLine.y2}
+                      stroke="#2563eb"
+                      strokeWidth="3"
+                    />
+
+                    <g
+                      transform={`translate(${
+                        (lengthLine.x1 + lengthLine.x2) / 2
+                      }, ${
+                        (lengthLine.y1 + lengthLine.y2) / 2
+                      })`}
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      <rect
+                        x="-46"
+                        y="-14"
+                        width="92"
+                        height="24"
+                        rx="5"
+                        fill="rgba(255,255,255,0.94)"
+                        stroke="#2563eb"
+                        strokeWidth="1"
+                      />
+                      <text
+                        x="0"
+                        y="3"
+                        textAnchor="middle"
+                        fontSize="12"
+                        fontWeight="700"
+                        fill="#1d4ed8"
+                      >
+                        {measuredLengthMm !== null
+                          ? `${(measuredLengthMm / 1000).toFixed(3)} m`
+                          : 'Length'}
+                      </text>
+                    </g>
+                  </>
+                )}
+
+                {lengthAHandle && (
+                  <>
+                    <circle
+                      cx={lengthAHandle.x}
+                      cy={lengthAHandle.y}
+                      r="9"
+                      fill="#2563eb"
+                      stroke="#ffffff"
+                      strokeWidth="2"
+                      style={{
+                        pointerEvents: 'all',
+                        cursor: lengthCalibrationValid ? 'move' : 'not-allowed',
+                      }}
+                      onPointerDown={(event) =>
+                        startLengthHandleDrag(event, 'A')
+                      }
+                      onPointerMove={moveLengthHandle}
+                      onPointerUp={endLengthHandleDrag}
+                      onPointerCancel={endLengthHandleDrag}
+                    />
+                    <text
+                      x={lengthAHandle.x + 12}
+                      y={lengthAHandle.y - 10}
+                      fontSize="13"
+                      fontWeight="700"
+                      fill="#1d4ed8"
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      A
+                    </text>
+                  </>
+                )}
+
+                {lengthBHandle && (
+                  <>
+                    <circle
+                      cx={lengthBHandle.x}
+                      cy={lengthBHandle.y}
+                      r="9"
+                      fill="#2563eb"
+                      stroke="#ffffff"
+                      strokeWidth="2"
+                      style={{
+                        pointerEvents: 'all',
+                        cursor: lengthCalibrationValid ? 'move' : 'not-allowed',
+                      }}
+                      onPointerDown={(event) =>
+                        startLengthHandleDrag(event, 'B')
+                      }
+                      onPointerMove={moveLengthHandle}
+                      onPointerUp={endLengthHandleDrag}
+                      onPointerCancel={endLengthHandleDrag}
+                    />
+                    <text
+                      x={lengthBHandle.x + 12}
+                      y={lengthBHandle.y - 10}
+                      fontSize="13"
+                      fontWeight="700"
+                      fill="#1d4ed8"
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      B
+                    </text>
+                  </>
+                )}
+
               </svg>
             </div>
           )}
