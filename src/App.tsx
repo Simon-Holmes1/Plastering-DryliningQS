@@ -7,7 +7,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 ).toString()
 
 type PdfDoc = Awaited<ReturnType<typeof pdfjsLib.getDocument>['promise']>
-type FitMode = 'manual' | 'page' | 'width'
+type ViewMode = 'fit-page' | 'manual'
 
 type Point = {
   x: number
@@ -19,20 +19,85 @@ type Calibration = {
   pointB: Point
   distanceMm: number
   mmPerPdfUnit: number
+  locked: boolean
+  needsRecalibration: boolean
+}
+
+type LengthMeasurement = {
+  id: string
+  pointA: Point
+  pointB: Point
+  locked: boolean
+}
+
+type Pan = {
+  x: number
+  y: number
+}
+
+type RunMeasurement = {
+  id: string
+  // Shared corners keep adjacent segments connected when edited.
+  points: Point[]
+  locked: boolean
 }
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const stageRef = useRef<HTMLElement | null>(null)
+  const renderTaskRef = useRef<any>(null)
   const viewportRef = useRef<any>(null)
+  const drawingRef = useRef<HTMLDivElement | null>(null)
+  const calibrationDragRef = useRef<{
+    point: 'A' | 'B' | null
+    pointerId: number
+  }>({
+    point: null,
+    pointerId: -1,
+  })
+
+  const lengthDragRef = useRef<{
+    point: 'A' | 'B' | null
+    measurementId: string | null
+    pointerId: number
+  }>({
+    point: null,
+    measurementId: null,
+    pointerId: -1,
+  })
+
+  const nextLengthNumberRef = useRef(1)
+  const nextRunNumberRef = useRef(1)
+  const runDragRef = useRef<{
+    runId: string; pointIndex: number; pointerId: number
+  } | null>(null)
+
+  const panStartRef = useRef({
+    active: false,
+    moved: false,
+    pointerId: -1,
+    clientX: 0,
+    clientY: 0,
+    panX: 0,
+    panY: 0,
+  })
 
   const [pdf, setPdf] = useState<PdfDoc | null>(null)
   const [fileName, setFileName] = useState('')
   const [pageNumber, setPageNumber] = useState(1)
 
-  const [scale, setScale] = useState(1.25)
+  const [scale, setScale] = useState(1)
   const [rotation, setRotation] = useState(0)
-  const [fitMode, setFitMode] = useState<FitMode>('manual')
+  const [viewMode, setViewMode] = useState<ViewMode>('fit-page')
+  const [stageResizeTick, setStageResizeTick] = useState(0)
+
+  const [pan, setPan] = useState<Pan>({ x: 0, y: 0 })
+  const [isPanning, setIsPanning] = useState(false)
+
+  const [viewportSize, setViewportSize] = useState({
+    width: 0,
+    height: 0,
+  })
 
   const [status, setStatus] = useState('Upload a PDF drawing to begin.')
 
@@ -41,8 +106,17 @@ export default function App() {
   const [pendingCalibration, setPendingCalibration] =
     useState<{ pointA: Point; pointB: Point } | null>(null)
   const [calibrationDistance, setCalibrationDistance] = useState('')
+  const [recalibrationDistance, setRecalibrationDistance] = useState('')
   const [calibrations, setCalibrations] = useState<Record<number, Calibration>>({})
-  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
+
+  const [lengthMode, setLengthMode] = useState(false)
+  const [lengthPoints, setLengthPoints] = useState<Point[]>([])
+  const [lengthMeasurements, setLengthMeasurements] =
+    useState<Record<number, LengthMeasurement[]>>({})
+  const [runMode, setRunMode] = useState(false)
+  const [runPoints, setRunPoints] = useState<Point[]>([])
+  const [runMeasurements, setRunMeasurements] =
+    useState<Record<number, RunMeasurement[]>>({})
 
   async function openPdf(file: File) {
     try {
@@ -55,12 +129,23 @@ export default function App() {
       setFileName(file.name)
       setPageNumber(1)
       setRotation(0)
-      setFitMode('page')
+      setViewMode('fit-page')
+      setPan({ x: 0, y: 0 })
       setCalibrationMode(false)
       setCalibrationPoints([])
       setPendingCalibration(null)
       setCalibrationDistance('')
+      setRecalibrationDistance('')
       setCalibrations({})
+      setLengthMode(false)
+      setLengthPoints([])
+      setLengthMeasurements({})
+      nextLengthNumberRef.current = 1
+      setRunMode(false)
+      setRunPoints([])
+      setRunMeasurements({})
+      nextRunNumberRef.current = 1
+      runDragRef.current = null
 
       setStatus(
         `Loaded ${loadedPdf.numPages} page${loadedPdf.numPages === 1 ? '' : 's'}.`
@@ -71,8 +156,7 @@ export default function App() {
     }
   }
 
-  async function calculateFitScale(
-    mode: 'page' | 'width',
+  async function calculateFitPageScale(
     document: PdfDoc,
     pageNo: number,
     pageRotation: number
@@ -87,68 +171,696 @@ export default function App() {
       rotation: pageRotation,
     })
 
-    const horizontalPadding = 56
-    const verticalPadding = 56
+    const padding = 32
+    const availableWidth = Math.max(100, stage.clientWidth - padding * 2)
+    const availableHeight = Math.max(100, stage.clientHeight - padding * 2)
 
-    const availableWidth = Math.max(
-      100,
-      stage.clientWidth - horizontalPadding
+    return Math.min(
+      availableWidth / baseViewport.width,
+      availableHeight / baseViewport.height
     )
-
-    const availableHeight = Math.max(
-      100,
-      stage.clientHeight - verticalPadding
-    )
-
-    const widthScale = availableWidth / baseViewport.width
-    const heightScale = availableHeight / baseViewport.height
-
-    if (mode === 'width') {
-      return widthScale
-    }
-
-    return Math.min(widthScale, heightScale)
   }
 
-  async function applyFit(mode: 'page' | 'width') {
+  function fitPage() {
     if (!pdf) return
 
-    const fittedScale = await calculateFitScale(
-      mode,
-      pdf,
-      pageNumber,
-      rotation
-    )
-
-    setFitMode(mode)
-    setScale(fittedScale)
-  }
-
-  function zoomOut() {
-    setFitMode('manual')
-    setScale((current) =>
-      Math.max(0.1, +(current - 0.25).toFixed(2))
-    )
-  }
-
-  function zoomIn() {
-    setFitMode('manual')
-    setScale((current) =>
-      Math.min(6, +(current + 0.25).toFixed(2))
-    )
+    setViewMode('fit-page')
+    setPan({ x: 0, y: 0 })
+    setStageResizeTick((tick) => tick + 1)
   }
 
   function rotateLeft() {
+    if (!pdf) return
+
     setRotation((current) => (current + 270) % 360)
+    setViewMode('fit-page')
+    setPan({ x: 0, y: 0 })
   }
 
   function rotateRight() {
+    if (!pdf) return
+
     setRotation((current) => (current + 90) % 360)
+    setViewMode('fit-page')
+    setPan({ x: 0, y: 0 })
   }
 
+  function previousPage() {
+    if (!pdf || pageNumber <= 1 || runMode) return
+
+    setPageNumber((current) => current - 1)
+    setViewMode('fit-page')
+    setPan({ x: 0, y: 0 })
+  }
+
+  function nextPage() {
+    if (!pdf || pageNumber >= pdf.numPages || runMode) return
+
+    setPageNumber((current) => current + 1)
+    setViewMode('fit-page')
+    setPan({ x: 0, y: 0 })
+  }
+
+  function handleZoomSlider(value: string) {
+    const percent = Number(value)
+
+    if (!Number.isFinite(percent)) return
+
+    setViewMode('manual')
+    setScale(percent / 100)
+  }
+
+  function startPan(event: React.PointerEvent<HTMLElement>) {
+    if (!pdf || event.button !== 0) return
+
+    panStartRef.current = {
+      active: true,
+      moved: false,
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      panX: pan.x,
+      panY: pan.y,
+    }
+
+    setIsPanning(true)
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function movePan(event: React.PointerEvent<HTMLElement>) {
+    const start = panStartRef.current
+
+    if (!start.active || start.pointerId !== event.pointerId) return
+
+    const dx = event.clientX - start.clientX
+    const dy = event.clientY - start.clientY
+
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+      start.moved = true
+    }
+
+    setPan({
+      x: start.panX + dx,
+      y: start.panY + dy,
+    })
+  }
+
+  function addCalibrationPoint(clientX: number, clientY: number) {
+    if (!calibrationMode) return
+
+    const newPoint = clientToPdfPoint(clientX, clientY)
+    if (!newPoint) return
+
+    if (calibrationPoints.length === 0) {
+      setCalibrationPoints([newPoint])
+      setStatus(
+        'Calibration: first point set. Pan or zoom as needed, then click the second point.'
+      )
+      return
+    }
+
+    const pointA = calibrationPoints[0]
+    const pointB = newPoint
+
+    setCalibrationPoints([pointA, pointB])
+    setPendingCalibration({ pointA, pointB })
+    setCalibrationDistance('')
+    setCalibrationMode(false)
+
+    setStatus(
+      'Enter the known distance in millimetres to complete calibration.'
+    )
+  }
+
+  function endPan(event: React.PointerEvent<HTMLElement>) {
+    const start = panStartRef.current
+
+    if (!start.active || start.pointerId !== event.pointerId) return
+
+    const wasMoved = start.moved
+
+    start.active = false
+    setIsPanning(false)
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+
+    if (!wasMoved) {
+      if (calibrationMode) {
+        addCalibrationPoint(event.clientX, event.clientY)
+      } else if (runMode) {
+        addRunPoint(event.clientX, event.clientY)
+      } else if (lengthMode) {
+        addLengthPoint(event.clientX, event.clientY)
+      }
+    }
+  }
+
+  function clientToPdfPoint(clientX: number, clientY: number): Point | null {
+    if (!viewportRef.current || !drawingRef.current) return null
+
+    const rect = drawingRef.current.getBoundingClientRect()
+    const viewportX = clientX - rect.left
+    const viewportY = clientY - rect.top
+
+    if (
+      viewportX < 0 ||
+      viewportY < 0 ||
+      viewportX > rect.width ||
+      viewportY > rect.height
+    ) {
+      return null
+    }
+
+    const [pdfX, pdfY] =
+      viewportRef.current.convertToPdfPoint(viewportX, viewportY)
+
+    return { x: pdfX, y: pdfY }
+  }
+
+  function updateCalibrationPoint(which: 'A' | 'B', point: Point) {
+    if (pendingCalibration) {
+      setPendingCalibration((current) => {
+        if (!current) return current
+        return which === 'A'
+          ? { ...current, pointA: point }
+          : { ...current, pointB: point }
+      })
+
+      setCalibrationPoints((current) => {
+        if (current.length < 2) return current
+        return which === 'A'
+          ? [point, current[1]]
+          : [current[0], point]
+      })
+      return
+    }
+
+    const saved = calibrations[pageNumber]
+
+    if (saved) {
+      if (saved.locked) return
+
+      setCalibrations((current) => {
+        const existing = current[pageNumber]
+        if (!existing || existing.locked) return current
+
+        const pointA = which === 'A' ? point : existing.pointA
+        const pointB = which === 'B' ? point : existing.pointB
+
+        return {
+          ...current,
+          [pageNumber]: {
+            ...existing,
+            pointA,
+            pointB,
+            needsRecalibration: true,
+          },
+        }
+      })
+
+      setRecalibrationDistance('')
+      setStatus(
+        'Calibration points changed — enter the new known distance and recalibrate before taking measurements.'
+      )
+      return
+    }
+
+    if (calibrationPoints.length === 1 && which === 'A') {
+      setCalibrationPoints([point])
+    }
+  }
+
+  function startCalibrationHandleDrag(
+    event: React.PointerEvent<SVGCircleElement>,
+    which: 'A' | 'B'
+  ) {
+    event.stopPropagation()
+    event.preventDefault()
+
+    const saved = calibrations[pageNumber]
+    if (saved?.locked && !pendingCalibration) {
+      setStatus('Calibration is locked. Unlock it before moving the points.')
+      return
+    }
+
+    calibrationDragRef.current = {
+      point: which,
+      pointerId: event.pointerId,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function moveCalibrationHandle(
+    event: React.PointerEvent<SVGCircleElement>
+  ) {
+    const drag = calibrationDragRef.current
+    if (!drag.point || drag.pointerId !== event.pointerId) return
+
+    event.stopPropagation()
+    event.preventDefault()
+
+    const point = clientToPdfPoint(event.clientX, event.clientY)
+    if (point) updateCalibrationPoint(drag.point, point)
+  }
+
+  function endCalibrationHandleDrag(
+    event: React.PointerEvent<SVGCircleElement>
+  ) {
+    const drag = calibrationDragRef.current
+    if (!drag.point || drag.pointerId !== event.pointerId) return
+
+    event.stopPropagation()
+    event.preventDefault()
+
+    calibrationDragRef.current = {
+      point: null,
+      pointerId: -1,
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  function handleWheelZoom(event: React.WheelEvent<HTMLElement>) {
+    if (!pdf || !stageRef.current || !drawingRef.current) return
+
+    event.preventDefault()
+
+    const currentScale = scale
+    const zoomFactor = event.deltaY < 0 ? 1.15 : 1 / 1.15
+    const nextScale = Math.max(
+      0.25,
+      Math.min(15, currentScale * zoomFactor)
+    )
+
+    if (Math.abs(nextScale - currentScale) < 0.0001) return
+
+    const stageRect = stageRef.current.getBoundingClientRect()
+    const drawingRect = drawingRef.current.getBoundingClientRect()
+
+    const cursorX = event.clientX - stageRect.left
+    const cursorY = event.clientY - stageRect.top
+
+    const drawingLeft = drawingRect.left - stageRect.left
+    const drawingTop = drawingRect.top - stageRect.top
+
+    const localX =
+      drawingRect.width > 0
+        ? (cursorX - drawingLeft) / drawingRect.width
+        : 0.5
+
+    const localY =
+      drawingRect.height > 0
+        ? (cursorY - drawingTop) / drawingRect.height
+        : 0.5
+
+    const scaleRatio = nextScale / currentScale
+    const nextWidth = viewportSize.width * scaleRatio
+    const nextHeight = viewportSize.height * scaleRatio
+
+    const desiredLeft = cursorX - localX * nextWidth
+    const desiredTop = cursorY - localY * nextHeight
+
+    const centredLeft = stageRect.width / 2 - nextWidth / 2
+    const centredTop = stageRect.height / 2 - nextHeight / 2
+
+    setPan({
+      x: desiredLeft - centredLeft,
+      y: desiredTop - centredTop,
+    })
+
+    setViewMode('manual')
+    setScale(nextScale)
+  }
+
+  function hasValidCalibration() {
+    const calibration = calibrations[pageNumber]
+    return !!calibration && calibration.locked && !calibration.needsRecalibration
+  }
+
+  function startRun() {
+    if (!hasValidCalibration() || runMode) return
+    setLengthMode(false)
+    setLengthPoints([])
+    setCalibrationMode(false)
+    setCalibrationPoints([])
+    setPendingCalibration(null)
+    setRunPoints([])
+    setRunMode(true)
+    setStatus('Run: click the start, then each wall corner. Pan or zoom as needed. Press Finish Run when done.')
+  }
+
+  function addRunPoint(clientX: number, clientY: number) {
+    if (!runMode || !hasValidCalibration()) return
+    const point = clientToPdfPoint(clientX, clientY)
+    if (!point) return
+    setRunPoints((current) => {
+      const last = current[current.length - 1]
+      // Ignore repeated clicks without preventing a return to an earlier corner.
+      if (last && Math.hypot(point.x - last.x, point.y - last.y) < 0.000001) {
+        return current
+      }
+      return [...current, point]
+    })
+  }
+
+  function finishRun() {
+    if (!runMode || runPoints.length < 2 || !hasValidCalibration()) return
+    const id = `R${String(nextRunNumberRef.current++).padStart(3, '0')}`
+    setRunMeasurements((current) => ({
+      ...current,
+      [pageNumber]: [...(current[pageNumber] ?? []), {
+        id, points: [...runPoints], locked: true,
+      }],
+    }))
+    setRunMode(false)
+    setRunPoints([])
+    setStatus(`${id} finished and locked. Start Run to measure more walls, or untick Lock to drag its corners.`)
+  }
+
+  function cancelRun() {
+    setRunMode(false)
+    setRunPoints([])
+    setStatus('Unfinished run cancelled. Saved measurements are unchanged.')
+  }
+
+  function toggleRunLock(id: string) {
+    const run = (runMeasurements[pageNumber] ?? []).find((item) => item.id === id)
+    if (!run) return
+    setRunMeasurements((current) => ({
+      ...current,
+      [pageNumber]: (current[pageNumber] ?? []).map((item) =>
+        item.id === id ? { ...item, locked: !item.locked } : item),
+    }))
+    setStatus(run.locked
+      ? `${id} unlocked. Drag any corner; both connected walls update together.`
+      : `${id} locked. Its corners will not block new measurements.`)
+  }
+
+  function deleteRun(id: string) {
+    setRunMeasurements((current) => ({
+      ...current,
+      [pageNumber]: (current[pageNumber] ?? []).filter((item) => item.id !== id),
+    }))
+    setStatus(`${id} deleted.`)
+  }
+
+  function startRunHandleDrag(
+    event: React.PointerEvent<SVGCircleElement>, runId: string, pointIndex: number
+  ) {
+    if (event.button !== 0 || runMode || lengthMode || calibrationMode || !hasValidCalibration()) return
+    const run = (runMeasurements[pageNumber] ?? []).find((item) => item.id === runId)
+    if (!run || run.locked) return
+    event.stopPropagation()
+    event.preventDefault()
+    runDragRef.current = { runId, pointIndex, pointerId: event.pointerId }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function moveRunHandle(event: React.PointerEvent<SVGCircleElement>) {
+    const drag = runDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    event.stopPropagation()
+    event.preventDefault()
+    if (!hasValidCalibration()) return
+    const point = clientToPdfPoint(event.clientX, event.clientY)
+    if (!point) return
+    setRunMeasurements((current) => ({
+      ...current,
+      [pageNumber]: (current[pageNumber] ?? []).map((run) => {
+        if (run.id !== drag.runId || run.locked) return run
+        // Do not collapse either adjoining segment to zero length.
+        const neighbours = [run.points[drag.pointIndex - 1], run.points[drag.pointIndex + 1]]
+        if (neighbours.some((p) => p && Math.hypot(p.x - point.x, p.y - point.y) < 0.000001)) return run
+        return { ...run, points: run.points.map((p, i) => i === drag.pointIndex ? point : p) }
+      }),
+    }))
+  }
+
+  function endRunHandleDrag(event: React.PointerEvent<SVGCircleElement>) {
+    if (runDragRef.current?.pointerId !== event.pointerId) return
+    event.stopPropagation()
+    event.preventDefault()
+    runDragRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  function startLengthMeasurement() {
+    if (runMode) return
+    const calibration = calibrations[pageNumber]
+
+    if (
+      !calibration ||
+      !calibration.locked ||
+      calibration.needsRecalibration
+    ) {
+      setStatus(
+        'Length measurement requires a valid locked calibration on this page.'
+      )
+      return
+    }
+
+    setCalibrationMode(false)
+    setCalibrationPoints([])
+    setPendingCalibration(null)
+    setCalibrationDistance('')
+
+    setLengthPoints([])
+    setLengthMode(true)
+    setStatus(
+      'Length: click the first point. You can pan or zoom before placing the second point.'
+    )
+  }
+
+  function cancelLengthMeasurement() {
+    setLengthMode(false)
+    setLengthPoints([])
+    setStatus('Length measurement cancelled.')
+  }
+
+  function addLengthPoint(clientX: number, clientY: number) {
+    if (!lengthMode) return
+
+    const calibration = calibrations[pageNumber]
+
+    if (
+      !calibration ||
+      !calibration.locked ||
+      calibration.needsRecalibration
+    ) {
+      setLengthMode(false)
+      setLengthPoints([])
+      setStatus(
+        'Calibration is not valid. Recalibrate and lock the page before measuring.'
+      )
+      return
+    }
+
+    const newPoint = clientToPdfPoint(clientX, clientY)
+    if (!newPoint) return
+
+    if (lengthPoints.length === 0) {
+      setLengthPoints([newPoint])
+      setStatus(
+        'Length: first point set. Pan or zoom as needed, then click the second point.'
+      )
+      return
+    }
+
+    const pointA = lengthPoints[0]
+    const pointB = newPoint
+    const id = `L${String(nextLengthNumberRef.current).padStart(3, '0')}`
+    nextLengthNumberRef.current += 1
+
+    setLengthMeasurements((current) => ({
+      ...current,
+      [pageNumber]: [
+        ...(current[pageNumber] ?? []),
+        { id, pointA, pointB, locked: true },
+      ],
+    }))
+
+    setLengthPoints([])
+    setLengthMode(false)
+    setStatus(
+      `${id} measured and locked. Untick Lock if you want to fine-tune its end points.`
+    )
+  }
+
+  function updateLengthPoint(
+    which: 'A' | 'B',
+    point: Point,
+    measurementId: string | null
+  ) {
+    const calibration = calibrations[pageNumber]
+
+    if (
+      !calibration ||
+      !calibration.locked ||
+      calibration.needsRecalibration
+    ) {
+      setStatus(
+        'Calibration is not valid. Recalibrate and lock the page before editing measurements.'
+      )
+      return
+    }
+
+    if (!measurementId && lengthPoints.length === 1 && which === 'A') {
+      setLengthPoints([point])
+      return
+    }
+
+    if (!measurementId) return
+
+    setLengthMeasurements((current) => ({
+      ...current,
+      [pageNumber]: (current[pageNumber] ?? []).map((measurement) => {
+        if (measurement.id !== measurementId || measurement.locked) {
+          return measurement
+        }
+
+        return which === 'A'
+          ? { ...measurement, pointA: point }
+          : { ...measurement, pointB: point }
+      }),
+    }))
+  }
+
+  function startLengthHandleDrag(
+    event: React.PointerEvent<SVGCircleElement>,
+    which: 'A' | 'B',
+    measurementId: string | null
+  ) {
+    event.stopPropagation()
+    event.preventDefault()
+
+    const calibration = calibrations[pageNumber]
+
+    if (
+      !calibration ||
+      !calibration.locked ||
+      calibration.needsRecalibration
+    ) {
+      setStatus(
+        'Calibration is not valid. Recalibrate and lock the page before editing measurements.'
+      )
+      return
+    }
+
+    if (measurementId) {
+      const measurement = (lengthMeasurements[pageNumber] ?? []).find(
+        (item) => item.id === measurementId
+      )
+
+      if (measurement?.locked) {
+        return
+      }
+    }
+
+    lengthDragRef.current = {
+      point: which,
+      measurementId,
+      pointerId: event.pointerId,
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function moveLengthHandle(
+    event: React.PointerEvent<SVGCircleElement>
+  ) {
+    const drag = lengthDragRef.current
+
+    if (!drag.point || drag.pointerId !== event.pointerId) return
+
+    event.stopPropagation()
+    event.preventDefault()
+
+    const point = clientToPdfPoint(event.clientX, event.clientY)
+
+    if (point) {
+      updateLengthPoint(drag.point, point, drag.measurementId)
+    }
+  }
+
+  function endLengthHandleDrag(
+    event: React.PointerEvent<SVGCircleElement>
+  ) {
+    const drag = lengthDragRef.current
+
+    if (!drag.point || drag.pointerId !== event.pointerId) return
+
+    event.stopPropagation()
+    event.preventDefault()
+
+    lengthDragRef.current = {
+      point: null,
+      measurementId: null,
+      pointerId: -1,
+    }
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  function toggleLengthLock(measurementId: string) {
+    let lockedNow = false
+
+    setLengthMeasurements((current) => ({
+      ...current,
+      [pageNumber]: (current[pageNumber] ?? []).map((measurement) => {
+        if (measurement.id !== measurementId) return measurement
+
+        lockedNow = !measurement.locked
+
+        return {
+          ...measurement,
+          locked: lockedNow,
+        }
+      }),
+    }))
+
+    setStatus(
+      lockedNow
+        ? `${measurementId} locked. Its end points will no longer block new measurements.`
+        : `${measurementId} unlocked. You can drag its end points again.`
+    )
+  }
+
+  function deleteLengthMeasurement(measurementId: string) {
+    setLengthMeasurements((current) => ({
+      ...current,
+      [pageNumber]: (current[pageNumber] ?? []).filter(
+        (measurement) => measurement.id !== measurementId
+      ),
+    }))
+
+    setStatus(`${measurementId} deleted.`)
+  }
+
+  function clearAllLengths() {
+    setLengthMode(false)
+    setLengthPoints([])
+
+    setLengthMeasurements((current) => ({
+      ...current,
+      [pageNumber]: [],
+    }))
+
+    setStatus('All length measurements cleared from this page.')
+  }
 
   function startCalibration() {
-    if (!pdf) return
+    if (!pdf || runMode) return
+
+    setLengthMode(false)
+    setLengthPoints([])
 
     setCalibrationPoints([])
     setPendingCalibration(null)
@@ -163,34 +875,6 @@ export default function App() {
     setPendingCalibration(null)
     setCalibrationDistance('')
     setStatus('Calibration cancelled.')
-  }
-
-  function handleCalibrationClick(event: React.MouseEvent<SVGSVGElement>) {
-    if (!calibrationMode || !viewportRef.current) return
-
-    const rect = event.currentTarget.getBoundingClientRect()
-    const viewportX = event.clientX - rect.left
-    const viewportY = event.clientY - rect.top
-
-    const [pdfX, pdfY] =
-      viewportRef.current.convertToPdfPoint(viewportX, viewportY)
-
-    const newPoint: Point = { x: pdfX, y: pdfY }
-
-    if (calibrationPoints.length === 0) {
-      setCalibrationPoints([newPoint])
-      setStatus('Calibration: now click the second end of the known dimension.')
-      return
-    }
-
-    const pointA = calibrationPoints[0]
-    const pointB = newPoint
-
-    setCalibrationPoints([pointA, pointB])
-    setPendingCalibration({ pointA, pointB })
-    setCalibrationDistance('')
-    setCalibrationMode(false)
-    setStatus('Enter the known distance in millimetres to complete calibration.')
   }
 
   function saveCalibration() {
@@ -213,15 +897,15 @@ export default function App() {
       return
     }
 
-    const mmPerPdfUnit = distanceMm / pdfDistance
-
     setCalibrations((current) => ({
       ...current,
       [pageNumber]: {
         pointA,
         pointB,
         distanceMm,
-        mmPerPdfUnit,
+        mmPerPdfUnit: distanceMm / pdfDistance,
+        locked: true,
+        needsRecalibration: false,
       },
     }))
 
@@ -231,7 +915,85 @@ export default function App() {
     setStatus(`Page ${pageNumber} calibrated to ${distanceMm.toLocaleString()} mm ✓`)
   }
 
+  function unlockCalibration() {
+    if (runMode) return
+    setRecalibrationDistance('')
+
+    setCalibrations((current) => {
+      const existing = current[pageNumber]
+      if (!existing) return current
+
+      return {
+        ...current,
+        [pageNumber]: {
+          ...existing,
+          locked: false,
+        },
+      }
+    })
+
+    setStatus(
+      'Calibration unlocked. Drag A or B to fine-tune. If either point moves, recalibration will be required.'
+    )
+  }
+
+  function lockCalibration() {
+    setCalibrations((current) => {
+      const existing = current[pageNumber]
+      if (!existing || existing.needsRecalibration) return current
+
+      return {
+        ...current,
+        [pageNumber]: {
+          ...existing,
+          locked: true,
+        },
+      }
+    })
+
+    setStatus('Calibration locked.')
+  }
+
+  function recalibrateCurrentPoints() {
+    const existing = calibrations[pageNumber]
+    if (!existing) return
+
+    const newDistanceMm = Number(recalibrationDistance.trim())
+
+    if (!Number.isFinite(newDistanceMm) || newDistanceMm <= 0) {
+      setStatus('Enter the new known distance in millimetres before recalibrating.')
+      return
+    }
+
+    const dx = existing.pointB.x - existing.pointA.x
+    const dy = existing.pointB.y - existing.pointA.y
+    const pdfDistance = Math.sqrt(dx * dx + dy * dy)
+
+    if (!Number.isFinite(pdfDistance) || pdfDistance <= 0) {
+      setStatus('Calibration points must be different.')
+      return
+    }
+
+    setCalibrations((current) => ({
+      ...current,
+      [pageNumber]: {
+        ...existing,
+        distanceMm: newDistanceMm,
+        mmPerPdfUnit: newDistanceMm / pdfDistance,
+        locked: true,
+        needsRecalibration: false,
+      },
+    }))
+
+    setRecalibrationDistance('')
+
+    setStatus(
+      `Page ${pageNumber} recalibrated to ${newDistanceMm.toLocaleString()} mm and locked ✓`
+    )
+  }
+
   function clearCalibration() {
+    if (runMode) return
     setCalibrations((current) => {
       const updated = { ...current }
       delete updated[pageNumber]
@@ -241,52 +1003,91 @@ export default function App() {
     setCalibrationPoints([])
     setPendingCalibration(null)
     setCalibrationDistance('')
+    setRecalibrationDistance('')
     setStatus(`Calibration removed from page ${pageNumber}.`)
   }
 
   useEffect(() => {
-    if (!pdf || !canvasRef.current) return
+    if (!pdf || viewMode !== 'fit-page') return
 
     let cancelled = false
 
-    async function renderPage() {
-      const page = await pdf!.getPage(pageNumber)
-      if (cancelled) return
+    async function applyFitPage() {
+      const fittedScale = await calculateFitPageScale(
+        pdf!,
+        pageNumber,
+        rotation
+      )
 
-      let renderScale = scale
-
-      if (fitMode === 'page' || fitMode === 'width') {
-        renderScale = await calculateFitScale(
-          fitMode,
-          pdf!,
-          pageNumber,
-          rotation
-        )
-
-        if (cancelled) return
-
-        setScale(renderScale)
+      if (!cancelled) {
+        setScale(fittedScale)
       }
+    }
+
+    applyFitPage()
+
+    return () => {
+      cancelled = true
+    }
+  }, [pdf, pageNumber, rotation, viewMode, stageResizeTick])
+
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return
+
+    let resizeTimer: number | undefined
+
+    const observer = new ResizeObserver(() => {
+      window.clearTimeout(resizeTimer)
+
+      resizeTimer = window.setTimeout(() => {
+        setStageResizeTick((tick) => tick + 1)
+      }, 80)
+    })
+
+    observer.observe(stage)
+
+    return () => {
+      window.clearTimeout(resizeTimer)
+      observer.disconnect()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!pdf || !canvasRef.current) return
+
+    const document = pdf
+    let disposed = false
+
+    async function renderPage() {
+      const page = await document.getPage(pageNumber)
+
+      if (disposed) return
 
       const viewport = page.getViewport({
-        scale: renderScale,
+        scale,
         rotation,
       })
 
       viewportRef.current = viewport
+
+      if (disposed) return
+
       setViewportSize({
         width: viewport.width,
         height: viewport.height,
       })
 
-      const canvas = canvasRef.current!
-      const context = canvas.getContext('2d')!
+      const canvas = canvasRef.current
+      if (!canvas) return
+
+      const context = canvas.getContext('2d')
+      if (!context) return
 
       const outputScale = window.devicePixelRatio || 1
 
       canvas.width = Math.floor(viewport.width * outputScale)
       canvas.height = Math.floor(viewport.height * outputScale)
-
       canvas.style.width = `${Math.floor(viewport.width)}px`
       canvas.style.height = `${Math.floor(viewport.height)}px`
 
@@ -302,42 +1103,44 @@ export default function App() {
             ] as [number, number, number, number, number, number])
           : undefined
 
-      await page.render({
-  canvas,
-  canvasContext: context,
-  viewport,
-  transform,
-}).promise
+      try {
+        renderTaskRef.current?.cancel()
+      } catch {
+        // Nothing to cancel.
+      }
+
+      const renderTask = page.render({
+        canvas,
+        canvasContext: context,
+        viewport,
+        transform,
+      })
+
+      renderTaskRef.current = renderTask
+
+      try {
+        await renderTask.promise
+      } catch (error: any) {
+        if (error?.name !== 'RenderingCancelledException') {
+          console.error(error)
+        }
+      }
     }
 
     renderPage()
 
     return () => {
-      cancelled = true
+      disposed = true
+
+      try {
+        renderTaskRef.current?.cancel()
+      } catch {
+        // Ignore cancellation errors during cleanup.
+      }
     }
-  }, [pdf, pageNumber, scale, rotation, fitMode])
-
-  useEffect(() => {
-    if (!pdf || fitMode === 'manual') return
-
-    function handleResize() {
-      if (fitMode === 'page' || fitMode === 'width') {
-  applyFit(fitMode)
-}
-    }
-
-    window.addEventListener('resize', handleResize)
-
-    return () => {
-      window.removeEventListener('resize', handleResize)
-    }
-  }, [pdf, fitMode, pageNumber, rotation])
+  }, [pdf, pageNumber, scale, rotation])
 
   const currentCalibration = calibrations[pageNumber]
-
-  let calibrationLine:
-    | { x1: number; y1: number; x2: number; y2: number }
-    | null = null
 
   const lineSource =
     currentCalibration ??
@@ -348,12 +1151,15 @@ export default function App() {
         }
       : null)
 
+  let calibrationLine:
+    | { x1: number; y1: number; x2: number; y2: number }
+    | null = null
+
   if (lineSource && viewportRef.current) {
     const [x1, y1] = viewportRef.current.convertToViewportPoint(
       lineSource.pointA.x,
       lineSource.pointA.y
     )
-
     const [x2, y2] = viewportRef.current.convertToViewportPoint(
       lineSource.pointB.x,
       lineSource.pointB.y
@@ -362,16 +1168,116 @@ export default function App() {
     calibrationLine = { x1, y1, x2, y2 }
   }
 
-  let temporaryPoint: { x: number; y: number } | null = null
+  let pointAHandle: { x: number; y: number } | null = null
+  let pointBHandle: { x: number; y: number } | null = null
 
-  if (calibrationPoints.length === 1 && viewportRef.current) {
+  const handleSourceA =
+    currentCalibration?.pointA ??
+    pendingCalibration?.pointA ??
+    (calibrationPoints.length >= 1 ? calibrationPoints[0] : null)
+
+  const handleSourceB =
+    currentCalibration?.pointB ??
+    pendingCalibration?.pointB ??
+    (calibrationPoints.length >= 2 ? calibrationPoints[1] : null)
+
+  if (handleSourceA && viewportRef.current) {
     const [x, y] = viewportRef.current.convertToViewportPoint(
-      calibrationPoints[0].x,
-      calibrationPoints[0].y
+      handleSourceA.x,
+      handleSourceA.y
     )
-
-    temporaryPoint = { x, y }
+    pointAHandle = { x, y }
   }
+
+  if (handleSourceB && viewportRef.current) {
+    const [x, y] = viewportRef.current.convertToViewportPoint(
+      handleSourceB.x,
+      handleSourceB.y
+    )
+    pointBHandle = { x, y }
+  }
+
+  const currentLengthMeasurements = lengthMeasurements[pageNumber] ?? []
+
+  const lengthCalibrationValid =
+    !!currentCalibration &&
+    currentCalibration.locked &&
+    !currentCalibration.needsRecalibration
+
+  function runSegments(points: Point[]) {
+    return points.slice(1).map((point, i) => {
+      const start = points[i]
+      return Math.hypot(point.x - start.x, point.y - start.y)
+        * (currentCalibration?.mmPerPdfUnit ?? 0)
+    })
+  }
+
+  const currentRuns = runMeasurements[pageNumber] ?? []
+  const draftSegments = runSegments(runPoints)
+  const draftTotalMm = draftSegments.reduce((sum, mm) => sum + mm, 0)
+  const renderedRuns = [
+    ...currentRuns,
+    ...(runMode ? [{ id: 'Draft', points: runPoints, locked: true }] : []),
+  ].map((run) => ({
+    ...run,
+    handles: run.points.map((point) => {
+      const [x, y] = viewportRef.current?.convertToViewportPoint(point.x, point.y) ?? [0, 0]
+      return { x, y }
+    }),
+    segments: runSegments(run.points),
+  }))
+
+  const renderedLengths = currentLengthMeasurements.map((measurement) => {
+    let line:
+      | { x1: number; y1: number; x2: number; y2: number }
+      | null = null
+    let pointAHandle: { x: number; y: number } | null = null
+    let pointBHandle: { x: number; y: number } | null = null
+
+    if (viewportRef.current) {
+      const [x1, y1] = viewportRef.current.convertToViewportPoint(
+        measurement.pointA.x,
+        measurement.pointA.y
+      )
+      const [x2, y2] = viewportRef.current.convertToViewportPoint(
+        measurement.pointB.x,
+        measurement.pointB.y
+      )
+
+      line = { x1, y1, x2, y2 }
+      pointAHandle = { x: x1, y: y1 }
+      pointBHandle = { x: x2, y: y2 }
+    }
+
+    let lengthMm: number | null = null
+
+    if (lengthCalibrationValid && currentCalibration) {
+      const dx = measurement.pointB.x - measurement.pointA.x
+      const dy = measurement.pointB.y - measurement.pointA.y
+      const pdfDistance = Math.sqrt(dx * dx + dy * dy)
+      lengthMm = pdfDistance * currentCalibration.mmPerPdfUnit
+    }
+
+    return {
+      ...measurement,
+      line,
+      pointAHandle,
+      pointBHandle,
+      lengthMm,
+    }
+  })
+
+  let temporaryLengthAHandle: { x: number; y: number } | null = null
+
+  if (lengthPoints.length === 1 && viewportRef.current) {
+    const [x, y] = viewportRef.current.convertToViewportPoint(
+      lengthPoints[0].x,
+      lengthPoints[0].y
+    )
+    temporaryLengthAHandle = { x, y }
+  }
+
+  const zoomPercent = Math.max(25, Math.min(1500, Math.round(scale * 100)))
 
   return (
     <div className="app-shell">
@@ -428,12 +1334,9 @@ export default function App() {
 
           <div className="tool-row">
             <button
-              disabled={!pdf || pageNumber <= 1}
-              onClick={() =>
-                setPageNumber((current) =>
-                  Math.max(1, current - 1)
-                )
-              }
+              disabled={!pdf || pageNumber <= 1 || runMode}
+              onClick={previousPage}
+              title="Previous page"
             >
               ←
             </button>
@@ -444,77 +1347,67 @@ export default function App() {
             </span>
 
             <button
-              disabled={!pdf || pageNumber >= (pdf?.numPages ?? 1)}
-              onClick={() =>
-                setPageNumber((current) =>
-                  Math.min(
-                    pdf?.numPages ?? 1,
-                    current + 1
-                  )
-                )
-              }
+              disabled={!pdf || pageNumber >= (pdf?.numPages ?? 1) || runMode}
+              onClick={nextPage}
+              title="Next page"
             >
               →
             </button>
           </div>
 
-          <div className="tool-row">
-            <button
-              disabled={!pdf}
-              onClick={zoomOut}
-              title="Zoom out"
-            >
-              −
-            </button>
-
-            <span>{Math.round(scale * 100)}%</span>
-
-            <button
-              disabled={!pdf}
-              onClick={zoomIn}
-              title="Zoom in"
-            >
-              +
-            </button>
-          </div>
-
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: '8px',
-              marginTop: '10px',
-            }}
+          <button
+            className="wide-control"
+            disabled={!pdf}
+            onClick={fitPage}
           >
-            <button
-              disabled={!pdf}
-              onClick={() => applyFit('page')}
-            >
-              Fit Page
-            </button>
+            Fit Page
+          </button>
 
-            <button
-              disabled={!pdf}
-              onClick={() => applyFit('width')}
-            >
-              Fit Width
-            </button>
-
+          <div className="rotate-row">
             <button
               disabled={!pdf}
               onClick={rotateLeft}
-              title="Rotate left"
+              title="Rotate 90° left and refit page"
             >
-              ↶ Rotate
+              ↶ 90°
             </button>
 
             <button
               disabled={!pdf}
               onClick={rotateRight}
-              title="Rotate right"
+              title="Rotate 90° right and refit page"
             >
-              Rotate ↷
+              90° ↷
             </button>
+          </div>
+
+          <div className="zoom-control">
+            <div className="zoom-heading">
+              <span>Zoom</span>
+              <strong>{Math.round(scale * 100)}%</strong>
+            </div>
+
+            <input
+              className="zoom-slider"
+              type="range"
+              min="25"
+              max="1500"
+              step="5"
+              value={zoomPercent}
+              disabled={!pdf}
+              onChange={(event) => handleZoomSlider(event.target.value)}
+            />
+
+            <div className="zoom-labels">
+              <span>25%</span>
+              <span>1500%</span>
+            </div>
+          </div>
+
+          <div className="view-status">
+            {pdf
+              ? `${viewMode === 'fit-page' ? 'Fit page' : 'Manual zoom'} · ${rotation}°`
+              : 'No drawing loaded'}
           </div>
 
           <hr />
@@ -523,67 +1416,33 @@ export default function App() {
 
           <button
             className="future-tool"
-            disabled={!pdf}
+            disabled={!pdf || runMode}
             onClick={calibrationMode ? cancelCalibration : startCalibration}
-            style={{
-              background: calibrationMode ? '#fff2d8' : undefined,
-              borderColor: calibrationMode ? '#f0a62b' : undefined,
-            }}
           >
             {calibrationMode ? 'Cancel Calibration' : 'Calibrate'}
           </button>
 
           {pendingCalibration && (
-            <div
-              style={{
-                marginTop: '10px',
-                padding: '10px',
-                borderRadius: '8px',
-                border: '1px solid #cad2df',
-                background: '#ffffff',
-              }}
-            >
-              <label
-                style={{
-                  display: 'block',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                }}
-              >
+            <div className="calibration-panel">
+              <label>
                 Known distance (mm)
-
                 <input
                   autoFocus
                   type="number"
-                  min="0"
+                  min="1"
                   step="1"
                   value={calibrationDistance}
-                  onChange={(event) =>
-                    setCalibrationDistance(event.target.value)
-                  }
+                  onChange={(event) => setCalibrationDistance(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
                       saveCalibration()
                     }
                   }}
                   placeholder="e.g. 3600"
-                  style={{
-                    width: '100%',
-                    marginTop: '6px',
-                    padding: '9px',
-                    border: '1px solid #cad2df',
-                    borderRadius: '8px',
-                  }}
                 />
               </label>
 
-              <button
-                onClick={saveCalibration}
-                style={{
-                  width: '100%',
-                  marginTop: '8px',
-                }}
-              >
+              <button onClick={saveCalibration}>
                 Save Calibration
               </button>
             </div>
@@ -591,38 +1450,248 @@ export default function App() {
 
           {currentCalibration && (
             <div
-              style={{
-                marginTop: '8px',
-                padding: '10px',
-                borderRadius: '8px',
-                background: '#eaf7ee',
-                border: '1px solid #b7dec2',
-                fontSize: '12px',
-                lineHeight: 1.5,
-              }}
+              className={`calibration-panel ${
+                currentCalibration.needsRecalibration
+                  ? 'needs-recalibration'
+                  : 'calibrated'
+              }`}
             >
-              <strong>✓ Page calibrated</strong>
+              <strong>
+                {currentCalibration.needsRecalibration
+                  ? '⚠ Recalibration required'
+                  : currentCalibration.locked
+                  ? '✓ Page calibrated · Locked'
+                  : 'Calibration unlocked'}
+              </strong>
 
               <div>
-                Known distance:{' '}
-                {currentCalibration.distanceMm.toLocaleString()} mm
+                Known distance: {currentCalibration.distanceMm.toLocaleString()} mm
               </div>
 
+              {currentCalibration.needsRecalibration ? (
+                <>
+                  <div className="calibration-warning">
+                    A calibration point has moved. Enter the known distance for
+                    the points in their new positions before taking measurements.
+                  </div>
+
+                  <label>
+                    New known distance (mm)
+                    <input
+                      autoFocus
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={recalibrationDistance}
+                      onChange={(event) =>
+                        setRecalibrationDistance(event.target.value)
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          recalibrateCurrentPoints()
+                        }
+                      }}
+                      placeholder="e.g. 3600"
+                    />
+                  </label>
+
+                  <button onClick={recalibrateCurrentPoints}>
+                    Recalibrate & Lock
+                  </button>
+                </>
+              ) : currentCalibration.locked ? (
+                <button onClick={unlockCalibration} disabled={runMode}>
+                  Unlock Calibration
+                </button>
+              ) : (
+                <>
+                  <div className="calibration-note">
+                    Drag point A or B to fine-tune its position.
+                  </div>
+
+                  <button onClick={lockCalibration}>
+                    Lock Calibration
+                  </button>
+                </>
+              )}
+
               <button
+                className="secondary-calibration-button"
                 onClick={clearCalibration}
-                style={{
-                  marginTop: '8px',
-                  width: '100%',
-                }}
+                disabled={runMode}
               >
                 Clear Calibration
               </button>
             </div>
           )}
 
-          <button className="future-tool" disabled>
-            Length
+          <button
+            className="future-tool"
+            disabled={
+              runMode || !currentCalibration ||
+              !currentCalibration.locked ||
+              currentCalibration.needsRecalibration
+            }
+            onClick={
+              lengthMode
+                ? cancelLengthMeasurement
+                : startLengthMeasurement
+            }
+          >
+            {lengthMode ? 'Cancel Length' : '+ Add Length'}
           </button>
+
+          {!runMode ? (
+            <button className="future-tool run-start" disabled={!lengthCalibrationValid} onClick={startRun}>
+              + Start Run
+            </button>
+          ) : (
+            <div className="run-panel" aria-label="Current run">
+              <strong>Run in progress</strong>
+              <div className="length-primary" aria-live="polite">
+                {(draftTotalMm / 1000).toFixed(3)} m
+              </div>
+              <div>{draftSegments.length} segment{draftSegments.length === 1 ? '' : 's'}</div>
+              <p className="length-note">
+                {runPoints.length === 0 ? 'Click your start point on the drawing.' : 'Click the next wall corner, then keep going. Drag to pan; use the wheel to zoom.'}
+              </p>
+              <button className="run-finish" disabled={runPoints.length < 2 || !lengthCalibrationValid} onClick={finishRun}>
+                Finish Run
+              </button>
+              <div className="run-actions">
+                <button disabled={runPoints.length === 0} onClick={() => setRunPoints((points) => points.slice(0, -1))}>
+                  Undo Last Point
+                </button>
+                <button onClick={cancelRun}>Cancel Run</button>
+              </div>
+              <p className="length-note">Finish or cancel before changing page or calibration.</p>
+            </div>
+          )}
+
+          {currentRuns.length > 0 && (
+            <div className={`run-panel ${lengthCalibrationValid ? '' : 'invalid'}`}>
+              <strong>Wall runs ({currentRuns.length})</strong>
+              {!lengthCalibrationValid && <p className="calibration-warning">Recalibrate and lock this page before using these totals.</p>}
+              <div className="length-list run-list">
+                {currentRuns.map((run) => {
+                  const segments = runSegments(run.points)
+                  const totalMm = segments.reduce((sum, mm) => sum + mm, 0)
+                  return (
+                    <div className="run-list-item" key={run.id}>
+                      <div className="length-panel-heading">
+                        <strong>{run.id}</strong>
+                        <div className="length-item-actions">
+                          <label className="length-lock-control">
+                            <input type="checkbox" checked={run.locked} onChange={() => toggleRunLock(run.id)} aria-label={`Lock ${run.id}`} />
+                            <span>Lock</span>
+                          </label>
+                          <button className="delete-length-button" onClick={() => deleteRun(run.id)} aria-label={`Delete ${run.id}`}>×</button>
+                        </div>
+                      </div>
+                      <div className="length-primary">{lengthCalibrationValid ? `${(totalMm / 1000).toFixed(3)} m` : 'Calibration required'}</div>
+                      <details>
+                        <summary>{segments.length} segments — show lengths</summary>
+                        <ol className="run-segments">
+                          {segments.map((mm, i) => <li key={i}>{lengthCalibrationValid ? `${(mm / 1000).toFixed(3)} m` : 'Calibration required'}</li>)}
+                        </ol>
+                      </details>
+                      {!run.locked && <p className="length-note">Drag a corner on the drawing to edit. Tick Lock when finished.</p>}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {currentLengthMeasurements.length > 0 && (
+            <div
+              className={`length-panel ${
+                lengthCalibrationValid ? '' : 'invalid'
+              }`}
+            >
+              <div className="length-panel-heading">
+                <strong>
+                  Lengths ({currentLengthMeasurements.length})
+                </strong>
+
+                <button
+                  className="clear-all-lengths"
+                  onClick={clearAllLengths}
+                >
+                  Clear all
+                </button>
+              </div>
+
+              {!lengthCalibrationValid && (
+                <div className="calibration-warning">
+                  Recalibrate and lock this page before using these measurements.
+                </div>
+              )}
+
+              <div className="length-list">
+                {renderedLengths.map((measurement) => (
+                  <div
+                    className="length-list-item"
+                    key={measurement.id}
+                  >
+                    <div>
+                      <strong>{measurement.id}</strong>
+
+                      {measurement.lengthMm !== null ? (
+                        <>
+                          <div className="length-primary">
+                            {(measurement.lengthMm / 1000).toFixed(3)} m
+                          </div>
+                          <div className="length-secondary">
+                            {Math.round(measurement.lengthMm).toLocaleString()} mm
+                          </div>
+                        </>
+                      ) : (
+                        <div className="length-secondary">
+                          Calibration required
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="length-item-actions">
+                      <label
+                        className="length-lock-control"
+                        title={
+                          measurement.locked
+                            ? 'Unlock this measurement to move its end points'
+                            : 'Lock this measurement so its end points do not block new clicks'
+                        }
+                      >
+                        <input
+                          type="checkbox"
+                          checked={measurement.locked}
+                          onChange={() =>
+                            toggleLengthLock(measurement.id)
+                          }
+                        />
+                        <span>Lock</span>
+                      </label>
+
+                      <button
+                        className="delete-length-button"
+                        onClick={() =>
+                          deleteLengthMeasurement(measurement.id)
+                        }
+                        title={`Delete ${measurement.id}`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="length-note">
+                Fine-tune a measurement, then tick Lock. Locked end points do not
+                intercept clicks, so another length can start from the same corner.
+              </div>
+            </div>
+          )}
 
           <button className="future-tool" disabled>
             Area
@@ -632,22 +1701,25 @@ export default function App() {
             Count
           </button>
 
-          <p className="status">{status}</p>
+          <p className="status" role="status">{status}</p>
         </aside>
 
         <section
           ref={stageRef}
-          className="drawing-stage"
+          className={`drawing-stage${isPanning ? ' is-panning' : ''}${calibrationMode || lengthMode || runMode ? ' measurement-active' : ''}`}
+          onPointerDown={startPan}
+          onPointerMove={movePan}
+          onPointerUp={endPan}
+          onPointerCancel={(event) => {
+            panStartRef.current.moved = true
+            endPan(event)
+          }}
+          onWheel={handleWheelZoom}
         >
           {!pdf && (
             <label className="drop-zone">
-              <strong>
-                Upload a construction drawing
-              </strong>
-
-              <span>
-                PDF only for the first prototype
-              </span>
+              <strong>Upload a construction drawing</strong>
+              <span>PDF only for the first prototype</span>
 
               <input
                 type="file"
@@ -664,72 +1736,275 @@ export default function App() {
           )}
 
           {pdf && (
-            <div className="canvas-wrap">
-              <div
+            <div
+              ref={drawingRef}
+              className="drawing-positioner"
+              style={{
+                width: viewportSize.width,
+                height: viewportSize.height,
+                transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px))`,
+              }}
+            >
+              <canvas ref={canvasRef} />
+
+              <svg
+                className="measurement-overlay"
+                width={viewportSize.width}
+                height={viewportSize.height}
                 style={{
-                  position: 'relative',
-                  width: viewportSize.width,
-                  height: viewportSize.height,
+                  pointerEvents: 'none',
                 }}
               >
-                <canvas
-                  ref={canvasRef}
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    top: 0,
-                  }}
-                />
+                {calibrationLine && (
+                  <line
+                    x1={calibrationLine.x1}
+                    y1={calibrationLine.y1}
+                    x2={calibrationLine.x2}
+                    y2={calibrationLine.y2}
+                    stroke="#e11d48"
+                    strokeWidth="3"
+                  />
+                )}
 
-                <svg
-                  width={viewportSize.width}
-                  height={viewportSize.height}
-                  onClick={handleCalibrationClick}
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    top: 0,
-                    cursor: calibrationMode ? 'crosshair' : 'default',
-                    pointerEvents: calibrationMode ? 'auto' : 'none',
-                  }}
-                >
-                  {calibrationLine && (
-                    <>
-                      <line
-                        x1={calibrationLine.x1}
-                        y1={calibrationLine.y1}
-                        x2={calibrationLine.x2}
-                        y2={calibrationLine.y2}
-                        stroke="#e11d48"
-                        strokeWidth="3"
-                      />
-
-                      <circle
-                        cx={calibrationLine.x1}
-                        cy={calibrationLine.y1}
-                        r="6"
-                        fill="#e11d48"
-                      />
-
-                      <circle
-                        cx={calibrationLine.x2}
-                        cy={calibrationLine.y2}
-                        r="6"
-                        fill="#e11d48"
-                      />
-                    </>
-                  )}
-
-                  {temporaryPoint && (
+                {pointAHandle && (
+                  <>
                     <circle
-                      cx={temporaryPoint.x}
-                      cy={temporaryPoint.y}
-                      r="7"
+                      cx={pointAHandle.x}
+                      cy={pointAHandle.y}
+                      r="9"
                       fill="#f59e0b"
+                      stroke="#ffffff"
+                      strokeWidth="2"
+                      style={{
+                        pointerEvents: runMode || (currentCalibration?.locked && !pendingCalibration) ? 'none' : 'all',
+                        cursor:
+                          currentCalibration?.locked && !pendingCalibration
+                            ? 'not-allowed'
+                            : 'move',
+                      }}
+                      onPointerDown={(event) =>
+                        startCalibrationHandleDrag(event, 'A')
+                      }
+                      onPointerMove={moveCalibrationHandle}
+                      onPointerUp={endCalibrationHandleDrag}
+                      onPointerCancel={endCalibrationHandleDrag}
                     />
-                  )}
-                </svg>
-              </div>
+                    <text
+                      x={pointAHandle.x + 12}
+                      y={pointAHandle.y - 10}
+                      fontSize="13"
+                      fontWeight="700"
+                      fill="#b45309"
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      A
+                    </text>
+                  </>
+                )}
+
+                {pointBHandle && (
+                  <>
+                    <circle
+                      cx={pointBHandle.x}
+                      cy={pointBHandle.y}
+                      r="9"
+                      fill="#e11d48"
+                      stroke="#ffffff"
+                      strokeWidth="2"
+                      style={{
+                        pointerEvents: runMode || (currentCalibration?.locked && !pendingCalibration) ? 'none' : 'all',
+                        cursor:
+                          currentCalibration?.locked && !pendingCalibration
+                            ? 'not-allowed'
+                            : 'move',
+                      }}
+                      onPointerDown={(event) =>
+                        startCalibrationHandleDrag(event, 'B')
+                      }
+                      onPointerMove={moveCalibrationHandle}
+                      onPointerUp={endCalibrationHandleDrag}
+                      onPointerCancel={endCalibrationHandleDrag}
+                    />
+                    <text
+                      x={pointBHandle.x + 12}
+                      y={pointBHandle.y - 10}
+                      fontSize="13"
+                      fontWeight="700"
+                      fill="#be123c"
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      B
+                    </text>
+                  </>
+                )}
+                {renderedLengths.map((measurement) => (
+                  <g key={measurement.id}>
+                    {measurement.line && (
+                      <>
+                        <line
+                          x1={measurement.line.x1}
+                          y1={measurement.line.y1}
+                          x2={measurement.line.x2}
+                          y2={measurement.line.y2}
+                          stroke="#2563eb"
+                          strokeWidth="3"
+                        />
+
+                        <g
+                          transform={`translate(${
+                            (measurement.line.x1 + measurement.line.x2) / 2
+                          }, ${
+                            (measurement.line.y1 + measurement.line.y2) / 2
+                          })`}
+                          style={{ pointerEvents: 'none' }}
+                        >
+                          <rect
+                            x="-58"
+                            y="-14"
+                            width="116"
+                            height="24"
+                            rx="5"
+                            fill="rgba(255,255,255,0.94)"
+                            stroke="#2563eb"
+                            strokeWidth="1"
+                          />
+                          <text
+                            x="0"
+                            y="3"
+                            textAnchor="middle"
+                            fontSize="12"
+                            fontWeight="700"
+                            fill="#1d4ed8"
+                          >
+                            {measurement.lengthMm !== null
+                              ? `${measurement.id} · ${(measurement.lengthMm / 1000).toFixed(3)} m`
+                              : `${measurement.id} · invalid`}
+                          </text>
+                        </g>
+                      </>
+                    )}
+
+                    {measurement.pointAHandle && (
+                      <circle
+                        cx={measurement.pointAHandle.x}
+                        cy={measurement.pointAHandle.y}
+                        r={measurement.locked ? 5 : 8}
+                        fill="#2563eb"
+                        stroke="#ffffff"
+                        strokeWidth="2"
+                        style={{
+                          pointerEvents: measurement.locked || runMode ? 'none' : 'all',
+                          cursor: measurement.locked
+                            ? 'default'
+                            : lengthCalibrationValid
+                            ? 'move'
+                            : 'not-allowed',
+                        }}
+                        onPointerDown={(event) =>
+                          startLengthHandleDrag(
+                            event,
+                            'A',
+                            measurement.id
+                          )
+                        }
+                        onPointerMove={moveLengthHandle}
+                        onPointerUp={endLengthHandleDrag}
+                        onPointerCancel={endLengthHandleDrag}
+                      />
+                    )}
+
+                    {measurement.pointBHandle && (
+                      <circle
+                        cx={measurement.pointBHandle.x}
+                        cy={measurement.pointBHandle.y}
+                        r={measurement.locked ? 5 : 8}
+                        fill="#2563eb"
+                        stroke="#ffffff"
+                        strokeWidth="2"
+                        style={{
+                          pointerEvents: measurement.locked || runMode ? 'none' : 'all',
+                          cursor: measurement.locked
+                            ? 'default'
+                            : lengthCalibrationValid
+                            ? 'move'
+                            : 'not-allowed',
+                        }}
+                        onPointerDown={(event) =>
+                          startLengthHandleDrag(
+                            event,
+                            'B',
+                            measurement.id
+                          )
+                        }
+                        onPointerMove={moveLengthHandle}
+                        onPointerUp={endLengthHandleDrag}
+                        onPointerCancel={endLengthHandleDrag}
+                      />
+                    )}
+                  </g>
+                ))}
+
+                {renderedRuns.map((run) => (
+                  <g key={run.id}>
+                    {run.handles.slice(1).map((end, i) => {
+                      const start = run.handles[i]
+                      return (
+                        <g key={i}>
+                          <line x1={start.x} y1={start.y} x2={end.x} y2={end.y}
+                            stroke="#0f766e" strokeWidth="3" strokeDasharray={run.id === 'Draft' ? '7 4' : undefined} />
+                          <text x={(start.x + end.x) / 2} y={(start.y + end.y) / 2 - 9}
+                            className="run-label" textAnchor="middle">
+                            {run.id}.{i + 1} · {lengthCalibrationValid ? `${(run.segments[i] / 1000).toFixed(3)} m` : 'invalid'}
+                          </text>
+                        </g>
+                      )
+                    })}
+                    {run.handles.map((point, i) => (
+                      <circle key={i} cx={point.x} cy={point.y} r={run.locked ? 5 : 8}
+                        fill="#0f766e" stroke="white" strokeWidth="2"
+                        style={{
+                          pointerEvents: !run.locked && lengthCalibrationValid && !runMode && !lengthMode && !calibrationMode ? 'all' : 'none',
+                          cursor: 'move',
+                        }}
+                        onPointerDown={(event) => startRunHandleDrag(event, run.id, i)}
+                        onPointerMove={moveRunHandle} onPointerUp={endRunHandleDrag} onPointerCancel={endRunHandleDrag} />
+                    ))}
+                  </g>
+                ))}
+
+                {temporaryLengthAHandle && (
+                  <>
+                    <circle
+                      cx={temporaryLengthAHandle.x}
+                      cy={temporaryLengthAHandle.y}
+                      r="9"
+                      fill="#2563eb"
+                      stroke="#ffffff"
+                      strokeWidth="2"
+                      style={{
+                        pointerEvents: 'all',
+                        cursor: 'move',
+                      }}
+                      onPointerDown={(event) =>
+                        startLengthHandleDrag(event, 'A', null)
+                      }
+                      onPointerMove={moveLengthHandle}
+                      onPointerUp={endLengthHandleDrag}
+                      onPointerCancel={endLengthHandleDrag}
+                    />
+                    <text
+                      x={temporaryLengthAHandle.x + 12}
+                      y={temporaryLengthAHandle.y - 10}
+                      fontSize="13"
+                      fontWeight="700"
+                      fill="#1d4ed8"
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      A
+                    </text>
+                  </>
+                )}
+              </svg>
             </div>
           )}
         </section>
