@@ -473,3 +473,82 @@ canvas {
   padding: 0 !important;
   cursor: pointer;
 }
+
+.run-start {
+  border-color: #0f766e;
+  color: #0f766e;
+  font-weight: 700;
+}
+
+.run-panel {
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid #99d6cc;
+  border-radius: 8px;
+  background: #effaf7;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.run-panel.invalid {
+  background: #fff4e5;
+  border-color: #f0a23a;
+}
+
+.run-panel .length-primary {
+  color: #0f766e;
+  font-size: 20px;
+}
+
+.run-finish {
+  width: 100%;
+  background: #0f766e;
+  border-color: #0f766e;
+  color: white;
+  font-weight: 700;
+}
+
+.run-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.run-actions button {
+  flex: 1;
+  padding: 7px 5px;
+  font-size: 11px;
+}
+
+.run-list {
+  margin-top: 8px;
+}
+
+.run-list-item {
+  padding: 8px;
+  border: 1px solid #bce3d9;
+  border-radius: 7px;
+  background: white;
+}
+
+.run-list-item summary {
+  margin-top: 6px;
+  cursor: pointer;
+  color: #40516a;
+}
+
+.run-segments {
+  margin: 6px 0;
+  padding-left: 24px;
+  font-variant-numeric: tabular-nums;
+}
+
+.run-label {
+  font-size: 12px;
+  font-weight: 700;
+  fill: #0f766e;
+  stroke: white;
+  stroke-width: 4px;
+  paint-order: stroke;
+  pointer-events: none;
+}
