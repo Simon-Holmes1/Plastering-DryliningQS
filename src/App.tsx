@@ -50,7 +50,8 @@ type RunMeasurement = {
 
 type MeasurementGroup = { id: string; name: string; categoryId?: string; includeSkim?: boolean }
 type WorkCategory = { id: string; name: string; color: string; mode: 'measure' | 'count' | 'derived'; skimTarget?: 'walls' | 'ceilings' }
-type CountMeasurement = { id: string; name?: string; groupId?: string; point: Point; locked: boolean }
+type CountMeasurement = { id: string; name?: string; groupId?: string; categoryId?: string; point: Point; locked: boolean }
+type MeasurementKind = 'length' | 'run' | 'area' | 'point'
 
 const initialCategories: WorkCategory[] = [
   { id: 'tack-ceiling', name: 'Tack Ceiling', color: '#2563eb', mode: 'measure', skimTarget: 'ceilings' },
@@ -116,7 +117,7 @@ function polygonProblem(points: Point[]): string | null {
 type JobDetails = { site: string; plot: string; houseType: string; revision: string }
 type TakeoffFile = {
   format: 'drylining-takeoff'
-  version: 4
+  version: 5
   savedAt: string
   drawing: { name: string; pdfBase64: string }
   job: JobDetails
@@ -160,7 +161,7 @@ function readTakeoff(value: unknown): TakeoffFile {
   if (!object(value) || value.format !== 'drylining-takeoff') {
     throw new Error('Choose a saved take-off (.takeoff.json), or use Upload drawing for a PDF.')
   }
-  if (![1, 2, 3, 4].includes(value.version)) {
+  if (![1, 2, 3, 4, 5].includes(value.version)) {
     throw new Error('This take-off uses a different file version. Open it with the version of the app that saved it.')
   }
   if (!object(value.drawing) || typeof value.drawing.name !== 'string' || !value.drawing.name.trim()
@@ -174,7 +175,7 @@ function readTakeoff(value: unknown): TakeoffFile {
     || !point(view.pan)) invalid()
   if (!integer(value.nextLengthNumber) || !integer(value.nextRunNumber)) invalid()
   const ids = new Set<string>()
-  const categories: WorkCategory[] = value.version === 4 ? value.categories : initialCategories.map((category) => ({ ...category }))
+  const categories: WorkCategory[] = value.version >= 4 ? value.categories : initialCategories.map((category) => ({ ...category }))
   if (!Array.isArray(categories)) invalid()
   const categoryIds = new Set<string>()
   for (const category of categories) {
@@ -225,8 +226,10 @@ function readTakeoff(value: unknown): TakeoffFile {
     if (item.groupId) {
       const categoryId = groups.find((group) => group.id === item.groupId)?.categoryId
       const mode = categories.find((category) => category.id === categoryId)?.mode
-      if (prefix === 'C' ? categoryId !== 'svp-boxing' : mode === 'count') return false
+      if (prefix === 'C' ? mode !== 'count' : mode === 'count') return false
+      if (prefix === 'C' && item.categoryId !== undefined && item.categoryId !== categoryId) return false
     }
+    if (prefix === 'C' && item.categoryId !== undefined && !categories.some((category) => category.id === item.categoryId && category.mode === 'count')) return false
     const number = Number(item.id.slice(1))
     if (!integer(number)) return false
     ids.add(item.id)
@@ -248,14 +251,14 @@ function readTakeoff(value: unknown): TakeoffFile {
   pages(areas, (items) => Array.isArray(items) && items.every((item) => measurement(item, 'A')
     && Array.isArray(item.points) && item.points.every(point) && !polygonProblem(item.points)))
   if (nextAreaNumber <= maxArea) invalid()
-  const counts = value.version === 4 ? value.counts : {}
-  const nextCountNumber = value.version === 4 ? value.nextCountNumber : 1
+  const counts = value.version >= 4 ? value.counts : {}
+  const nextCountNumber = value.version >= 4 ? value.nextCountNumber : 1
   if (!integer(nextCountNumber)) invalid()
   pages(counts, (items) => Array.isArray(items) && items.every((item) => measurement(item, 'C') && point(item.point)))
   if (nextCountNumber <= maxCount) invalid()
   if (view.hiddenGroupIds !== undefined && (!Array.isArray(view.hiddenGroupIds) || !view.hiddenGroupIds.every((id: unknown) => typeof id === 'string' && groupIds.has(id)))) invalid()
   if (view.showUngrouped !== undefined && typeof view.showUngrouped !== 'boolean') invalid()
-  return { ...value, version: 4, groups, nextGroupNumber, areas, nextAreaNumber, categories, counts, nextCountNumber } as TakeoffFile
+  return { ...value, version: 5, groups, nextGroupNumber, areas, nextAreaNumber, categories, counts, nextCountNumber } as TakeoffFile
 }
 
 export default function App() {
@@ -359,6 +362,12 @@ export default function App() {
   const [sidebarTab, setSidebarTab] = useState<'measure' | 'groups' | 'summary'>('measure')
   const [newCategoryName, setNewCategoryName] = useState('')
   const [newCategoryColor, setNewCategoryColor] = useState('#0891b2')
+  const [newCategoryMode, setNewCategoryMode] = useState<'measure' | 'count'>('measure')
+  const [measurementChooser, setMeasurementChooser] = useState<MeasurementKind | null>(null)
+  const [chooserCategoryId, setChooserCategoryId] = useState('')
+  const [chooserGroupId, setChooserGroupId] = useState('__new__')
+  const [chooserGroupName, setChooserGroupName] = useState('')
+  const [queuedStart, setQueuedStart] = useState<MeasurementKind | null>(null)
   const activeGroup = groups.find((group) => group.id === activeGroupId)
   const activeCategory = categories.find((category) => category.id === activeGroup?.categoryId)
   const activeIsCount = activeCategory?.mode === 'count'
@@ -378,6 +387,30 @@ export default function App() {
     : savedSignature !== dataSignature) || hasDraft || hasInvalidHeight
 
   useEffect(() => {
+    if (queuedStart) beginQueuedMeasurement()
+  }, [queuedStart])
+
+  useEffect(() => {
+    if (!runMode && !areaMode && !countMode && !lengthMode) return
+    window.addEventListener('keydown', finishWithEnter)
+    return () => window.removeEventListener('keydown', finishWithEnter)
+  }, [runMode, runPoints, areaMode, areaPoints, countMode, lengthMode, measurementChooser, calibrations, pageNumber])
+
+  function finishWithEnter(event: KeyboardEvent) {
+    if (event.key !== 'Enter' || event.repeat || event.isComposing || event.ctrlKey || event.altKey || event.metaKey || measurementChooser) return
+    const target = event.target as HTMLElement | null
+    if (target?.closest?.('input, textarea, select, button, a, summary, [contenteditable="true"], [role="button"]')) return
+    if (!runMode && !areaMode && !countMode && !lengthMode) return
+    event.preventDefault()
+    if (runMode) {
+      if (runPoints.length < 2) setStatus('Place at least two points before finishing the run.')
+      else finishRun()
+    } else if (areaMode) finishArea()
+    else if (countMode) finishCounting()
+    else setStatus('Place the second point to finish this length. Single lengths finish automatically.')
+  }
+
+  useEffect(() => {
     if (!hasUnsavedChanges) return
     function warnBeforeLeaving(event: BeforeUnloadEvent) {
       event.preventDefault()
@@ -392,6 +425,8 @@ export default function App() {
   }
 
   function resetDrafts() {
+    setMeasurementChooser(null)
+    setQueuedStart(null)
     setCountMode(false)
     countDragRef.current = null
     setAreaMode(false)
@@ -427,7 +462,7 @@ export default function App() {
     try {
       const savedAt = new Date().toISOString()
       const takeoff: TakeoffFile = {
-        format: 'drylining-takeoff', version: 4, savedAt,
+        format: 'drylining-takeoff', version: 5, savedAt,
         drawing: { name: fileName, pdfBase64: encodePdf(pdfBytesRef.current) },
         job: { ...job }, calibrations, lengths: lengthMeasurements, runs: runMeasurements,
         nextLengthNumber: nextLengthNumberRef.current, nextRunNumber: nextRunNumberRef.current,
@@ -942,6 +977,55 @@ export default function App() {
     return categories.find((category) => category.id === group?.categoryId)?.color ?? fallback
   }
 
+  function countCategoryId(item: CountMeasurement) {
+    return item.categoryId ?? groups.find((group) => group.id === item.groupId)?.categoryId ?? 'svp-boxing'
+  }
+
+  function requestMeasurement(kind: MeasurementKind) {
+    if (!pdf || hasDraft || queuedStart || (kind !== 'point' && !hasValidCalibration())) return
+    const mode = kind === 'point' ? 'count' : 'measure'
+    const category = categories.find((item) => item.id === activeGroup?.categoryId && item.mode === mode)
+      ?? categories.find((item) => item.id === chooserCategoryId && item.mode === mode)
+      ?? categories.find((item) => item.mode === mode)
+    if (!category) return
+    setMeasurementChooser(kind)
+    chooseMeasurementCategory(category.id)
+    setChooserGroupName('')
+  }
+
+  function chooseMeasurementCategory(categoryId: string) {
+    setChooserCategoryId(categoryId)
+    const group = groups.find((item) => item.id === activeGroupId && item.categoryId === categoryId)
+      ?? groups.find((item) => item.categoryId === categoryId)
+    setChooserGroupId(group?.id ?? '__new__')
+  }
+
+  function confirmMeasurement() {
+    if (!measurementChooser || hasDraft) return
+    const category = categories.find((item) => item.id === chooserCategoryId)
+    if (!category || category.mode !== (measurementChooser === 'point' ? 'count' : 'measure')) return
+    let groupId = chooserGroupId
+    if (groupId === '__new__') {
+      groupId = `G${String(nextGroupNumberRef.current++).padStart(3, '0')}`
+      const id = groupId
+      setGroups((current) => [...current, { id, name: chooserGroupName.trim() || category.name || category.id, categoryId: category.id }])
+    } else if (!groups.some((group) => group.id === groupId && group.categoryId === category.id)) return
+    setActiveGroupId(groupId)
+    setHiddenGroupIds((current) => current.filter((id) => id !== groupId))
+    setSidebarTab('measure')
+    setQueuedStart(measurementChooser)
+    setMeasurementChooser(null)
+  }
+
+  function beginQueuedMeasurement() {
+    const kind = queuedStart
+    setQueuedStart(null)
+    if (kind === 'length') startLengthMeasurement()
+    else if (kind === 'run') startRun()
+    else if (kind === 'area') startArea()
+    else if (kind === 'point') startCounting()
+  }
+
   function isMeasurementVisible(groupId?: string) {
     return groupId ? !hiddenGroupIds.includes(groupId) : showUngrouped
   }
@@ -956,11 +1040,13 @@ export default function App() {
       setStatus('SVP Boxing uses crosses only. Move this group’s lengths or areas to another group first.')
       return
     }
-    if (categoryId !== 'svp-boxing' && counts.some((item) => item.groupId === id)) {
-      setStatus('This group contains SVP crosses. Move them to another SVP Boxing group first.')
+    if (category?.mode !== 'count' && counts.some((item) => item.groupId === id)) {
+      setStatus('This group contains point marks. Move them to another point group first.')
       return
     }
     setGroups((current) => current.map((group) => group.id === id ? { ...group, categoryId: categoryId || undefined } : group))
+    if (category?.mode === 'count') setCountMeasurements((current) => Object.fromEntries(Object.entries(current).map(([page, items]) =>
+      [page, items.map((item) => item.groupId === id ? { ...item, categoryId } : item)])))
   }
 
   function updateCategory(id: string, details: { name?: string; color?: string }) {
@@ -973,13 +1059,13 @@ export default function App() {
     if (!name || !/^#[0-9a-fA-F]{6}$/.test(newCategoryColor)) return
     let number = 1
     while (categories.some((category) => category.id === `custom-${number}`)) number++
-    setCategories((current) => [...current, { id: `custom-${number}`, name, color: newCategoryColor, mode: 'measure' }])
+    setCategories((current) => [...current, { id: `custom-${number}`, name, color: newCategoryColor, mode: newCategoryMode }])
     setNewCategoryName('')
   }
 
   function startCounting() {
     if (!pdf || hasDraft) return
-    let groupId = activeGroup?.categoryId === 'svp-boxing' ? activeGroup.id
+    let groupId = activeCategory?.mode === 'count' ? activeGroup!.id
       : groups.find((group) => group.categoryId === 'svp-boxing')?.id
     if (!groupId) {
       groupId = `G${String(nextGroupNumberRef.current++).padStart(3, '0')}`
@@ -990,23 +1076,23 @@ export default function App() {
     setHiddenGroupIds((current) => current.filter((id) => id !== groupId))
     setSidebarTab('measure')
     setCountMode(true)
-    setStatus('SVP Boxing: click once at each location to add a cross. Drag to pan. Press Done Marking when finished.')
+    setStatus('Points: click once at each location to add a cross. Press Enter or Done Marking when finished.')
   }
 
   function addCountPoint(clientX: number, clientY: number) {
-    if (!countMode || !pdf || activeGroup?.categoryId !== 'svp-boxing') return
+    if (!countMode || !pdf || activeCategory?.mode !== 'count') return
     const point = clientToPdfPoint(clientX, clientY)
     if (!point) return
-    if ((countMeasurements[pageNumber] ?? []).some((item) => Math.hypot(item.point.x - point.x, item.point.y - point.y) < 0.000001)) return
+    if ((countMeasurements[pageNumber] ?? []).some((item) => countCategoryId(item) === activeCategory.id && Math.hypot(item.point.x - point.x, item.point.y - point.y) < 0.000001)) return
     const id = `C${String(nextCountNumberRef.current++).padStart(3, '0')}`
     setCountMeasurements((current) => ({ ...current,
-      [pageNumber]: [...(current[pageNumber] ?? []), { id, point, locked: true, groupId: activeGroupId }],
+      [pageNumber]: [...(current[pageNumber] ?? []), { id, point, locked: true, groupId: activeGroupId, categoryId: activeCategory.id }],
     }))
   }
 
   function finishCounting() {
     setCountMode(false)
-    setStatus('SVP crosses are kept and locked. They can now be saved with the take-off.')
+    setStatus('Point marks are kept and locked. They can now be saved with the take-off.')
   }
 
   function toggleCountLock(id: string) {
@@ -1202,7 +1288,7 @@ export default function App() {
     if (details.groupId && !groups.some((group) => group.id === details.groupId)) return
     if (details.groupId) {
       const categoryId = groups.find((group) => group.id === details.groupId)?.categoryId
-      if (id.startsWith('C') ? categoryId !== 'svp-boxing' : categories.find((category) => category.id === categoryId)?.mode === 'count') return
+      if (id.startsWith('C') ? categories.find((category) => category.id === categoryId)?.mode !== 'count' : categories.find((category) => category.id === categoryId)?.mode === 'count') return
     }
     if (details.heightM !== undefined && (!Number.isFinite(details.heightM) || details.heightM <= 0 || id.startsWith('A'))) return
     // Names and membership can change while geometry stays locked.
@@ -1219,7 +1305,8 @@ export default function App() {
       [pageNumber]: (current[pageNumber] ?? []).map((item) => item.id === id ? { ...item, ...details } : item),
     }))
     if (!('heightM' in details)) setCountMeasurements((current) => ({ ...current,
-      [pageNumber]: (current[pageNumber] ?? []).map((item) => item.id === id ? { ...item, ...details } : item),
+      [pageNumber]: (current[pageNumber] ?? []).map((item) => item.id === id ? { ...item, ...details,
+        ...('groupId' in details ? { categoryId: details.groupId ? groups.find((group) => group.id === details.groupId)?.categoryId : countCategoryId(item) } : {}) } : item),
     }))
   }
 
@@ -1235,7 +1322,8 @@ export default function App() {
     setLengthMeasurements((current) => ungroup(current))
     setRunMeasurements((current) => ungroup(current))
     setAreaMeasurements((current) => ungroup(current))
-    setCountMeasurements((current) => ungroup(current))
+    setCountMeasurements((current) => ungroup(Object.fromEntries(Object.entries(current).map(([page, items]) =>
+      [page, items.map((item) => ({ ...item, categoryId: countCategoryId(item) }))]))))
     setHiddenGroupIds((current) => current.filter((groupId) => groupId !== id))
     if (activeGroupId === id) setActiveGroupId('')
     setStatus('Group removed. Its measurements have been kept as ungrouped measurements.')
@@ -1255,7 +1343,7 @@ export default function App() {
           <select value={groupId} aria-label={`Group for ${id}`}
             onChange={(event) => updateMeasurementDetails(id, { groupId: event.target.value || undefined })}>
             <option value="">Ungrouped</option>
-            {groups.filter((group) => id.startsWith('C') ? group.categoryId === 'svp-boxing'
+            {groups.filter((group) => id.startsWith('C') ? categories.find((category) => category.id === group.categoryId)?.mode === 'count'
               : categories.find((category) => category.id === group.categoryId)?.mode !== 'count')
               .map((group) => <option key={group.id} value={group.id}>{group.name.trim() || group.id}</option>)}
           </select>
@@ -2011,13 +2099,13 @@ export default function App() {
     const totalAreaM2 = sourceGroups.some((group) => group.totalAreaM2 === null) ? null
       : sourceGroups.reduce((sum, group) => sum + (group.totalAreaM2 ?? 0), 0)
     return { ...category, sourceGroups, totalMm, totalAreaM2,
-      count: category.id === 'svp-boxing' ? Object.values(countMeasurements).flat().length : 0,
+      count: category.mode === 'count' ? Object.values(countMeasurements).flat().filter((item) => countCategoryId(item) === category.id).length : 0,
       wallsWithoutHeight: sourceGroups.reduce((sum, group) => sum + group.wallsWithoutHeight, 0) }
   })
   const currentCounts = countMeasurements[pageNumber] ?? []
   const renderedCounts = currentCounts.filter((item) => isMeasurementVisible(item.groupId)).map((item) => {
     const [x, y] = viewportRef.current?.convertToViewportPoint(item.point.x, item.point.y) ?? [0, 0]
-    return { ...item, x, y, color: categories.find((category) => category.id === 'svp-boxing')!.color }
+    return { ...item, x, y, color: categories.find((category) => category.id === countCategoryId(item))?.color ?? '#dc2626' }
   })
   const currentAreas = areaMeasurements[pageNumber] ?? []
   const draftAreaProblem = polygonProblem(areaPoints)
@@ -2103,7 +2191,7 @@ export default function App() {
 
   return (
     <div className="app-shell" aria-busy={isFileBusy}>
-      <header className="topbar">
+      <header className="topbar" inert={!!measurementChooser}>
         <div>
           <div className="eyebrow">DRYLINING TAKE-OFF</div>
           <h1>{fileName || 'New take-off'}</h1>
@@ -2142,7 +2230,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="workspace" inert={isFileBusy}>
+      <main className="workspace" inert={isFileBusy || !!measurementChooser}>
         <aside className="sidebar">
           <div className={`save-status ${hasUnsavedChanges ? 'unsaved' : ''}`} role="status">
             <strong>{isFileBusy ? 'Opening file…' : hasUnsavedChanges ? 'Changes not saved' : lastSavedAt ? 'Saved file loaded / downloaded' : 'Start a new take-off'}</strong>
@@ -2316,9 +2404,8 @@ export default function App() {
                       onChange={(event) => setHiddenGroupIds((current) => event.target.checked ? current.filter((id) => id !== group.id) : [...current, group.id])} />Show on drawing</label>
                     <button onClick={() => { setHiddenGroupIds(groups.filter((item) => item.id !== group.id).map((item) => item.id)); setShowUngrouped(false) }}>Only this</button>
                   </div>
-                  {group.count > 0 && <div className="group-total">{group.count} SVP boxing{group.count === 1 ? '' : 's'}</div>}
-                  {group.categoryId === 'svp-boxing' && group.count === 0 && <div className="group-total">0 SVP boxings</div>}
-                  {group.categoryId !== 'svp-boxing' && <>
+                  {categories.find((category) => category.id === group.categoryId)?.mode === 'count' && <div className="group-total">{group.count} points</div>}
+                  {categories.find((category) => category.id === group.categoryId)?.mode !== 'count' && <>
                   <div className="group-total" aria-live="polite">
                     {group.totalMm === null ? 'Calibration required' : `${(group.totalMm / 1000).toFixed(3)} LM`}
                   </div>
@@ -2367,6 +2454,10 @@ export default function App() {
               <form onSubmit={(event) => { event.preventDefault(); createCategory() }}>
                 <label>Custom work category<input value={newCategoryName} placeholder="Category name" maxLength={100} onChange={(event) => setNewCategoryName(event.target.value)} /></label>
                 <label>Colour<input type="color" value={newCategoryColor} onChange={(event) => setNewCategoryColor(event.target.value)} /></label>
+                <label>Category type<select value={newCategoryMode} onChange={(event) => setNewCategoryMode(event.target.value as 'measure' | 'count')}>
+                  <option value="measure">Measure — lengths and areas</option>
+                  <option value="count">Point — marks and quantity count</option>
+                </select></label>
                 <button type="submit" disabled={!newCategoryName.trim()}>Add Category</button>
               </form>
             </details>
@@ -2383,7 +2474,10 @@ export default function App() {
             <button onClick={() => { setHiddenGroupIds([]); setShowUngrouped(true) }}>Show everything</button>
             <label className="length-lock-control"><input type="checkbox" checked={showUngrouped} onChange={(event) => setShowUngrouped(event.target.checked)} />Show ungrouped</label>
           </div>
-          {activeIsCount && <p className="length-note">SVP Boxing uses cross marks. Select another group to measure lengths or areas.</p>}
+          {(lengthMode || runMode || areaMode || countMode) && <div className="measuring-banner" role="status">
+            <strong>{activeCategory?.name || 'Uncategorised'}</strong>
+            <div>{activeGroup?.name || 'Ungrouped'} · {lengthMode ? 'Click the second point to finish' : 'Press Enter to finish'}</div>
+          </div>}
 
           <button
             className="future-tool"
@@ -2499,21 +2593,21 @@ export default function App() {
           <button
             className="future-tool"
             disabled={
-              runMode || areaMode || countMode || activeIsCount || !currentCalibration ||
+              runMode || areaMode || countMode || calibrationMode || !!pendingCalibration || !currentCalibration ||
               !currentCalibration.locked ||
               currentCalibration.needsRecalibration
             }
             onClick={
               lengthMode
                 ? cancelLengthMeasurement
-                : startLengthMeasurement
+                : () => requestMeasurement('length')
             }
           >
             {lengthMode ? 'Cancel Length' : '+ Add Length'}
           </button>
 
           {!runMode ? (
-            <button className="future-tool run-start" disabled={!lengthCalibrationValid || areaMode || countMode || activeIsCount} onClick={startRun}>
+            <button className="future-tool run-start" disabled={!lengthCalibrationValid || hasDraft} onClick={() => requestMeasurement('run')}>
               + Start Run
             </button>
           ) : (
@@ -2540,15 +2634,18 @@ export default function App() {
           )}
 
           {currentRuns.length > 0 && (
-            <div className={`run-panel ${lengthCalibrationValid ? '' : 'invalid'}`}>
-              <strong>Wall runs ({currentRuns.length})</strong>
+            <details className={`run-panel measurement-section ${lengthCalibrationValid ? '' : 'invalid'}`}>
+              <summary>Wall runs ({currentRuns.length}) · {lengthCalibrationValid ? `${(currentRuns.reduce((sum, run) => sum + runSegments(run.points).reduce((a, b) => a + b, 0), 0) / 1000).toFixed(3)} m` : 'Calibration required'}</summary>
               {!lengthCalibrationValid && <p className="calibration-warning">Recalibrate and lock this page before using these totals.</p>}
               <div className="length-list run-list">
                 {currentRuns.map((run) => {
                   const segments = runSegments(run.points)
                   const totalMm = segments.reduce((sum, mm) => sum + mm, 0)
                   return (
-                    <div className="run-list-item" key={run.id}>
+                    <details className="run-list-item measurement-card" key={run.id}>
+                      <summary>{run.name || run.id} · {lengthCalibrationValid ? `${(totalMm / 1000).toFixed(3)} m` : '—'}
+                        <span>{categories.find((category) => category.id === groups.find((group) => group.id === run.groupId)?.categoryId)?.name || 'Uncategorised'}</span>
+                      </summary>
                       <div className="length-panel-heading">
                         <strong>{run.id}</strong>
                         <div className="length-item-actions">
@@ -2569,31 +2666,30 @@ export default function App() {
                         </ol>
                       </details>
                       {!run.locked && <p className="length-note">Drag a corner on the drawing to edit. Tick Lock when finished.</p>}
-                    </div>
+                    </details>
                   )
                 })}
               </div>
-            </div>
+            </details>
           )}
 
           {currentLengthMeasurements.length > 0 && (
-            <div
-              className={`length-panel ${
+            <details
+              className={`length-panel measurement-section ${
                 lengthCalibrationValid ? '' : 'invalid'
               }`}
             >
-              <div className="length-panel-heading">
+              <summary className="length-panel-heading">
                 <strong>
-                  Lengths ({currentLengthMeasurements.length})
+                  Lengths ({currentLengthMeasurements.length}) · {lengthCalibrationValid ? `${(renderedLengths.reduce((sum, item) => sum + (item.lengthMm ?? 0), 0) / 1000).toFixed(3)} m` : 'Calibration required'}
                 </strong>
-
+              </summary>
                 <button
                   className="clear-all-lengths"
                   onClick={clearAllLengths}
                 >
                   Clear all
                 </button>
-              </div>
 
               {!lengthCalibrationValid && (
                 <div className="calibration-warning">
@@ -2603,10 +2699,13 @@ export default function App() {
 
               <div className="length-list">
                 {renderedLengths.map((measurement) => (
-                  <div
-                    className="length-list-item named-length-item"
+                  <details
+                    className="length-list-item named-length-item measurement-card"
                     key={measurement.id}
                   >
+                    <summary>{measurement.name || measurement.id} · {measurement.lengthMm === null ? '—' : `${(measurement.lengthMm / 1000).toFixed(3)} m`}
+                      <span>{categories.find((category) => category.id === groups.find((group) => group.id === measurement.groupId)?.categoryId)?.name || 'Uncategorised'}</span>
+                    </summary>
                     <div>
                       <strong>{measurement.id}</strong>
 
@@ -2657,7 +2756,7 @@ export default function App() {
                     </div>
                     {measurementDetails(measurement.id, measurement.name, measurement.groupId)}
                     {wallHeightField(measurement.id, measurement.heightM, measurement.lengthMm)}
-                  </div>
+                  </details>
                 ))}
               </div>
 
@@ -2665,10 +2764,10 @@ export default function App() {
                 Fine-tune a measurement, then tick Lock. Locked end points do not
                 intercept clicks, so another length can start from the same corner.
               </div>
-            </div>
+            </details>
           )}
 
-          {!areaMode ? <button className="future-tool area-start" disabled={!lengthCalibrationValid || runMode || countMode || activeIsCount} onClick={startArea}>+ Add Area</button> : (
+          {!areaMode ? <button className="future-tool area-start" disabled={!lengthCalibrationValid || hasDraft} onClick={() => requestMeasurement('area')}>+ Add Area</button> : (
             <div className="area-panel" aria-label="Current area">
               <strong>Area in progress · {areaPoints.length} corners</strong>
               <div className="area-primary" aria-live="polite">{draftAreaM2 === null ? '— m²' : `${draftAreaM2.toFixed(3)} m² so far`}</div>
@@ -2682,12 +2781,15 @@ export default function App() {
               <p className="length-note">Finish or cancel before changing page, calibration or group.</p>
             </div>
           )}
-          {currentAreas.length > 0 && <div className={`area-panel ${lengthCalibrationValid ? '' : 'invalid'}`}>
-            <strong>Areas ({currentAreas.length})</strong>
+          {currentAreas.length > 0 && <details className={`area-panel measurement-section ${lengthCalibrationValid ? '' : 'invalid'}`}>
+            <summary>Areas ({currentAreas.length}) · {lengthCalibrationValid ? `${(currentAreas.reduce((sum, area) => sum + polygonArea(area.points), 0) * currentCalibration.mmPerPdfUnit ** 2 / 1000000).toFixed(3)} m²` : 'Calibration required'}</summary>
             {!lengthCalibrationValid && <p className="calibration-warning">Calibrate and lock this page to show areas.</p>}
             <div className="length-list run-list">
               {currentAreas.map((area) => (
-                <div className="area-list-item" key={area.id}>
+                <details className="area-list-item measurement-card" key={area.id}>
+                  <summary>{area.name || area.id} · {lengthCalibrationValid ? `${(polygonArea(area.points) * currentCalibration.mmPerPdfUnit ** 2 / 1000000).toFixed(3)} m²` : '—'}
+                    <span>{categories.find((category) => category.id === groups.find((group) => group.id === area.groupId)?.categoryId)?.name || 'Uncategorised'}</span>
+                  </summary>
                   <div className="length-panel-heading">
                     <strong>{area.id}</strong>
                     <div className="length-item-actions">
@@ -2702,26 +2804,27 @@ export default function App() {
                   <div className="area-primary">{lengthCalibrationValid ? `${(polygonArea(area.points) * currentCalibration.mmPerPdfUnit ** 2 / 1000000).toFixed(3)} m²` : 'Calibration required'}</div>
                   <div>{area.points.length} corners</div>
                   {!area.locked && <p className="length-note">Drag a corner to adjust the outline, then tick Lock.</p>}
-                </div>
+                </details>
               ))}
             </div>
-          </div>}
+          </details>}
 
-          {!countMode ? <button className="future-tool count-start" disabled={!pdf || hasDraft} onClick={startCounting}>+ Mark SVP Boxing</button> : <div className="count-panel">
-            <strong>Mark SVP Boxing</strong>
-            <p>Click once at each location. Each cross counts as one boxing.</p>
+          {!countMode ? <button className="future-tool count-start" disabled={!pdf || hasDraft} onClick={() => requestMeasurement('point')}>+ Add Points</button> : <div className="count-panel">
+            <strong>{activeCategory?.name || 'Point marks'}</strong>
+            <p>Click once at each location. Each cross counts as one. Press Enter or Done Marking to finish.</p>
             <button className="wide-control" onClick={finishCounting}>Done Marking</button>
           </div>}
-          {currentCounts.length > 0 && <div className="count-panel">
-            <strong>SVP Boxing · {currentCounts.length} on this page</strong>
-            <div className="length-list run-list">{currentCounts.map((count) => <div className="count-list-item" key={count.id}>
+          {currentCounts.length > 0 && <details className="count-panel measurement-section">
+            <summary>Point marks ({currentCounts.length}) · this page</summary>
+            <div className="length-list run-list">{currentCounts.map((count) => <details className="count-list-item measurement-card" key={count.id}>
+              <summary>{count.name || count.id}<span>{categories.find((category) => category.id === countCategoryId(count))?.name || 'Point'} · 1 no.</span></summary>
               <div className="length-panel-heading"><strong>{count.id}</strong><div className="length-item-actions">
                 <label className="length-lock-control"><input type="checkbox" checked={count.locked} aria-label={`Lock ${count.id}`} onChange={() => toggleCountLock(count.id)} />Lock</label>
                 <button className="delete-length-button" aria-label={`Delete ${count.id}`} onClick={() => deleteCount(count.id)}>×</button>
               </div></div>
               {measurementDetails(count.id, count.name, count.groupId)}
-            </div>)}</div>
-          </div>}
+            </details>)}</div>
+          </details>}
           </div>
 
           <p className="status" role="status">{status}</p>
@@ -3059,6 +3162,30 @@ export default function App() {
           )}
         </section>
       </main>
+      {measurementChooser && <div className="measurement-dialog-backdrop" onKeyDown={(event) => {
+        if (event.key === 'Escape') { event.stopPropagation(); setMeasurementChooser(null) }
+      }}>
+        <form className="measurement-dialog" role="dialog" aria-modal="true" aria-labelledby="measurement-dialog-title"
+          onSubmit={(event) => { event.preventDefault(); confirmMeasurement() }}>
+          <h2 id="measurement-dialog-title">{measurementChooser === 'run' ? 'Start a wall run' : measurementChooser === 'area' ? 'Measure an area' : measurementChooser === 'point' ? 'Add point marks' : 'Measure a length'}</h2>
+          <label>What are you measuring?
+            <select autoFocus aria-label="Measurement category" value={chooserCategoryId} onChange={(event) => chooseMeasurementCategory(event.target.value)}>
+              {categories.filter((category) => category.mode === (measurementChooser === 'point' ? 'count' : 'measure')).map((category) => <option key={category.id} value={category.id}>{category.name || category.id}</option>)}
+            </select>
+          </label>
+          <p>Your measurement will be added to this category automatically.</p>
+          <details><summary>Group options (optional)</summary>
+            <label>Add to group<select value={chooserGroupId} onChange={(event) => setChooserGroupId(event.target.value)}>
+              {groups.filter((group) => group.categoryId === chooserCategoryId).map((group) => <option key={group.id} value={group.id}>{group.name || group.id}</option>)}
+              <option value="__new__">Create a new group</option>
+            </select></label>
+            {chooserGroupId === '__new__' && <label>Group name (optional)<input value={chooserGroupName} maxLength={100} placeholder={categories.find((category) => category.id === chooserCategoryId)?.name}
+              onChange={(event) => setChooserGroupName(event.target.value)} /></label>}
+          </details>
+          <div className="dialog-actions"><button type="button" onClick={() => setMeasurementChooser(null)}>Cancel</button>
+            <button className="run-finish" type="submit">Start Measuring</button></div>
+        </form>
+      </div>}
     </div>
   )
 }
