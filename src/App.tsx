@@ -48,7 +48,23 @@ type RunMeasurement = {
   locked: boolean
 }
 
-type MeasurementGroup = { id: string; name: string }
+type MeasurementGroup = { id: string; name: string; categoryId?: string; includeSkim?: boolean }
+type WorkCategory = { id: string; name: string; color: string; mode: 'measure' | 'count' | 'derived'; skimTarget?: 'walls' | 'ceilings' }
+type CountMeasurement = { id: string; name?: string; groupId?: string; point: Point; locked: boolean }
+
+const initialCategories: WorkCategory[] = [
+  { id: 'tack-ceiling', name: 'Tack Ceiling', color: '#2563eb', mode: 'measure', skimTarget: 'ceilings' },
+  { id: 'tack-timber-wall', name: 'Tack Timber Wall', color: '#0f766e', mode: 'measure', skimTarget: 'walls' },
+  { id: 'tack-metal-wall', name: 'Tack Metal Wall', color: '#7c3aed', mode: 'measure', skimTarget: 'walls' },
+  { id: 'dabbed-external-wall', name: 'Dabbed External Wall', color: '#c2410c', mode: 'measure', skimTarget: 'walls' },
+  { id: 'dabbed-internal-wall', name: 'Dabbed Internal Wall', color: '#be185d', mode: 'measure', skimTarget: 'walls' },
+  { id: 'metal-studwork', name: 'Metal Studwork', color: '#475569', mode: 'measure' },
+  { id: 'insulated-ceiling', name: 'Insulated Ceiling', color: '#a16207', mode: 'measure' },
+  { id: 'insulated-wall', name: 'Insulated Wall', color: '#15803d', mode: 'measure' },
+  { id: 'svp-boxing', name: 'SVP Boxing', color: '#dc2626', mode: 'count' },
+  { id: 'skimmed-walls', name: 'Skimmed Walls', color: '#9333ea', mode: 'derived' },
+  { id: 'skimmed-ceiling', name: 'Skimmed Ceiling', color: '#0369a1', mode: 'derived' },
+]
 
 type AreaMeasurement = {
   id: string
@@ -100,7 +116,7 @@ function polygonProblem(points: Point[]): string | null {
 type JobDetails = { site: string; plot: string; houseType: string; revision: string }
 type TakeoffFile = {
   format: 'drylining-takeoff'
-  version: 3
+  version: 4
   savedAt: string
   drawing: { name: string; pdfBase64: string }
   job: JobDetails
@@ -108,12 +124,15 @@ type TakeoffFile = {
   lengths: Record<number, LengthMeasurement[]>
   runs: Record<number, RunMeasurement[]>
   areas: Record<number, AreaMeasurement[]>
+  counts: Record<number, CountMeasurement[]>
+  categories: WorkCategory[]
+  nextCountNumber: number
   nextLengthNumber: number
   nextRunNumber: number
   groups: MeasurementGroup[]
   nextGroupNumber: number
   nextAreaNumber: number
-  view: { page: number; rotation: number; mode: ViewMode; scale: number; pan: Pan }
+  view: { page: number; rotation: number; mode: ViewMode; scale: number; pan: Pan; hiddenGroupIds?: string[]; showUngrouped?: boolean }
 }
 
 const emptyJob: JobDetails = { site: '', plot: '', houseType: '', revision: '' }
@@ -141,7 +160,7 @@ function readTakeoff(value: unknown): TakeoffFile {
   if (!object(value) || value.format !== 'drylining-takeoff') {
     throw new Error('Choose a saved take-off (.takeoff.json), or use Upload drawing for a PDF.')
   }
-  if (![1, 2, 3].includes(value.version)) {
+  if (![1, 2, 3, 4].includes(value.version)) {
     throw new Error('This take-off uses a different file version. Open it with the version of the app that saved it.')
   }
   if (!object(value.drawing) || typeof value.drawing.name !== 'string' || !value.drawing.name.trim()
@@ -155,6 +174,21 @@ function readTakeoff(value: unknown): TakeoffFile {
     || !point(view.pan)) invalid()
   if (!integer(value.nextLengthNumber) || !integer(value.nextRunNumber)) invalid()
   const ids = new Set<string>()
+  const categories: WorkCategory[] = value.version === 4 ? value.categories : initialCategories.map((category) => ({ ...category }))
+  if (!Array.isArray(categories)) invalid()
+  const categoryIds = new Set<string>()
+  for (const category of categories) {
+    if (!object(category) || typeof category.id !== 'string' || !category.id.length || categoryIds.has(category.id)
+      || typeof category.name !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(category.color)
+      || !['measure', 'count', 'derived'].includes(category.mode)
+      || (category.skimTarget !== undefined && (category.mode !== 'measure' || !['walls', 'ceilings'].includes(category.skimTarget)))) invalid()
+    categoryIds.add(category.id)
+  }
+  // Built-in category IDs keep counting and automatic skim rules stable across saves.
+  for (const required of initialCategories) {
+    const category = categories.find((item) => item.id === required.id)
+    if (!category || category.mode !== required.mode || category.skimTarget !== required.skimTarget) invalid()
+  }
   const groups: MeasurementGroup[] = value.version === 1 ? [] : value.groups
   const nextGroupNumber = value.version === 1 ? 1 : value.nextGroupNumber
   if (!Array.isArray(groups) || !integer(nextGroupNumber)) invalid()
@@ -164,10 +198,14 @@ function readTakeoff(value: unknown): TakeoffFile {
       || !integer(Number(group.id.slice(1))) || Number(group.id.slice(1)) >= nextGroupNumber
       || typeof group.name !== 'string' || groupIds.has(group.id)) invalid()
     groupIds.add(group.id)
+    if (group.includeSkim !== undefined && typeof group.includeSkim !== 'boolean') invalid()
+    if (group.categoryId !== undefined && (!categoryIds.has(group.categoryId)
+      || categories.find((category) => category.id === group.categoryId)?.mode === 'derived')) invalid()
   }
   let maxLength = 0
   let maxRun = 0
   let maxArea = 0
+  let maxCount = 0
   function pages(record: any, validate: (item: any) => boolean) {
     if (!object(record)) invalid()
     for (const [key, item] of Object.entries(record)) {
@@ -178,18 +216,24 @@ function readTakeoff(value: unknown): TakeoffFile {
     && finite(c.distanceMm) && c.distanceMm > 0 && finite(c.mmPerPdfUnit) && c.mmPerPdfUnit > 0
     && typeof c.locked === 'boolean' && typeof c.needsRecalibration === 'boolean'
     && (c.needsRecalibration || Math.hypot(c.pointA.x - c.pointB.x, c.pointA.y - c.pointB.y) > 0))
-  function measurement(item: any, prefix: 'L' | 'R' | 'A') {
+  function measurement(item: any, prefix: 'L' | 'R' | 'A' | 'C') {
     if (!object(item) || typeof item.id !== 'string' || !new RegExp(`^${prefix}\\d{3,}$`).test(item.id)
       || typeof item.locked !== 'boolean' || ids.has(item.id)) return false
     if (item.name !== undefined && typeof item.name !== 'string') return false
     if (item.groupId !== undefined && (typeof item.groupId !== 'string' || !groupIds.has(item.groupId))) return false
-    if (item.heightM !== undefined && (prefix === 'A' || !finite(item.heightM) || item.heightM <= 0)) return false
+    if (item.heightM !== undefined && ((prefix !== 'L' && prefix !== 'R') || !finite(item.heightM) || item.heightM <= 0)) return false
+    if (item.groupId) {
+      const categoryId = groups.find((group) => group.id === item.groupId)?.categoryId
+      const mode = categories.find((category) => category.id === categoryId)?.mode
+      if (prefix === 'C' ? categoryId !== 'svp-boxing' : mode === 'count') return false
+    }
     const number = Number(item.id.slice(1))
     if (!integer(number)) return false
     ids.add(item.id)
     if (prefix === 'L') maxLength = Math.max(maxLength, number)
     else if (prefix === 'R') maxRun = Math.max(maxRun, number)
-    else maxArea = Math.max(maxArea, number)
+    else if (prefix === 'A') maxArea = Math.max(maxArea, number)
+    else maxCount = Math.max(maxCount, number)
     return true
   }
   pages(value.lengths, (items) => Array.isArray(items) && items.every((item) =>
@@ -198,13 +242,20 @@ function readTakeoff(value: unknown): TakeoffFile {
     measurement(item, 'R') && Array.isArray(item.points) && item.points.length >= 2
     && item.points.every(point)))
   if (value.nextLengthNumber <= maxLength || value.nextRunNumber <= maxRun) invalid()
-  const areas = value.version === 3 ? value.areas : {}
-  const nextAreaNumber = value.version === 3 ? value.nextAreaNumber : 1
+  const areas = value.version >= 3 ? value.areas : {}
+  const nextAreaNumber = value.version >= 3 ? value.nextAreaNumber : 1
   if (!integer(nextAreaNumber)) invalid()
   pages(areas, (items) => Array.isArray(items) && items.every((item) => measurement(item, 'A')
     && Array.isArray(item.points) && item.points.every(point) && !polygonProblem(item.points)))
   if (nextAreaNumber <= maxArea) invalid()
-  return { ...value, version: 3, groups, nextGroupNumber, areas, nextAreaNumber } as TakeoffFile
+  const counts = value.version === 4 ? value.counts : {}
+  const nextCountNumber = value.version === 4 ? value.nextCountNumber : 1
+  if (!integer(nextCountNumber)) invalid()
+  pages(counts, (items) => Array.isArray(items) && items.every((item) => measurement(item, 'C') && point(item.point)))
+  if (nextCountNumber <= maxCount) invalid()
+  if (view.hiddenGroupIds !== undefined && (!Array.isArray(view.hiddenGroupIds) || !view.hiddenGroupIds.every((id: unknown) => typeof id === 'string' && groupIds.has(id)))) invalid()
+  if (view.showUngrouped !== undefined && typeof view.showUngrouped !== 'boolean') invalid()
+  return { ...value, version: 4, groups, nextGroupNumber, areas, nextAreaNumber, categories, counts, nextCountNumber } as TakeoffFile
 }
 
 export default function App() {
@@ -235,6 +286,8 @@ export default function App() {
   const nextRunNumberRef = useRef(1)
   const nextGroupNumberRef = useRef(1)
   const nextAreaNumberRef = useRef(1)
+  const nextCountNumberRef = useRef(1)
+  const countDragRef = useRef<{ countId: string; pointerId: number } | null>(null)
   const areaDragRef = useRef<{ areaId: string; pointIndex: number; pointerId: number } | null>(null)
   const runDragRef = useRef<{
     runId: string; pointIndex: number; pointerId: number
@@ -298,6 +351,17 @@ export default function App() {
   const [areaPoints, setAreaPoints] = useState<Point[]>([])
   const [areaMeasurements, setAreaMeasurements] = useState<Record<number, AreaMeasurement[]>>({})
   const [heightDrafts, setHeightDrafts] = useState<Record<string, string>>({})
+  const [categories, setCategories] = useState<WorkCategory[]>(() => initialCategories.map((category) => ({ ...category })))
+  const [countMeasurements, setCountMeasurements] = useState<Record<number, CountMeasurement[]>>({})
+  const [countMode, setCountMode] = useState(false)
+  const [hiddenGroupIds, setHiddenGroupIds] = useState<string[]>([])
+  const [showUngrouped, setShowUngrouped] = useState(true)
+  const [sidebarTab, setSidebarTab] = useState<'measure' | 'groups' | 'summary'>('measure')
+  const [newCategoryName, setNewCategoryName] = useState('')
+  const [newCategoryColor, setNewCategoryColor] = useState('#0891b2')
+  const activeGroup = groups.find((group) => group.id === activeGroupId)
+  const activeCategory = categories.find((category) => category.id === activeGroup?.categoryId)
+  const activeIsCount = activeCategory?.mode === 'count'
   const wallIds = new Set([...Object.values(lengthMeasurements).flat(), ...Object.values(runMeasurements).flat()].map((item) => item.id))
   const hasInvalidHeight = Object.entries(heightDrafts).some(([id, text]) => wallIds.has(id)
     && text !== '' && (!Number.isFinite(Number(text)) || Number(text) <= 0))
@@ -306,8 +370,9 @@ export default function App() {
   const dataSignature = JSON.stringify({ job, calibrations, lengths: lengthMeasurements,
     runs: runMeasurements, nextLengthNumber: nextLengthNumberRef.current,
     nextRunNumber: nextRunNumberRef.current, groups, nextGroupNumber: nextGroupNumberRef.current,
-    areas: areaMeasurements, nextAreaNumber: nextAreaNumberRef.current })
-  const hasDraft = runMode || lengthMode || areaMode || calibrationMode || !!pendingCalibration
+    areas: areaMeasurements, nextAreaNumber: nextAreaNumberRef.current,
+    counts: countMeasurements, nextCountNumber: nextCountNumberRef.current, categories })
+  const hasDraft = runMode || lengthMode || areaMode || countMode || calibrationMode || !!pendingCalibration
   const hasUnsavedChanges = (savedSignature === null
     ? !!pdf || Object.values(job).some(Boolean)
     : savedSignature !== dataSignature) || hasDraft || hasInvalidHeight
@@ -327,6 +392,8 @@ export default function App() {
   }
 
   function resetDrafts() {
+    setCountMode(false)
+    countDragRef.current = null
     setAreaMode(false)
     setAreaPoints([])
     setHeightDrafts({})
@@ -360,13 +427,14 @@ export default function App() {
     try {
       const savedAt = new Date().toISOString()
       const takeoff: TakeoffFile = {
-        format: 'drylining-takeoff', version: 3, savedAt,
+        format: 'drylining-takeoff', version: 4, savedAt,
         drawing: { name: fileName, pdfBase64: encodePdf(pdfBytesRef.current) },
         job: { ...job }, calibrations, lengths: lengthMeasurements, runs: runMeasurements,
         nextLengthNumber: nextLengthNumberRef.current, nextRunNumber: nextRunNumberRef.current,
         groups, nextGroupNumber: nextGroupNumberRef.current,
         areas: areaMeasurements, nextAreaNumber: nextAreaNumberRef.current,
-        view: { page: pageNumber, rotation, mode: viewMode, scale, pan },
+        counts: countMeasurements, nextCountNumber: nextCountNumberRef.current, categories,
+        view: { page: pageNumber, rotation, mode: viewMode, scale, pan, hiddenGroupIds, showUngrouped },
       }
       const blob = new Blob([JSON.stringify(takeoff)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
@@ -401,7 +469,7 @@ export default function App() {
       const bytes = decodePdf(saved.drawing.pdfBase64)
       // PDF.js may transfer its input buffer to the worker. Keep our own copy for saving again.
       loadedPdf = await pdfjsLib.getDocument({ data: bytes.slice() }).promise
-      const pages = [...Object.keys(saved.calibrations), ...Object.keys(saved.lengths), ...Object.keys(saved.runs), ...Object.keys(saved.areas)]
+      const pages = [...Object.keys(saved.calibrations), ...Object.keys(saved.lengths), ...Object.keys(saved.runs), ...Object.keys(saved.areas), ...Object.keys(saved.counts)]
       if (saved.view.page > loadedPdf.numPages || pages.some((key) => Number(key) > loadedPdf!.numPages)) {
         throw new Error('The saved measurements refer to a missing PDF page. Your current work has been kept.')
       }
@@ -414,6 +482,13 @@ export default function App() {
       setLengthMeasurements(saved.lengths)
       setRunMeasurements(saved.runs)
       setAreaMeasurements(saved.areas)
+      setCategories(saved.categories)
+      setCountMeasurements(saved.counts)
+      nextCountNumberRef.current = saved.nextCountNumber
+      setHiddenGroupIds(saved.view.hiddenGroupIds ?? [])
+      setShowUngrouped(saved.view.showUngrouped ?? true)
+      setSidebarTab('measure')
+      setNewCategoryName('')
       nextAreaNumberRef.current = saved.nextAreaNumber
       setGroups(saved.groups)
       setActiveGroupId('')
@@ -430,7 +505,8 @@ export default function App() {
       setSavedSignature(JSON.stringify({ job: saved.job, calibrations: saved.calibrations,
         lengths: saved.lengths, runs: saved.runs, nextLengthNumber: saved.nextLengthNumber,
         nextRunNumber: saved.nextRunNumber, groups: saved.groups, nextGroupNumber: saved.nextGroupNumber,
-        areas: saved.areas, nextAreaNumber: saved.nextAreaNumber }))
+        areas: saved.areas, nextAreaNumber: saved.nextAreaNumber,
+        counts: saved.counts, nextCountNumber: saved.nextCountNumber, categories: saved.categories }))
       setLastSavedAt(saved.savedAt)
       setStatus(`Opened ${file.name}. Your drawing, job details and measurements are restored.`)
       loadedPdf = null // Ownership has passed to the viewer.
@@ -460,6 +536,13 @@ export default function App() {
       setFileName(file.name)
       setJob({ ...emptyJob })
       setAreaMeasurements({})
+      setCountMeasurements({})
+      nextCountNumberRef.current = 1
+      setCategories(initialCategories.map((category) => ({ ...category })))
+      setHiddenGroupIds([])
+      setShowUngrouped(true)
+      setSidebarTab('measure')
+      setNewCategoryName('')
       nextAreaNumberRef.current = 1
       setGroups([])
       setActiveGroupId('')
@@ -656,6 +739,8 @@ export default function App() {
         addRunPoint(event.clientX, event.clientY)
       } else if (areaMode) {
         addAreaPoint(event.clientX, event.clientY)
+      } else if (countMode) {
+        addCountPoint(event.clientX, event.clientY)
       } else if (lengthMode) {
         addLengthPoint(event.clientX, event.clientY)
       }
@@ -846,8 +931,127 @@ export default function App() {
     return !!calibration && calibration.locked && !calibration.needsRecalibration
   }
 
+  function revealActiveGroup() {
+    setSidebarTab('measure')
+    if (activeGroupId) setHiddenGroupIds((current) => current.filter((id) => id !== activeGroupId))
+    else setShowUngrouped(true)
+  }
+
+  function categoryColor(groupId: string | undefined, fallback: string) {
+    const group = groups.find((item) => item.id === groupId)
+    return categories.find((category) => category.id === group?.categoryId)?.color ?? fallback
+  }
+
+  function isMeasurementVisible(groupId?: string) {
+    return groupId ? !hiddenGroupIds.includes(groupId) : showUngrouped
+  }
+
+  function setGroupCategory(id: string, categoryId: string) {
+    if (hasDraft) return
+    const category = categories.find((item) => item.id === categoryId)
+    if (categoryId && (!category || category.mode === 'derived')) return
+    const geometry = [...Object.values(lengthMeasurements).flat(), ...Object.values(runMeasurements).flat(), ...Object.values(areaMeasurements).flat()]
+    const counts = Object.values(countMeasurements).flat()
+    if (category?.mode === 'count' && geometry.some((item) => item.groupId === id)) {
+      setStatus('SVP Boxing uses crosses only. Move this group’s lengths or areas to another group first.')
+      return
+    }
+    if (categoryId !== 'svp-boxing' && counts.some((item) => item.groupId === id)) {
+      setStatus('This group contains SVP crosses. Move them to another SVP Boxing group first.')
+      return
+    }
+    setGroups((current) => current.map((group) => group.id === id ? { ...group, categoryId: categoryId || undefined } : group))
+  }
+
+  function updateCategory(id: string, details: { name?: string; color?: string }) {
+    if (details.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(details.color)) return
+    setCategories((current) => current.map((category) => category.id === id ? { ...category, ...details } : category))
+  }
+
+  function createCategory() {
+    const name = newCategoryName.trim()
+    if (!name || !/^#[0-9a-fA-F]{6}$/.test(newCategoryColor)) return
+    let number = 1
+    while (categories.some((category) => category.id === `custom-${number}`)) number++
+    setCategories((current) => [...current, { id: `custom-${number}`, name, color: newCategoryColor, mode: 'measure' }])
+    setNewCategoryName('')
+  }
+
+  function startCounting() {
+    if (!pdf || hasDraft) return
+    let groupId = activeGroup?.categoryId === 'svp-boxing' ? activeGroup.id
+      : groups.find((group) => group.categoryId === 'svp-boxing')?.id
+    if (!groupId) {
+      groupId = `G${String(nextGroupNumberRef.current++).padStart(3, '0')}`
+      const id = groupId
+      setGroups((current) => [...current, { id, name: 'SVP Boxing', categoryId: 'svp-boxing' }])
+    }
+    setActiveGroupId(groupId)
+    setHiddenGroupIds((current) => current.filter((id) => id !== groupId))
+    setSidebarTab('measure')
+    setCountMode(true)
+    setStatus('SVP Boxing: click once at each location to add a cross. Drag to pan. Press Done Marking when finished.')
+  }
+
+  function addCountPoint(clientX: number, clientY: number) {
+    if (!countMode || !pdf || activeGroup?.categoryId !== 'svp-boxing') return
+    const point = clientToPdfPoint(clientX, clientY)
+    if (!point) return
+    if ((countMeasurements[pageNumber] ?? []).some((item) => Math.hypot(item.point.x - point.x, item.point.y - point.y) < 0.000001)) return
+    const id = `C${String(nextCountNumberRef.current++).padStart(3, '0')}`
+    setCountMeasurements((current) => ({ ...current,
+      [pageNumber]: [...(current[pageNumber] ?? []), { id, point, locked: true, groupId: activeGroupId }],
+    }))
+  }
+
+  function finishCounting() {
+    setCountMode(false)
+    setStatus('SVP crosses are kept and locked. They can now be saved with the take-off.')
+  }
+
+  function toggleCountLock(id: string) {
+    setCountMeasurements((current) => ({ ...current,
+      [pageNumber]: (current[pageNumber] ?? []).map((item) => item.id === id ? { ...item, locked: !item.locked } : item),
+    }))
+  }
+
+  function deleteCount(id: string) {
+    setCountMeasurements((current) => ({ ...current, [pageNumber]: (current[pageNumber] ?? []).filter((item) => item.id !== id) }))
+  }
+
+  function startCountHandleDrag(event: React.PointerEvent<SVGCircleElement>, countId: string) {
+    if (event.button !== 0 || hasDraft) return
+    const count = (countMeasurements[pageNumber] ?? []).find((item) => item.id === countId)
+    if (!count || count.locked) return
+    event.preventDefault()
+    event.stopPropagation()
+    countDragRef.current = { countId, pointerId: event.pointerId }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function moveCountHandle(event: React.PointerEvent<SVGCircleElement>) {
+    const drag = countDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    const point = clientToPdfPoint(event.clientX, event.clientY)
+    if (!point) return
+    setCountMeasurements((current) => ({ ...current,
+      [pageNumber]: (current[pageNumber] ?? []).map((item) => item.id === drag.countId && !item.locked ? { ...item, point } : item),
+    }))
+  }
+
+  function endCountHandleDrag(event: React.PointerEvent<SVGCircleElement>) {
+    if (countDragRef.current?.pointerId !== event.pointerId) return
+    event.preventDefault()
+    event.stopPropagation()
+    countDragRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+
   function startArea() {
-    if (!hasValidCalibration() || runMode || areaMode) return
+    if (!hasValidCalibration() || runMode || areaMode || countMode || activeIsCount) return
+    revealActiveGroup()
     setLengthMode(false)
     setLengthPoints([])
     setCalibrationMode(false)
@@ -968,7 +1172,8 @@ export default function App() {
   }
 
   function startRun() {
-    if (!hasValidCalibration() || runMode || areaMode) return
+    if (!hasValidCalibration() || runMode || areaMode || countMode || activeIsCount) return
+    revealActiveGroup()
     setLengthMode(false)
     setLengthPoints([])
     setCalibrationMode(false)
@@ -995,6 +1200,10 @@ export default function App() {
 
   function updateMeasurementDetails(id: string, details: { name?: string; groupId?: string; heightM?: number }) {
     if (details.groupId && !groups.some((group) => group.id === details.groupId)) return
+    if (details.groupId) {
+      const categoryId = groups.find((group) => group.id === details.groupId)?.categoryId
+      if (id.startsWith('C') ? categoryId !== 'svp-boxing' : categories.find((category) => category.id === categoryId)?.mode === 'count') return
+    }
     if (details.heightM !== undefined && (!Number.isFinite(details.heightM) || details.heightM <= 0 || id.startsWith('A'))) return
     // Names and membership can change while geometry stays locked.
     setLengthMeasurements((current) => ({
@@ -1007,6 +1216,9 @@ export default function App() {
     }))
     if (!('heightM' in details)) setAreaMeasurements((current) => ({
       ...current,
+      [pageNumber]: (current[pageNumber] ?? []).map((item) => item.id === id ? { ...item, ...details } : item),
+    }))
+    if (!('heightM' in details)) setCountMeasurements((current) => ({ ...current,
       [pageNumber]: (current[pageNumber] ?? []).map((item) => item.id === id ? { ...item, ...details } : item),
     }))
   }
@@ -1023,6 +1235,8 @@ export default function App() {
     setLengthMeasurements((current) => ungroup(current))
     setRunMeasurements((current) => ungroup(current))
     setAreaMeasurements((current) => ungroup(current))
+    setCountMeasurements((current) => ungroup(current))
+    setHiddenGroupIds((current) => current.filter((groupId) => groupId !== id))
     if (activeGroupId === id) setActiveGroupId('')
     setStatus('Group removed. Its measurements have been kept as ungrouped measurements.')
   }
@@ -1041,7 +1255,9 @@ export default function App() {
           <select value={groupId} aria-label={`Group for ${id}`}
             onChange={(event) => updateMeasurementDetails(id, { groupId: event.target.value || undefined })}>
             <option value="">Ungrouped</option>
-            {groups.map((group) => <option key={group.id} value={group.id}>{group.name.trim() || group.id}</option>)}
+            {groups.filter((group) => id.startsWith('C') ? group.categoryId === 'svp-boxing'
+              : categories.find((category) => category.id === group.categoryId)?.mode !== 'count')
+              .map((group) => <option key={group.id} value={group.id}>{group.name.trim() || group.id}</option>)}
           </select>
         </label>
       </div>
@@ -1106,7 +1322,7 @@ export default function App() {
   function startRunHandleDrag(
     event: React.PointerEvent<SVGCircleElement>, runId: string, pointIndex: number
   ) {
-    if (event.button !== 0 || runMode || areaMode || lengthMode || calibrationMode || !hasValidCalibration()) return
+    if (event.button !== 0 || hasDraft || !hasValidCalibration()) return
     const run = (runMeasurements[pageNumber] ?? []).find((item) => item.id === runId)
     if (!run || run.locked) return
     event.stopPropagation()
@@ -1146,7 +1362,8 @@ export default function App() {
   }
 
   function startLengthMeasurement() {
-    if (runMode || areaMode) return
+    if (runMode || areaMode || countMode || activeIsCount) return
+    revealActiveGroup()
     const calibration = calibrations[pageNumber]
 
     if (
@@ -1392,7 +1609,7 @@ export default function App() {
   }
 
   function startCalibration() {
-    if (!pdf || runMode || areaMode) return
+    if (!pdf || runMode || areaMode || countMode) return
 
     setLengthMode(false)
     setLengthPoints([])
@@ -1451,7 +1668,7 @@ export default function App() {
   }
 
   function unlockCalibration() {
-    if (runMode || areaMode) return
+    if (runMode || areaMode || countMode) return
     setRecalibrationDistance('')
 
     setCalibrations((current) => {
@@ -1528,7 +1745,7 @@ export default function App() {
   }
 
   function clearCalibration() {
-    if (runMode || areaMode) return
+    if (runMode || areaMode || countMode) return
     setCalibrations((current) => {
       const updated = { ...current }
       delete updated[pageNumber]
@@ -1748,7 +1965,7 @@ export default function App() {
   }
 
   const currentRuns = runMeasurements[pageNumber] ?? []
-  const allMeasurements: Array<{ id: string; name?: string; groupId?: string; page: number; pdfLength: number; pdfArea: number; heightM?: number; kind: 'wall' | 'area' }> = [
+  const allMeasurements: Array<{ id: string; name?: string; groupId?: string; page: number; pdfLength: number; pdfArea: number; heightM?: number; kind: 'wall' | 'area' | 'count' }> = [
     ...Object.entries(lengthMeasurements).flatMap(([page, items]) => items.map((item) => ({
       ...item, page: Number(page), pdfLength: Math.hypot(item.pointB.x - item.pointA.x, item.pointB.y - item.pointA.y), pdfArea: 0, kind: 'wall' as const,
     }))),
@@ -1759,33 +1976,56 @@ export default function App() {
     ...Object.entries(areaMeasurements).flatMap(([page, items]) => items.map((item) => ({
       ...item, page: Number(page), pdfLength: 0, pdfArea: polygonArea(item.points), kind: 'area' as const,
     }))),
+    ...Object.entries(countMeasurements).flatMap(([page, items]) => items.map((item) => ({
+      ...item, page: Number(page), pdfLength: 0, pdfArea: 0, kind: 'count' as const,
+    }))),
   ]
   const groupSummaries = groups.map((group) => {
     const members = allMeasurements.filter((item) => item.groupId === group.id)
     const invalidPages = [...new Set(members.filter((item) => {
       const calibration = calibrations[item.page]
-      return !calibration || !calibration.locked || calibration.needsRecalibration
+      return item.kind !== 'count' && (!calibration || !calibration.locked || calibration.needsRecalibration)
     }).map((item) => item.page))].sort((a, b) => a - b)
     const totalMm = invalidPages.length ? null : members.reduce((sum, item) =>
-      sum + item.pdfLength * calibrations[item.page].mmPerPdfUnit, 0)
+      sum + (item.kind === 'count' ? 0 : item.pdfLength * calibrations[item.page].mmPerPdfUnit), 0)
     const invalidHeightIds = members.filter((item) => {
       const text = heightDrafts[item.id]
       return item.kind === 'wall' && text !== undefined && text !== '' && (!Number.isFinite(Number(text)) || Number(text) <= 0)
     }).map((item) => item.id)
     const totalAreaM2 = invalidPages.length || invalidHeightIds.length ? null : members.reduce((sum, item) => {
+      if (item.kind === 'count') return sum
       const mmPerUnit = calibrations[item.page].mmPerPdfUnit
       return sum + (item.kind === 'area' ? item.pdfArea * mmPerUnit ** 2 / 1000000
         : item.heightM === undefined ? 0 : item.pdfLength * mmPerUnit / 1000 * item.heightM)
     }, 0)
     const wallsWithoutHeight = members.filter((item) => item.kind === 'wall' && item.heightM === undefined).length
-    return { ...group, members, invalidPages, totalMm, totalAreaM2, wallsWithoutHeight, invalidHeightIds }
+    return { ...group, members, invalidPages, totalMm, totalAreaM2, wallsWithoutHeight, invalidHeightIds,
+      count: members.filter((item) => item.kind === 'count').length }
+  })
+  const categorySummaries = categories.map((category) => {
+    const sourceGroups = groupSummaries.filter((group) => category.mode === 'derived'
+      ? group.includeSkim !== false && categories.find((item) => item.id === group.categoryId)?.skimTarget === (category.id === 'skimmed-walls' ? 'walls' : 'ceilings')
+      : group.categoryId === category.id)
+    const totalMm = category.mode === 'derived' ? 0 : sourceGroups.some((group) => group.totalMm === null) ? null
+      : sourceGroups.reduce((sum, group) => sum + (group.totalMm ?? 0), 0)
+    const totalAreaM2 = sourceGroups.some((group) => group.totalAreaM2 === null) ? null
+      : sourceGroups.reduce((sum, group) => sum + (group.totalAreaM2 ?? 0), 0)
+    return { ...category, sourceGroups, totalMm, totalAreaM2,
+      count: category.id === 'svp-boxing' ? Object.values(countMeasurements).flat().length : 0,
+      wallsWithoutHeight: sourceGroups.reduce((sum, group) => sum + group.wallsWithoutHeight, 0) }
+  })
+  const currentCounts = countMeasurements[pageNumber] ?? []
+  const renderedCounts = currentCounts.filter((item) => isMeasurementVisible(item.groupId)).map((item) => {
+    const [x, y] = viewportRef.current?.convertToViewportPoint(item.point.x, item.point.y) ?? [0, 0]
+    return { ...item, x, y, color: categories.find((category) => category.id === 'svp-boxing')!.color }
   })
   const currentAreas = areaMeasurements[pageNumber] ?? []
   const draftAreaProblem = polygonProblem(areaPoints)
   const draftAreaM2 = lengthCalibrationValid && !draftAreaProblem
     ? polygonArea(areaPoints) * currentCalibration.mmPerPdfUnit ** 2 / 1000000 : null
-  const renderedAreas = [...currentAreas, ...(areaMode ? [{ id: 'Draft area', points: areaPoints, locked: true }] : [])].map((area) => ({
+  const renderedAreas = [...currentAreas.filter((area) => isMeasurementVisible(area.groupId)), ...(areaMode ? [{ id: 'Draft area', points: areaPoints, locked: true, groupId: activeGroupId || undefined }] : [])].map((area) => ({
     ...area,
+    color: categoryColor(area.groupId, '#c2410c'),
     handles: area.points.map((point) => {
       const [x, y] = viewportRef.current?.convertToViewportPoint(point.x, point.y) ?? [0, 0]
       return { x, y }
@@ -1795,10 +2035,11 @@ export default function App() {
   const draftSegments = runSegments(runPoints)
   const draftTotalMm = draftSegments.reduce((sum, mm) => sum + mm, 0)
   const renderedRuns = [
-    ...currentRuns,
-    ...(runMode ? [{ id: 'Draft', points: runPoints, locked: true }] : []),
+    ...currentRuns.filter((run) => isMeasurementVisible(run.groupId)),
+    ...(runMode ? [{ id: 'Draft', points: runPoints, locked: true, groupId: activeGroupId || undefined }] : []),
   ].map((run) => ({
     ...run,
+    color: categoryColor(run.groupId, '#0f766e'),
     handles: run.points.map((point) => {
       const [x, y] = viewportRef.current?.convertToViewportPoint(point.x, point.y) ?? [0, 0]
       return { x, y }
@@ -1839,6 +2080,8 @@ export default function App() {
 
     return {
       ...measurement,
+      visible: isMeasurementVisible(measurement.groupId),
+      color: categoryColor(measurement.groupId, '#2563eb'),
       line,
       pointAHandle,
       pointBHandle,
@@ -1907,6 +2150,13 @@ export default function App() {
               : 'Save Take-off downloads one file with your PDF and measurements. Open Take-off restores it on any device.'}</p>
             {lastSavedAt && <span>Last saved: {new Date(lastSavedAt).toLocaleString()}</span>}
           </div>
+          <nav className="sidebar-tabs" aria-label="Take-off sections">
+            {(['measure', 'groups', 'summary'] as const).map((tab) => <button key={tab}
+              aria-pressed={sidebarTab === tab} disabled={hasDraft} onClick={() => setSidebarTab(tab)}>
+              {tab === 'measure' ? 'Measure' : tab === 'groups' ? 'Groups' : 'Summary'}
+            </button>)}
+          </nav>
+          <div hidden={sidebarTab !== 'measure'}>
           <h2>Job</h2>
 
           <label>
@@ -2014,8 +2264,9 @@ export default function App() {
           <hr />
 
           <h2>Measurement</h2>
+          </div>
 
-          <div className="groups-panel">
+          <div className="groups-panel" hidden={sidebarTab !== 'groups'}>
             <h3>Named groups</h3>
             <p className="length-note">Combine lengths, wall runs and areas across all pages. LM and m² are totalled separately.</p>
             <form onSubmit={(event) => { event.preventDefault(); createGroup() }}>
@@ -2035,6 +2286,7 @@ export default function App() {
             </label>
             {hasDraft && <p className="length-note">Finish or cancel this measurement before changing the group for new measurements.</p>}
             <div className="group-list">
+              <button onClick={() => { setHiddenGroupIds([]); setShowUngrouped(true) }}>Show everything on drawing</button>
               {groupSummaries.map((group) => (
                 <div className="group-card" key={group.id}>
                   <div className="length-panel-heading">
@@ -2047,12 +2299,33 @@ export default function App() {
                     <input value={group.name} maxLength={100} placeholder={group.id} aria-label={`Name ${group.id}`}
                       onChange={(event) => renameGroup(group.id, event.target.value)} />
                   </label>
+                  <label>
+                    Work category
+                    <select value={group.categoryId ?? ''} disabled={hasDraft} aria-label={`Category for ${group.id}`}
+                      onChange={(event) => setGroupCategory(group.id, event.target.value)}>
+                      <option value="">Uncategorised</option>
+                      {categories.filter((category) => category.mode !== 'derived').map((category) => <option key={category.id} value={category.id}>{category.name || category.id}</option>)}
+                    </select>
+                  </label>
+                  {categories.find((category) => category.id === group.categoryId)?.skimTarget && <label className="length-lock-control skim-control">
+                    <input type="checkbox" checked={group.includeSkim !== false} onChange={(event) => setGroups((current) => current.map((item) => item.id === group.id ? { ...item, includeSkim: event.target.checked } : item))} />
+                    <span>Include this area in skim</span>
+                  </label>}
+                  <div className="visibility-row">
+                    <label className="length-lock-control"><input type="checkbox" checked={!hiddenGroupIds.includes(group.id)}
+                      onChange={(event) => setHiddenGroupIds((current) => event.target.checked ? current.filter((id) => id !== group.id) : [...current, group.id])} />Show on drawing</label>
+                    <button onClick={() => { setHiddenGroupIds(groups.filter((item) => item.id !== group.id).map((item) => item.id)); setShowUngrouped(false) }}>Only this</button>
+                  </div>
+                  {group.count > 0 && <div className="group-total">{group.count} SVP boxing{group.count === 1 ? '' : 's'}</div>}
+                  {group.categoryId === 'svp-boxing' && group.count === 0 && <div className="group-total">0 SVP boxings</div>}
+                  {group.categoryId !== 'svp-boxing' && <>
                   <div className="group-total" aria-live="polite">
                     {group.totalMm === null ? 'Calibration required' : `${(group.totalMm / 1000).toFixed(3)} LM`}
                   </div>
                   <div className="group-total" aria-live="polite">{group.totalAreaM2 === null ? group.invalidHeightIds.length ? 'Check wall height' : 'Area awaiting calibration' : `${group.totalAreaM2.toFixed(3)} m²`}</div>
                   {group.invalidHeightIds.length > 0 && <p className="calibration-warning">Correct or clear the height for {group.invalidHeightIds.join(', ')} to show the m² total.</p>}
                   {group.wallsWithoutHeight > 0 && <p className="length-note">{group.wallsWithoutHeight} length/run measurement{group.wallsWithoutHeight === 1 ? ' has' : 's have'} no height and {group.wallsWithoutHeight === 1 ? 'is' : 'are'} excluded from m².</p>}
+                  </>}
                   <div>{group.members.length} measurement{group.members.length === 1 ? '' : 's'} · all pages</div>
                   {group.invalidPages.length > 0 && <p className="calibration-warning">
                     Calibrate and lock page{group.invalidPages.length === 1 ? '' : 's'} {group.invalidPages.join(', ')} to show this group’s total.
@@ -2070,9 +2343,51 @@ export default function App() {
             </div>
           </div>
 
+          <div hidden={sidebarTab !== 'summary'} className="summary-panel">
+            <h2>Work summary · all pages</h2>
+            <p className="length-note">Drawing visibility does not change these totals. Skim rows reuse the source areas and represent separate work.</p>
+            {categorySummaries.map((category) => <div className="category-summary" key={category.id}>
+              <strong><span className="category-swatch" style={{ background: category.color }} />{category.name || category.id}</strong>
+              {category.mode === 'count' ? <div className="summary-values">{category.count} no.</div> : <div className="summary-values">
+                {category.mode !== 'derived' && <span>{category.totalMm === null ? 'LM awaiting calibration' : `${(category.totalMm / 1000).toFixed(3)} LM`}</span>}
+                <span>{category.totalAreaM2 === null ? 'Check calibration / heights' : `${category.totalAreaM2.toFixed(3)} m²`}</span>
+              </div>}
+              {category.mode === 'derived' && <details><summary>Automatic skim sources</summary>
+                <p className="length-note">{category.id === 'skimmed-walls' ? 'From Tack Timber Wall, Tack Metal Wall and both Dabbed Wall categories.' : 'From Tack Ceiling.'} Source groups can opt out using Include this area in skim.</p>
+                <ul className="group-members">{category.sourceGroups.map((group) => <li key={group.id}>{group.name || group.id} · {group.totalAreaM2 === null ? 'Check measurements' : `${group.totalAreaM2.toFixed(3)} m²`}</li>)}</ul>
+              </details>}
+              {category.wallsWithoutHeight > 0 && <p className="length-note">{category.wallsWithoutHeight} lengths/runs without height are excluded from m².</p>}
+            </div>)}
+            <p className="length-note">{groups.filter((group) => !group.categoryId).length} groups are uncategorised. Assign their categories in Groups to include them above. Ungrouped geometry is also excluded.</p>
+            <details className="category-settings"><summary>Edit category names and colours</summary>
+              {categories.map((category) => <div className="category-editor" key={category.id}>
+                <input aria-label={`Name category ${category.id}`} value={category.name} maxLength={100} onChange={(event) => updateCategory(category.id, { name: event.target.value })} />
+                <input type="color" aria-label={`Colour for ${category.name || category.id}`} value={category.color} onChange={(event) => updateCategory(category.id, { color: event.target.value })} />
+              </div>)}
+              <form onSubmit={(event) => { event.preventDefault(); createCategory() }}>
+                <label>Custom work category<input value={newCategoryName} placeholder="Category name" maxLength={100} onChange={(event) => setNewCategoryName(event.target.value)} /></label>
+                <label>Colour<input type="color" value={newCategoryColor} onChange={(event) => setNewCategoryColor(event.target.value)} /></label>
+                <button type="submit" disabled={!newCategoryName.trim()}>Add Category</button>
+              </form>
+            </details>
+          </div>
+
+          <div hidden={sidebarTab !== 'measure'}>
+          <label className="active-group-control">Measuring into
+            <select disabled={hasDraft} value={activeGroupId} onChange={(event) => setActiveGroupId(event.target.value)}>
+              <option value="">Ungrouped</option>
+              {groups.map((group) => <option key={group.id} value={group.id}>{group.name || group.id}</option>)}
+            </select>
+          </label>
+          <div className="visibility-row">
+            <button onClick={() => { setHiddenGroupIds([]); setShowUngrouped(true) }}>Show everything</button>
+            <label className="length-lock-control"><input type="checkbox" checked={showUngrouped} onChange={(event) => setShowUngrouped(event.target.checked)} />Show ungrouped</label>
+          </div>
+          {activeIsCount && <p className="length-note">SVP Boxing uses cross marks. Select another group to measure lengths or areas.</p>}
+
           <button
             className="future-tool"
-            disabled={!pdf || runMode || areaMode}
+            disabled={!pdf || runMode || areaMode || countMode}
             onClick={calibrationMode ? cancelCalibration : startCalibration}
           >
             {calibrationMode ? 'Cancel Calibration' : 'Calibrate'}
@@ -2156,7 +2471,7 @@ export default function App() {
                   </button>
                 </>
               ) : currentCalibration.locked ? (
-                <button onClick={unlockCalibration} disabled={runMode || areaMode}>
+                <button onClick={unlockCalibration} disabled={runMode || areaMode || countMode}>
                   Unlock Calibration
                 </button>
               ) : (
@@ -2174,7 +2489,7 @@ export default function App() {
               <button
                 className="secondary-calibration-button"
                 onClick={clearCalibration}
-                disabled={runMode || areaMode}
+                disabled={runMode || areaMode || countMode}
               >
                 Clear Calibration
               </button>
@@ -2184,7 +2499,7 @@ export default function App() {
           <button
             className="future-tool"
             disabled={
-              runMode || areaMode || !currentCalibration ||
+              runMode || areaMode || countMode || activeIsCount || !currentCalibration ||
               !currentCalibration.locked ||
               currentCalibration.needsRecalibration
             }
@@ -2198,7 +2513,7 @@ export default function App() {
           </button>
 
           {!runMode ? (
-            <button className="future-tool run-start" disabled={!lengthCalibrationValid || areaMode} onClick={startRun}>
+            <button className="future-tool run-start" disabled={!lengthCalibrationValid || areaMode || countMode || activeIsCount} onClick={startRun}>
               + Start Run
             </button>
           ) : (
@@ -2353,7 +2668,7 @@ export default function App() {
             </div>
           )}
 
-          {!areaMode ? <button className="future-tool area-start" disabled={!lengthCalibrationValid || runMode} onClick={startArea}>+ Add Area</button> : (
+          {!areaMode ? <button className="future-tool area-start" disabled={!lengthCalibrationValid || runMode || countMode || activeIsCount} onClick={startArea}>+ Add Area</button> : (
             <div className="area-panel" aria-label="Current area">
               <strong>Area in progress · {areaPoints.length} corners</strong>
               <div className="area-primary" aria-live="polite">{draftAreaM2 === null ? '— m²' : `${draftAreaM2.toFixed(3)} m² so far`}</div>
@@ -2392,16 +2707,29 @@ export default function App() {
             </div>
           </div>}
 
-          <button className="future-tool" disabled>
-            Count
-          </button>
+          {!countMode ? <button className="future-tool count-start" disabled={!pdf || hasDraft} onClick={startCounting}>+ Mark SVP Boxing</button> : <div className="count-panel">
+            <strong>Mark SVP Boxing</strong>
+            <p>Click once at each location. Each cross counts as one boxing.</p>
+            <button className="wide-control" onClick={finishCounting}>Done Marking</button>
+          </div>}
+          {currentCounts.length > 0 && <div className="count-panel">
+            <strong>SVP Boxing · {currentCounts.length} on this page</strong>
+            <div className="length-list run-list">{currentCounts.map((count) => <div className="count-list-item" key={count.id}>
+              <div className="length-panel-heading"><strong>{count.id}</strong><div className="length-item-actions">
+                <label className="length-lock-control"><input type="checkbox" checked={count.locked} aria-label={`Lock ${count.id}`} onChange={() => toggleCountLock(count.id)} />Lock</label>
+                <button className="delete-length-button" aria-label={`Delete ${count.id}`} onClick={() => deleteCount(count.id)}>×</button>
+              </div></div>
+              {measurementDetails(count.id, count.name, count.groupId)}
+            </div>)}</div>
+          </div>}
+          </div>
 
           <p className="status" role="status">{status}</p>
         </aside>
 
         <section
           ref={stageRef}
-          className={`drawing-stage${isPanning ? ' is-panning' : ''}${calibrationMode || lengthMode || runMode || areaMode ? ' measurement-active' : ''}`}
+          className={`drawing-stage${isPanning ? ' is-panning' : ''}${calibrationMode || lengthMode || runMode || areaMode || countMode ? ' measurement-active' : ''}`}
           onPointerDown={startPan}
           onPointerMove={movePan}
           onPointerUp={endPan}
@@ -2455,14 +2783,14 @@ export default function App() {
                 {renderedAreas.map((area) => (
                   <g key={area.id}>
                     {area.handles.length > 1 && (area.id === 'Draft area'
-                      ? <polyline points={area.handles.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke="#c2410c" strokeWidth="3" strokeDasharray="7 4" />
-                      : <polygon points={area.handles.map((p) => `${p.x},${p.y}`).join(' ')} fill="rgba(234,88,12,0.14)" stroke="#c2410c" strokeWidth="3" />)}
+                      ? <polyline points={area.handles.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke={area.color} strokeWidth="3" strokeDasharray="7 4" />
+                      : <polygon points={area.handles.map((p) => `${p.x},${p.y}`).join(' ')} fill={`${area.color}22`} stroke={area.color} strokeWidth="3" />)}
                     {area.id !== 'Draft area' && area.handles.length > 0 && <text
-                      x={area.handles[0].x + 12} y={area.handles[0].y - 12} className="run-label area-label">
+                      x={area.handles[0].x + 12} y={area.handles[0].y - 12} className="run-label area-label" style={{ fill: area.color }}>
                       {area.id} · {area.areaM2 === null ? 'invalid' : `${area.areaM2.toFixed(3)} m²`}
                     </text>}
                     {area.handles.map((point, i) => <circle key={i} cx={point.x} cy={point.y} r={area.locked ? 5 : 8}
-                      fill="#c2410c" stroke="white" strokeWidth="2"
+                      fill={area.color} stroke="white" strokeWidth="2"
                       style={{ pointerEvents: !area.locked && lengthCalibrationValid && !hasDraft ? 'all' : 'none', cursor: 'move' }}
                       onPointerDown={(event) => startAreaHandleDrag(event, area.id, i)}
                       onPointerMove={moveAreaHandle} onPointerUp={endAreaHandleDrag} onPointerCancel={endAreaHandleDrag} />)}
@@ -2490,7 +2818,7 @@ export default function App() {
                       stroke="#ffffff"
                       strokeWidth="2"
                       style={{
-                        pointerEvents: runMode || areaMode || (currentCalibration?.locked && !pendingCalibration) ? 'none' : 'all',
+                        pointerEvents: runMode || areaMode || countMode || (currentCalibration?.locked && !pendingCalibration) ? 'none' : 'all',
                         cursor:
                           currentCalibration?.locked && !pendingCalibration
                             ? 'not-allowed'
@@ -2526,7 +2854,7 @@ export default function App() {
                       stroke="#ffffff"
                       strokeWidth="2"
                       style={{
-                        pointerEvents: runMode || areaMode || (currentCalibration?.locked && !pendingCalibration) ? 'none' : 'all',
+                        pointerEvents: runMode || areaMode || countMode || (currentCalibration?.locked && !pendingCalibration) ? 'none' : 'all',
                         cursor:
                           currentCalibration?.locked && !pendingCalibration
                             ? 'not-allowed'
@@ -2551,7 +2879,7 @@ export default function App() {
                     </text>
                   </>
                 )}
-                {renderedLengths.map((measurement) => (
+                {renderedLengths.filter((measurement) => measurement.visible).map((measurement) => (
                   <g key={measurement.id}>
                     {measurement.line && (
                       <>
@@ -2560,7 +2888,7 @@ export default function App() {
                           y1={measurement.line.y1}
                           x2={measurement.line.x2}
                           y2={measurement.line.y2}
-                          stroke="#2563eb"
+                          stroke={measurement.color}
                           strokeWidth="3"
                         />
 
@@ -2579,7 +2907,7 @@ export default function App() {
                             height="24"
                             rx="5"
                             fill="rgba(255,255,255,0.94)"
-                            stroke="#2563eb"
+                            stroke={measurement.color}
                             strokeWidth="1"
                           />
                           <text
@@ -2588,7 +2916,7 @@ export default function App() {
                             textAnchor="middle"
                             fontSize="12"
                             fontWeight="700"
-                            fill="#1d4ed8"
+                            fill={measurement.color}
                           >
                             {measurement.lengthMm !== null
                               ? `${measurement.id} · ${(measurement.lengthMm / 1000).toFixed(3)} m`
@@ -2603,11 +2931,11 @@ export default function App() {
                         cx={measurement.pointAHandle.x}
                         cy={measurement.pointAHandle.y}
                         r={measurement.locked ? 5 : 8}
-                        fill="#2563eb"
+                        fill={measurement.color}
                         stroke="#ffffff"
                         strokeWidth="2"
                         style={{
-                          pointerEvents: measurement.locked || runMode || areaMode ? 'none' : 'all',
+                          pointerEvents: measurement.locked || runMode || areaMode || countMode ? 'none' : 'all',
                           cursor: measurement.locked
                             ? 'default'
                             : lengthCalibrationValid
@@ -2632,11 +2960,11 @@ export default function App() {
                         cx={measurement.pointBHandle.x}
                         cy={measurement.pointBHandle.y}
                         r={measurement.locked ? 5 : 8}
-                        fill="#2563eb"
+                        fill={measurement.color}
                         stroke="#ffffff"
                         strokeWidth="2"
                         style={{
-                          pointerEvents: measurement.locked || runMode || areaMode ? 'none' : 'all',
+                          pointerEvents: measurement.locked || runMode || areaMode || countMode ? 'none' : 'all',
                           cursor: measurement.locked
                             ? 'default'
                             : lengthCalibrationValid
@@ -2665,9 +2993,9 @@ export default function App() {
                       return (
                         <g key={i}>
                           <line x1={start.x} y1={start.y} x2={end.x} y2={end.y}
-                            stroke="#0f766e" strokeWidth="3" strokeDasharray={run.id === 'Draft' ? '7 4' : undefined} />
+                            stroke={run.color} strokeWidth="3" strokeDasharray={run.id === 'Draft' ? '7 4' : undefined} />
                           <text x={(start.x + end.x) / 2} y={(start.y + end.y) / 2 - 9}
-                            className="run-label" textAnchor="middle">
+                            className="run-label" textAnchor="middle" style={{ fill: run.color }}>
                             {run.id}.{i + 1} · {lengthCalibrationValid ? `${(run.segments[i] / 1000).toFixed(3)} m` : 'invalid'}
                           </text>
                         </g>
@@ -2675,7 +3003,7 @@ export default function App() {
                     })}
                     {run.handles.map((point, i) => (
                       <circle key={i} cx={point.x} cy={point.y} r={run.locked ? 5 : 8}
-                        fill="#0f766e" stroke="white" strokeWidth="2"
+                        fill={run.color} stroke="white" strokeWidth="2"
                         style={{
                           pointerEvents: !run.locked && lengthCalibrationValid && !hasDraft ? 'all' : 'none',
                           cursor: 'move',
@@ -2685,6 +3013,14 @@ export default function App() {
                     ))}
                   </g>
                 ))}
+
+                {renderedCounts.map((count) => <g key={count.id}>
+                  <path d={`M ${count.x - 8} ${count.y - 8} L ${count.x + 8} ${count.y + 8} M ${count.x + 8} ${count.y - 8} L ${count.x - 8} ${count.y + 8}`}
+                    stroke={count.color} strokeWidth="3" />
+                  <text x={count.x + 12} y={count.y - 10} className="run-label" style={{ fill: count.color }}>{count.id}</text>
+                  <circle cx={count.x} cy={count.y} r="12" fill="transparent" style={{ pointerEvents: !count.locked && !hasDraft ? 'all' : 'none', cursor: 'move' }}
+                    onPointerDown={(event) => startCountHandleDrag(event, count.id)} onPointerMove={moveCountHandle} onPointerUp={endCountHandleDrag} onPointerCancel={endCountHandleDrag} />
+                </g>)}
 
                 {temporaryLengthAHandle && (
                   <>
