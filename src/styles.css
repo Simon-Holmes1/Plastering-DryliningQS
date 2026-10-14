@@ -622,3 +622,97 @@ canvas {
   margin-top: 6px;
   color: #607086;
 }
+
+.sidebar select {
+  width: 100%;
+  min-width: 0;
+  margin-top: 6px;
+  border: 1px solid #cad2df;
+  border-radius: 8px;
+  padding: 9px 8px;
+  background: white;
+  color: #172033;
+  font: inherit;
+}
+
+.groups-panel {
+  margin-bottom: 14px;
+  padding: 10px;
+  border: 1px solid #b8b4e3;
+  border-radius: 8px;
+  background: #f7f5ff;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.groups-panel h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.active-group-control {
+  margin-top: 14px;
+}
+
+.group-list {
+  display: grid;
+  gap: 8px;
+}
+
+.group-card {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #d7d1ed;
+  border-radius: 7px;
+  background: white;
+}
+
+.group-total {
+  color: #5b21b6;
+  font-size: 20px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.remove-group-button {
+  padding: 4px 6px;
+  font-size: 10px;
+  color: #607086;
+}
+
+.group-card summary {
+  margin-top: 6px;
+  cursor: pointer;
+}
+
+.group-members {
+  margin: 6px 0;
+  padding-left: 16px;
+  color: #40516a;
+  overflow-wrap: anywhere;
+}
+
+.measurement-details {
+  width: 100%;
+  min-width: 0;
+  margin-top: 8px;
+}
+
+.measurement-details label {
+  margin-bottom: 8px;
+}
+
+.named-length-item {
+  flex-wrap: wrap;
+}
+
+.named-length-item > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar .measurement-details input,
+.sidebar .measurement-details select {
+  padding: 7px 8px;
+  font-size: 12px;
+}

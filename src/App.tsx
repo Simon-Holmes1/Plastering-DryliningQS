@@ -25,6 +25,8 @@ type Calibration = {
 
 type LengthMeasurement = {
   id: string
+  name?: string
+  groupId?: string
   pointA: Point
   pointB: Point
   locked: boolean
@@ -37,15 +39,19 @@ type Pan = {
 
 type RunMeasurement = {
   id: string
+  name?: string
+  groupId?: string
   // Shared corners keep adjacent segments connected when edited.
   points: Point[]
   locked: boolean
 }
 
+type MeasurementGroup = { id: string; name: string }
+
 type JobDetails = { site: string; plot: string; houseType: string; revision: string }
 type TakeoffFile = {
   format: 'drylining-takeoff'
-  version: 1
+  version: 2
   savedAt: string
   drawing: { name: string; pdfBase64: string }
   job: JobDetails
@@ -54,6 +60,8 @@ type TakeoffFile = {
   runs: Record<number, RunMeasurement[]>
   nextLengthNumber: number
   nextRunNumber: number
+  groups: MeasurementGroup[]
+  nextGroupNumber: number
   view: { page: number; rotation: number; mode: ViewMode; scale: number; pan: Pan }
 }
 
@@ -82,7 +90,7 @@ function readTakeoff(value: unknown): TakeoffFile {
   if (!object(value) || value.format !== 'drylining-takeoff') {
     throw new Error('Choose a saved take-off (.takeoff.json), or use Upload drawing for a PDF.')
   }
-  if (value.version !== 1) {
+  if (value.version !== 1 && value.version !== 2) {
     throw new Error('This take-off uses a different file version. Open it with the version of the app that saved it.')
   }
   if (!object(value.drawing) || typeof value.drawing.name !== 'string' || !value.drawing.name.trim()
@@ -96,6 +104,16 @@ function readTakeoff(value: unknown): TakeoffFile {
     || !point(view.pan)) invalid()
   if (!integer(value.nextLengthNumber) || !integer(value.nextRunNumber)) invalid()
   const ids = new Set<string>()
+  const groups: MeasurementGroup[] = value.version === 1 ? [] : value.groups
+  const nextGroupNumber = value.version === 1 ? 1 : value.nextGroupNumber
+  if (!Array.isArray(groups) || !integer(nextGroupNumber)) invalid()
+  const groupIds = new Set<string>()
+  for (const group of groups) {
+    if (!object(group) || typeof group.id !== 'string' || !/^G\d{3,}$/.test(group.id)
+      || !integer(Number(group.id.slice(1))) || Number(group.id.slice(1)) >= nextGroupNumber
+      || typeof group.name !== 'string' || groupIds.has(group.id)) invalid()
+    groupIds.add(group.id)
+  }
   let maxLength = 0
   let maxRun = 0
   function pages(record: any, validate: (item: any) => boolean) {
@@ -111,6 +129,8 @@ function readTakeoff(value: unknown): TakeoffFile {
   function measurement(item: any, prefix: 'L' | 'R') {
     if (!object(item) || typeof item.id !== 'string' || !new RegExp(`^${prefix}\\d{3,}$`).test(item.id)
       || typeof item.locked !== 'boolean' || ids.has(item.id)) return false
+    if (item.name !== undefined && typeof item.name !== 'string') return false
+    if (item.groupId !== undefined && (typeof item.groupId !== 'string' || !groupIds.has(item.groupId))) return false
     const number = Number(item.id.slice(1))
     if (!integer(number)) return false
     ids.add(item.id)
@@ -124,7 +144,7 @@ function readTakeoff(value: unknown): TakeoffFile {
     measurement(item, 'R') && Array.isArray(item.points) && item.points.length >= 2
     && item.points.every(point)))
   if (value.nextLengthNumber <= maxLength || value.nextRunNumber <= maxRun) invalid()
-  return value as TakeoffFile
+  return { ...value, version: 2, groups, nextGroupNumber } as TakeoffFile
 }
 
 export default function App() {
@@ -153,6 +173,7 @@ export default function App() {
 
   const nextLengthNumberRef = useRef(1)
   const nextRunNumberRef = useRef(1)
+  const nextGroupNumberRef = useRef(1)
   const runDragRef = useRef<{
     runId: string; pointIndex: number; pointerId: number
   } | null>(null)
@@ -208,11 +229,14 @@ export default function App() {
   const [runPoints, setRunPoints] = useState<Point[]>([])
   const [runMeasurements, setRunMeasurements] =
     useState<Record<number, RunMeasurement[]>>({})
+  const [groups, setGroups] = useState<MeasurementGroup[]>([])
+  const [newGroupName, setNewGroupName] = useState('')
+  const [activeGroupId, setActiveGroupId] = useState('')
 
   // View changes do not mark measurements as changed, but the view is saved too.
   const dataSignature = JSON.stringify({ job, calibrations, lengths: lengthMeasurements,
     runs: runMeasurements, nextLengthNumber: nextLengthNumberRef.current,
-    nextRunNumber: nextRunNumberRef.current })
+    nextRunNumber: nextRunNumberRef.current, groups, nextGroupNumber: nextGroupNumberRef.current })
   const hasDraft = runMode || lengthMode || calibrationMode || !!pendingCalibration
   const hasUnsavedChanges = (savedSignature === null
     ? !!pdf || Object.values(job).some(Boolean)
@@ -258,10 +282,11 @@ export default function App() {
     try {
       const savedAt = new Date().toISOString()
       const takeoff: TakeoffFile = {
-        format: 'drylining-takeoff', version: 1, savedAt,
+        format: 'drylining-takeoff', version: 2, savedAt,
         drawing: { name: fileName, pdfBase64: encodePdf(pdfBytesRef.current) },
         job: { ...job }, calibrations, lengths: lengthMeasurements, runs: runMeasurements,
         nextLengthNumber: nextLengthNumberRef.current, nextRunNumber: nextRunNumberRef.current,
+        groups, nextGroupNumber: nextGroupNumberRef.current,
         view: { page: pageNumber, rotation, mode: viewMode, scale, pan },
       }
       const blob = new Blob([JSON.stringify(takeoff)], { type: 'application/json' })
@@ -309,6 +334,10 @@ export default function App() {
       setCalibrations(saved.calibrations)
       setLengthMeasurements(saved.lengths)
       setRunMeasurements(saved.runs)
+      setGroups(saved.groups)
+      setActiveGroupId('')
+      setNewGroupName('')
+      nextGroupNumberRef.current = saved.nextGroupNumber
       nextLengthNumberRef.current = saved.nextLengthNumber
       nextRunNumberRef.current = saved.nextRunNumber
       setPageNumber(saved.view.page)
@@ -319,7 +348,7 @@ export default function App() {
       setStageResizeTick((tick) => tick + 1)
       setSavedSignature(JSON.stringify({ job: saved.job, calibrations: saved.calibrations,
         lengths: saved.lengths, runs: saved.runs, nextLengthNumber: saved.nextLengthNumber,
-        nextRunNumber: saved.nextRunNumber }))
+        nextRunNumber: saved.nextRunNumber, groups: saved.groups, nextGroupNumber: saved.nextGroupNumber }))
       setLastSavedAt(saved.savedAt)
       setStatus(`Opened ${file.name}. Your drawing, job details and measurements are restored.`)
       loadedPdf = null // Ownership has passed to the viewer.
@@ -348,6 +377,10 @@ export default function App() {
       setPdf(loadedPdf)
       setFileName(file.name)
       setJob({ ...emptyJob })
+      setGroups([])
+      setActiveGroupId('')
+      setNewGroupName('')
+      nextGroupNumberRef.current = 1
       setSavedSignature(null)
       setLastSavedAt('')
       setPageNumber(1)
@@ -739,6 +772,69 @@ export default function App() {
     setStatus('Run: click the start, then each wall corner. Pan or zoom as needed. Press Finish Run when done.')
   }
 
+  function createGroup() {
+    const name = newGroupName.trim()
+    if (!pdf || !name || hasDraft) return
+    const id = `G${String(nextGroupNumberRef.current++).padStart(3, '0')}`
+    setGroups((current) => [...current, { id, name }])
+    setActiveGroupId(id)
+    setNewGroupName('')
+    setStatus(`${name} created. New lengths and runs will be added to this group.`)
+  }
+
+  function renameGroup(id: string, name: string) {
+    setGroups((current) => current.map((group) => group.id === id ? { ...group, name } : group))
+  }
+
+  function updateMeasurementDetails(id: string, details: { name?: string; groupId?: string }) {
+    if (details.groupId && !groups.some((group) => group.id === details.groupId)) return
+    // Names and membership can change while geometry stays locked.
+    setLengthMeasurements((current) => ({
+      ...current,
+      [pageNumber]: (current[pageNumber] ?? []).map((item) => item.id === id ? { ...item, ...details } : item),
+    }))
+    setRunMeasurements((current) => ({
+      ...current,
+      [pageNumber]: (current[pageNumber] ?? []).map((item) => item.id === id ? { ...item, ...details } : item),
+    }))
+  }
+
+  function removeGroup(id: string) {
+    if (hasDraft) return
+    setGroups((current) => current.filter((group) => group.id !== id))
+    const ungroup = <T extends { groupId?: string },>(items: Record<number, T[]>) =>
+      Object.fromEntries(Object.entries(items).map(([page, list]) => [page, list.map((item) => {
+        if (item.groupId !== id) return item
+        const { groupId: _groupId, ...rest } = item
+        return rest as T
+      })]))
+    setLengthMeasurements((current) => ungroup(current))
+    setRunMeasurements((current) => ungroup(current))
+    if (activeGroupId === id) setActiveGroupId('')
+    setStatus('Group removed. Its measurements have been kept as ungrouped measurements.')
+  }
+
+  function measurementDetails(id: string, name = '', groupId = '') {
+    return (
+      <div className="measurement-details">
+        <label>
+          Name
+          <input value={name} maxLength={100} placeholder="Optional measurement name"
+            aria-label={`Name ${id}`}
+            onChange={(event) => updateMeasurementDetails(id, { name: event.target.value })} />
+        </label>
+        <label>
+          Group
+          <select value={groupId} aria-label={`Group for ${id}`}
+            onChange={(event) => updateMeasurementDetails(id, { groupId: event.target.value || undefined })}>
+            <option value="">Ungrouped</option>
+            {groups.map((group) => <option key={group.id} value={group.id}>{group.name.trim() || group.id}</option>)}
+          </select>
+        </label>
+      </div>
+    )
+  }
+
   function addRunPoint(clientX: number, clientY: number) {
     if (!runMode || !hasValidCalibration()) return
     const point = clientToPdfPoint(clientX, clientY)
@@ -759,7 +855,7 @@ export default function App() {
     setRunMeasurements((current) => ({
       ...current,
       [pageNumber]: [...(current[pageNumber] ?? []), {
-        id, points: [...runPoints], locked: true,
+        id, points: [...runPoints], locked: true, ...(activeGroupId ? { groupId: activeGroupId } : {}),
       }],
     }))
     setRunMode(false)
@@ -907,7 +1003,7 @@ export default function App() {
       ...current,
       [pageNumber]: [
         ...(current[pageNumber] ?? []),
-        { id, pointA, pointB, locked: true },
+        { id, pointA, pointB, locked: true, ...(activeGroupId ? { groupId: activeGroupId } : {}) },
       ],
     }))
 
@@ -1439,6 +1535,25 @@ export default function App() {
   }
 
   const currentRuns = runMeasurements[pageNumber] ?? []
+  const allMeasurements = [
+    ...Object.entries(lengthMeasurements).flatMap(([page, items]) => items.map((item) => ({
+      ...item, page: Number(page), pdfLength: Math.hypot(item.pointB.x - item.pointA.x, item.pointB.y - item.pointA.y),
+    }))),
+    ...Object.entries(runMeasurements).flatMap(([page, items]) => items.map((item) => ({
+      ...item, page: Number(page), pdfLength: item.points.slice(1).reduce((sum, point, i) =>
+        sum + Math.hypot(point.x - item.points[i].x, point.y - item.points[i].y), 0),
+    }))),
+  ]
+  const groupSummaries = groups.map((group) => {
+    const members = allMeasurements.filter((item) => item.groupId === group.id)
+    const invalidPages = [...new Set(members.filter((item) => {
+      const calibration = calibrations[item.page]
+      return !calibration || !calibration.locked || calibration.needsRecalibration
+    }).map((item) => item.page))].sort((a, b) => a - b)
+    const totalMm = invalidPages.length ? null : members.reduce((sum, item) =>
+      sum + item.pdfLength * calibrations[item.page].mmPerPdfUnit, 0)
+    return { ...group, members, invalidPages, totalMm }
+  })
   const draftSegments = runSegments(runPoints)
   const draftTotalMm = draftSegments.reduce((sum, mm) => sum + mm, 0)
   const renderedRuns = [
@@ -1662,6 +1777,58 @@ export default function App() {
 
           <h2>Measurement</h2>
 
+          <div className="groups-panel">
+            <h3>Named groups</h3>
+            <p className="length-note">Combine separate lengths and wall runs into one total, across all pages.</p>
+            <form onSubmit={(event) => { event.preventDefault(); createGroup() }}>
+              <label>
+                New group name
+                <input value={newGroupName} maxLength={100} placeholder="e.g. Internal timber walls"
+                  disabled={!pdf || hasDraft} onChange={(event) => setNewGroupName(event.target.value)} />
+              </label>
+              <button className="wide-control" type="submit" disabled={!pdf || hasDraft || !newGroupName.trim()}>+ Create Group</button>
+            </form>
+            <label className="active-group-control">
+              Add new measurements to
+              <select value={activeGroupId} disabled={!pdf || hasDraft} onChange={(event) => setActiveGroupId(event.target.value)}>
+                <option value="">Ungrouped</option>
+                {groups.map((group) => <option key={group.id} value={group.id}>{group.name.trim() || group.id}</option>)}
+              </select>
+            </label>
+            {hasDraft && <p className="length-note">Finish or cancel this measurement before changing the group for new measurements.</p>}
+            <div className="group-list">
+              {groupSummaries.map((group) => (
+                <div className="group-card" key={group.id}>
+                  <div className="length-panel-heading">
+                    <strong>{group.id}</strong>
+                    <button className="remove-group-button" disabled={hasDraft} onClick={() => removeGroup(group.id)}
+                      title="Remove this group and keep its measurements ungrouped">Remove group</button>
+                  </div>
+                  <label>
+                    Group name
+                    <input value={group.name} maxLength={100} placeholder={group.id} aria-label={`Name ${group.id}`}
+                      onChange={(event) => renameGroup(group.id, event.target.value)} />
+                  </label>
+                  <div className="group-total" aria-live="polite">
+                    {group.totalMm === null ? 'Calibration required' : `${(group.totalMm / 1000).toFixed(3)} LM`}
+                  </div>
+                  <div>{group.members.length} measurement{group.members.length === 1 ? '' : 's'} · all pages</div>
+                  {group.invalidPages.length > 0 && <p className="calibration-warning">
+                    Calibrate and lock page{group.invalidPages.length === 1 ? '' : 's'} {group.invalidPages.join(', ')} to show this group’s total.
+                  </p>}
+                  {group.members.length === 0 ? <p className="length-note">Select this group above and measure, or assign an existing measurement using its Group dropdown.</p> : (
+                    <details>
+                      <summary>Show measurements</summary>
+                      <ul className="group-members">
+                        {group.members.map((item) => <li key={item.id}>{item.name?.trim() || item.id} · {item.id} · page {item.page}</li>)}
+                      </ul>
+                    </details>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
           <button
             className="future-tool"
             disabled={!pdf || runMode}
@@ -1836,6 +2003,7 @@ export default function App() {
                           <button className="delete-length-button" onClick={() => deleteRun(run.id)} aria-label={`Delete ${run.id}`}>×</button>
                         </div>
                       </div>
+                      {measurementDetails(run.id, run.name, run.groupId)}
                       <div className="length-primary">{lengthCalibrationValid ? `${(totalMm / 1000).toFixed(3)} m` : 'Calibration required'}</div>
                       <details>
                         <summary>{segments.length} segments — show lengths</summary>
@@ -1879,7 +2047,7 @@ export default function App() {
               <div className="length-list">
                 {renderedLengths.map((measurement) => (
                   <div
-                    className="length-list-item"
+                    className="length-list-item named-length-item"
                     key={measurement.id}
                   >
                     <div>
@@ -1930,6 +2098,7 @@ export default function App() {
                         ×
                       </button>
                     </div>
+                    {measurementDetails(measurement.id, measurement.name, measurement.groupId)}
                   </div>
                 ))}
               </div>
