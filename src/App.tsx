@@ -42,6 +42,91 @@ type RunMeasurement = {
   locked: boolean
 }
 
+type JobDetails = { site: string; plot: string; houseType: string; revision: string }
+type TakeoffFile = {
+  format: 'drylining-takeoff'
+  version: 1
+  savedAt: string
+  drawing: { name: string; pdfBase64: string }
+  job: JobDetails
+  calibrations: Record<number, Calibration>
+  lengths: Record<number, LengthMeasurement[]>
+  runs: Record<number, RunMeasurement[]>
+  nextLengthNumber: number
+  nextRunNumber: number
+  view: { page: number; rotation: number; mode: ViewMode; scale: number; pan: Pan }
+}
+
+const emptyJob: JobDetails = { site: '', plot: '', houseType: '', revision: '' }
+
+function encodePdf(bytes: Uint8Array) {
+  const chunks: string[] = []
+  for (let offset = 0; offset < bytes.length; offset += 32768) {
+    chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 32768)))
+  }
+  return btoa(chunks.join(''))
+}
+
+function decodePdf(base64: string) {
+  const binary = atob(base64)
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0))
+}
+
+// Validate the whole saved file before replacing the current take-off.
+function readTakeoff(value: unknown): TakeoffFile {
+  const invalid = () => { throw new Error('This file is incomplete or damaged. Your current take-off has been kept.') }
+  const object = (v: any): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v)
+  const finite = (v: any) => typeof v === 'number' && Number.isFinite(v)
+  const integer = (v: any) => Number.isSafeInteger(v) && v >= 1
+  const point = (v: any) => object(v) && finite(v.x) && finite(v.y)
+  if (!object(value) || value.format !== 'drylining-takeoff') {
+    throw new Error('Choose a saved take-off (.takeoff.json), or use Upload drawing for a PDF.')
+  }
+  if (value.version !== 1) {
+    throw new Error('This take-off uses a different file version. Open it with the version of the app that saved it.')
+  }
+  if (!object(value.drawing) || typeof value.drawing.name !== 'string' || !value.drawing.name.trim()
+    || typeof value.drawing.pdfBase64 !== 'string' || !value.drawing.pdfBase64.length
+    || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value.drawing.pdfBase64)
+    || typeof value.savedAt !== 'string' || !Number.isFinite(Date.parse(value.savedAt))) invalid()
+  if (!object(value.job) || !['site', 'plot', 'houseType', 'revision'].every((key) => typeof value.job[key] === 'string')) invalid()
+  const view = value.view
+  if (!object(view) || !integer(view.page) || ![0, 90, 180, 270].includes(view.rotation)
+    || !['fit-page', 'manual'].includes(view.mode) || !finite(view.scale) || view.scale <= 0 || view.scale > 100
+    || !point(view.pan)) invalid()
+  if (!integer(value.nextLengthNumber) || !integer(value.nextRunNumber)) invalid()
+  const ids = new Set<string>()
+  let maxLength = 0
+  let maxRun = 0
+  function pages(record: any, validate: (item: any) => boolean) {
+    if (!object(record)) invalid()
+    for (const [key, item] of Object.entries(record)) {
+      if (!/^[1-9]\d*$/.test(key) || !integer(Number(key)) || !validate(item)) invalid()
+    }
+  }
+  pages(value.calibrations, (c) => object(c) && point(c.pointA) && point(c.pointB)
+    && finite(c.distanceMm) && c.distanceMm > 0 && finite(c.mmPerPdfUnit) && c.mmPerPdfUnit > 0
+    && typeof c.locked === 'boolean' && typeof c.needsRecalibration === 'boolean'
+    && (c.needsRecalibration || Math.hypot(c.pointA.x - c.pointB.x, c.pointA.y - c.pointB.y) > 0))
+  function measurement(item: any, prefix: 'L' | 'R') {
+    if (!object(item) || typeof item.id !== 'string' || !new RegExp(`^${prefix}\\d{3,}$`).test(item.id)
+      || typeof item.locked !== 'boolean' || ids.has(item.id)) return false
+    const number = Number(item.id.slice(1))
+    if (!integer(number)) return false
+    ids.add(item.id)
+    if (prefix === 'L') maxLength = Math.max(maxLength, number)
+    else maxRun = Math.max(maxRun, number)
+    return true
+  }
+  pages(value.lengths, (items) => Array.isArray(items) && items.every((item) =>
+    measurement(item, 'L') && point(item.pointA) && point(item.pointB)))
+  pages(value.runs, (items) => Array.isArray(items) && items.every((item) =>
+    measurement(item, 'R') && Array.isArray(item.points) && item.points.length >= 2
+    && item.points.every(point)))
+  if (value.nextLengthNumber <= maxLength || value.nextRunNumber <= maxRun) invalid()
+  return value as TakeoffFile
+}
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const stageRef = useRef<HTMLElement | null>(null)
@@ -71,6 +156,8 @@ export default function App() {
   const runDragRef = useRef<{
     runId: string; pointIndex: number; pointerId: number
   } | null>(null)
+  const pdfBytesRef = useRef<Uint8Array | null>(null)
+  const fileBusyRef = useRef(false)
 
   const panStartRef = useRef({
     active: false,
@@ -84,6 +171,10 @@ export default function App() {
 
   const [pdf, setPdf] = useState<PdfDoc | null>(null)
   const [fileName, setFileName] = useState('')
+  const [job, setJob] = useState<JobDetails>({ ...emptyJob })
+  const [isFileBusy, setIsFileBusy] = useState(false)
+  const [savedSignature, setSavedSignature] = useState<string | null>(null)
+  const [lastSavedAt, setLastSavedAt] = useState('')
   const [pageNumber, setPageNumber] = useState(1)
 
   const [scale, setScale] = useState(1)
@@ -118,15 +209,147 @@ export default function App() {
   const [runMeasurements, setRunMeasurements] =
     useState<Record<number, RunMeasurement[]>>({})
 
+  // View changes do not mark measurements as changed, but the view is saved too.
+  const dataSignature = JSON.stringify({ job, calibrations, lengths: lengthMeasurements,
+    runs: runMeasurements, nextLengthNumber: nextLengthNumberRef.current,
+    nextRunNumber: nextRunNumberRef.current })
+  const hasDraft = runMode || lengthMode || calibrationMode || !!pendingCalibration
+  const hasUnsavedChanges = (savedSignature === null
+    ? !!pdf || Object.values(job).some(Boolean)
+    : savedSignature !== dataSignature) || hasDraft
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return
+    function warnBeforeLeaving(event: BeforeUnloadEvent) {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warnBeforeLeaving)
+    return () => window.removeEventListener('beforeunload', warnBeforeLeaving)
+  }, [hasUnsavedChanges])
+
+  function allowReplacingTakeoff() {
+    return !hasUnsavedChanges || window.confirm('You have work that has not been saved. Replace it? Cancel and use Save Take-off to keep it first.')
+  }
+
+  function resetDrafts() {
+    setCalibrationMode(false)
+    setCalibrationPoints([])
+    setPendingCalibration(null)
+    setCalibrationDistance('')
+    setRecalibrationDistance('')
+    setLengthMode(false)
+    setLengthPoints([])
+    setRunMode(false)
+    setRunPoints([])
+    runDragRef.current = null
+    calibrationDragRef.current = { point: null, pointerId: -1 }
+    lengthDragRef.current = { point: null, measurementId: null, pointerId: -1 }
+    panStartRef.current.active = false
+    setIsPanning(false)
+  }
+
+  function saveTakeoff() {
+    if (!pdf || !pdfBytesRef.current || fileBusyRef.current) return
+    if (hasDraft) {
+      setStatus('Finish or cancel the current measurement or calibration before saving.')
+      return
+    }
+    try {
+      const savedAt = new Date().toISOString()
+      const takeoff: TakeoffFile = {
+        format: 'drylining-takeoff', version: 1, savedAt,
+        drawing: { name: fileName, pdfBase64: encodePdf(pdfBytesRef.current) },
+        job: { ...job }, calibrations, lengths: lengthMeasurements, runs: runMeasurements,
+        nextLengthNumber: nextLengthNumberRef.current, nextRunNumber: nextRunNumberRef.current,
+        view: { page: pageNumber, rotation, mode: viewMode, scale, pan },
+      }
+      const blob = new Blob([JSON.stringify(takeoff)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const name = [job.site, job.plot].filter(Boolean).join('-') || fileName.replace(/\.pdf$/i, '')
+      link.href = url
+      link.download = `${name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-').slice(0, 100) || 'drawing'}.takeoff.json`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000)
+      setSavedSignature(dataSignature)
+      setLastSavedAt(savedAt)
+      setStatus('Take-off download started. Keep the .takeoff.json file; it includes your drawing and all saved measurements.')
+    } catch (error) {
+      console.error(error)
+      setStatus('Could not save the take-off. Your work is still open; please try again.')
+    }
+  }
+
+  async function openTakeoff(file: File) {
+    if (fileBusyRef.current || !allowReplacingTakeoff()) return
+    fileBusyRef.current = true
+    setIsFileBusy(true)
+    setStatus('Opening saved take-off…')
+    let loadedPdf: PdfDoc | null = null
+    try {
+      let raw: unknown
+      try { raw = JSON.parse(await file.text()) }
+      catch { throw new Error('This is not a readable take-off file. Your current work has been kept.') }
+      const saved = readTakeoff(raw)
+      const bytes = decodePdf(saved.drawing.pdfBase64)
+      // PDF.js may transfer its input buffer to the worker. Keep our own copy for saving again.
+      loadedPdf = await pdfjsLib.getDocument({ data: bytes.slice() }).promise
+      const pages = [...Object.keys(saved.calibrations), ...Object.keys(saved.lengths), ...Object.keys(saved.runs)]
+      if (saved.view.page > loadedPdf.numPages || pages.some((key) => Number(key) > loadedPdf!.numPages)) {
+        throw new Error('The saved measurements refer to a missing PDF page. Your current work has been kept.')
+      }
+      resetDrafts()
+      pdfBytesRef.current = bytes
+      setPdf(loadedPdf)
+      setFileName(saved.drawing.name)
+      setJob(saved.job)
+      setCalibrations(saved.calibrations)
+      setLengthMeasurements(saved.lengths)
+      setRunMeasurements(saved.runs)
+      nextLengthNumberRef.current = saved.nextLengthNumber
+      nextRunNumberRef.current = saved.nextRunNumber
+      setPageNumber(saved.view.page)
+      setRotation(saved.view.rotation)
+      setViewMode(saved.view.mode)
+      setScale(saved.view.scale)
+      setPan(saved.view.pan)
+      setStageResizeTick((tick) => tick + 1)
+      setSavedSignature(JSON.stringify({ job: saved.job, calibrations: saved.calibrations,
+        lengths: saved.lengths, runs: saved.runs, nextLengthNumber: saved.nextLengthNumber,
+        nextRunNumber: saved.nextRunNumber }))
+      setLastSavedAt(saved.savedAt)
+      setStatus(`Opened ${file.name}. Your drawing, job details and measurements are restored.`)
+      loadedPdf = null // Ownership has passed to the viewer.
+    } catch (error) {
+      console.error(error)
+      setStatus(error instanceof Error ? error.message : 'Could not open that take-off. Your current work has been kept.')
+    } finally {
+      if (loadedPdf) void loadedPdf.destroy()
+      fileBusyRef.current = false
+      setIsFileBusy(false)
+    }
+  }
+
   async function openPdf(file: File) {
+    if (fileBusyRef.current || !allowReplacingTakeoff()) return
+    fileBusyRef.current = true
+    setIsFileBusy(true)
     try {
       setStatus('Loading drawing…')
 
       const bytes = new Uint8Array(await file.arrayBuffer())
-      const loadedPdf = await pdfjsLib.getDocument({ data: bytes }).promise
+      const loadedPdf = await pdfjsLib.getDocument({ data: bytes.slice() }).promise
 
+      pdfBytesRef.current = bytes
+      resetDrafts()
       setPdf(loadedPdf)
       setFileName(file.name)
+      setJob({ ...emptyJob })
+      setSavedSignature(null)
+      setLastSavedAt('')
       setPageNumber(1)
       setRotation(0)
       setViewMode('fit-page')
@@ -153,6 +376,9 @@ export default function App() {
     } catch (error) {
       console.error(error)
       setStatus('Could not open that PDF. Try another file.')
+    } finally {
+      fileBusyRef.current = false
+      setIsFileBusy(false)
     }
   }
 
@@ -1280,21 +1506,36 @@ export default function App() {
   const zoomPercent = Math.max(25, Math.min(1500, Math.round(scale * 100)))
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" aria-busy={isFileBusy}>
       <header className="topbar">
         <div>
           <div className="eyebrow">DRYLINING TAKE-OFF</div>
           <h1>{fileName || 'New take-off'}</h1>
         </div>
 
-        <label className="upload-button">
+        <div className="file-actions">
+          <button className="save-takeoff-button" disabled={!pdf || isFileBusy || hasDraft}
+            title={hasDraft ? 'Finish or cancel your current measurement or calibration first' : 'Download the PDF, job details and measurements together'}
+            onClick={saveTakeoff}>Save Take-off</button>
+          <label className={`upload-button open-takeoff-button ${isFileBusy ? 'file-disabled' : ''}`}>
+            Open Take-off
+            <input type="file" accept=".json,.takeoff.json,application/json" disabled={isFileBusy}
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                event.target.value = ''
+                if (file) void openTakeoff(file)
+              }} />
+          </label>
+        <label className={`upload-button ${isFileBusy ? 'file-disabled' : ''}`}>
           Upload drawing
 
           <input
             type="file"
             accept="application/pdf"
+            disabled={isFileBusy}
             onChange={(event) => {
               const file = event.target.files?.[0]
+              event.target.value = ''
 
               if (file) {
                 openPdf(file)
@@ -1302,30 +1543,37 @@ export default function App() {
             }}
           />
         </label>
+        </div>
       </header>
 
-      <main className="workspace">
+      <main className="workspace" inert={isFileBusy}>
         <aside className="sidebar">
+          <div className={`save-status ${hasUnsavedChanges ? 'unsaved' : ''}`} role="status">
+            <strong>{isFileBusy ? 'Opening file…' : hasUnsavedChanges ? 'Changes not saved' : lastSavedAt ? 'Saved file loaded / downloaded' : 'Start a new take-off'}</strong>
+            <p>{hasDraft ? 'Finish or cancel your current measurement or calibration to save.'
+              : 'Save Take-off downloads one file with your PDF and measurements. Open Take-off restores it on any device.'}</p>
+            {lastSavedAt && <span>Last saved: {new Date(lastSavedAt).toLocaleString()}</span>}
+          </div>
           <h2>Job</h2>
 
           <label>
             Site
-            <input placeholder="e.g. Oak Meadow" />
+            <input placeholder="e.g. Oak Meadow" value={job.site} onChange={(event) => setJob((current) => ({ ...current, site: event.target.value }))} />
           </label>
 
           <label>
             Plot
-            <input placeholder="e.g. 23" />
+            <input placeholder="e.g. 23" value={job.plot} onChange={(event) => setJob((current) => ({ ...current, plot: event.target.value }))} />
           </label>
 
           <label>
             House type
-            <input placeholder="e.g. Warwick" />
+            <input placeholder="e.g. Warwick" value={job.houseType} onChange={(event) => setJob((current) => ({ ...current, houseType: event.target.value }))} />
           </label>
 
           <label>
             Drawing revision
-            <input placeholder="e.g. Rev B" />
+            <input placeholder="e.g. Rev B" value={job.revision} onChange={(event) => setJob((current) => ({ ...current, revision: event.target.value }))} />
           </label>
 
           <hr />
@@ -1724,8 +1972,10 @@ export default function App() {
               <input
                 type="file"
                 accept="application/pdf"
+                disabled={isFileBusy}
                 onChange={(event) => {
                   const file = event.target.files?.[0]
+                  event.target.value = ''
 
                   if (file) {
                     openPdf(file)

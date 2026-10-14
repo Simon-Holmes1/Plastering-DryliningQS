@@ -552,3 +552,73 @@ canvas {
   paint-order: stroke;
   pointer-events: none;
 }
+
+.topbar {
+  height: auto;
+  min-height: 76px;
+  flex: 0 0 auto;
+  gap: 14px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.topbar h1 {
+  overflow-wrap: anywhere;
+}
+
+.file-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.file-actions .upload-button,
+.save-takeoff-button {
+  font-size: 13px;
+  padding: 10px 12px;
+  white-space: nowrap;
+}
+
+.save-takeoff-button {
+  background: #0f766e;
+  border-color: #0f766e;
+  color: white;
+  font-weight: 700;
+}
+
+.open-takeoff-button {
+  background: #334155;
+}
+
+.file-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.save-status {
+  margin-bottom: 18px;
+  padding: 10px;
+  border: 1px solid #b7dec2;
+  border-radius: 8px;
+  background: #eaf7ee;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.save-status.unsaved {
+  background: #fff8e8;
+  border-color: #e7c779;
+}
+
+.save-status p {
+  margin: 6px 0 0;
+  color: #40516a;
+}
+
+.save-status span {
+  display: block;
+  margin-top: 6px;
+  color: #607086;
+}
