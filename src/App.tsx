@@ -27,6 +27,7 @@ type LengthMeasurement = {
   id: string
   name?: string
   groupId?: string
+  heightM?: number
   pointA: Point
   pointB: Point
   locked: boolean
@@ -41,6 +42,7 @@ type RunMeasurement = {
   id: string
   name?: string
   groupId?: string
+  heightM?: number
   // Shared corners keep adjacent segments connected when edited.
   points: Point[]
   locked: boolean
@@ -48,20 +50,69 @@ type RunMeasurement = {
 
 type MeasurementGroup = { id: string; name: string }
 
+type AreaMeasurement = {
+  id: string
+  name?: string
+  groupId?: string
+  points: Point[]
+  locked: boolean
+}
+
+function polygonArea(points: Point[]) {
+  if (points.length < 3) return 0
+  const origin = points[0]
+  return Math.abs(points.reduce((sum, a, i) => {
+    const b = points[(i + 1) % points.length]
+    return sum + (a.x - origin.x) * (b.y - origin.y) - (b.x - origin.x) * (a.y - origin.y)
+  }, 0)) / 2
+}
+
+function polygonProblem(points: Point[]): string | null {
+  if (points.length < 3) return 'Place at least three corners before finishing an area.'
+  const epsilon = 0.000001
+  for (let i = 0; i < points.length; i++) {
+    for (let j = i + 1; j < points.length; j++) {
+      if (Math.hypot(points[i].x - points[j].x, points[i].y - points[j].y) < epsilon) {
+        return 'Each corner must be different. Use Finish Area to close the outline.'
+      }
+    }
+  }
+  const cross = (a: Point, b: Point, c: Point) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+  const onSegment = (a: Point, b: Point, c: Point) => Math.abs(cross(a, b, c)) < epsilon
+    && c.x >= Math.min(a.x, b.x) - epsilon && c.x <= Math.max(a.x, b.x) + epsilon
+    && c.y >= Math.min(a.y, b.y) - epsilon && c.y <= Math.max(a.y, b.y) + epsilon
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i], b = points[(i + 1) % points.length]
+    for (let j = i + 1; j < points.length; j++) {
+      if (j === i + 1 || (i === 0 && j === points.length - 1)) continue
+      const c = points[j], d = points[(j + 1) % points.length]
+      const abC = cross(a, b, c), abD = cross(a, b, d)
+      const cdA = cross(c, d, a), cdB = cross(c, d, b)
+      if ((Math.sign(abC) !== Math.sign(abD) && Math.sign(cdA) !== Math.sign(cdB))
+        || onSegment(a, b, c) || onSegment(a, b, d) || onSegment(c, d, a) || onSegment(c, d, b)) {
+        return 'The outline crosses or touches itself. Undo the last point and trace around the outside.'
+      }
+    }
+  }
+  return polygonArea(points) > epsilon ? null : 'The outline must enclose an area; the corners cannot all be in a straight line.'
+}
+
 type JobDetails = { site: string; plot: string; houseType: string; revision: string }
 type TakeoffFile = {
   format: 'drylining-takeoff'
-  version: 2
+  version: 3
   savedAt: string
   drawing: { name: string; pdfBase64: string }
   job: JobDetails
   calibrations: Record<number, Calibration>
   lengths: Record<number, LengthMeasurement[]>
   runs: Record<number, RunMeasurement[]>
+  areas: Record<number, AreaMeasurement[]>
   nextLengthNumber: number
   nextRunNumber: number
   groups: MeasurementGroup[]
   nextGroupNumber: number
+  nextAreaNumber: number
   view: { page: number; rotation: number; mode: ViewMode; scale: number; pan: Pan }
 }
 
@@ -90,7 +141,7 @@ function readTakeoff(value: unknown): TakeoffFile {
   if (!object(value) || value.format !== 'drylining-takeoff') {
     throw new Error('Choose a saved take-off (.takeoff.json), or use Upload drawing for a PDF.')
   }
-  if (value.version !== 1 && value.version !== 2) {
+  if (![1, 2, 3].includes(value.version)) {
     throw new Error('This take-off uses a different file version. Open it with the version of the app that saved it.')
   }
   if (!object(value.drawing) || typeof value.drawing.name !== 'string' || !value.drawing.name.trim()
@@ -116,6 +167,7 @@ function readTakeoff(value: unknown): TakeoffFile {
   }
   let maxLength = 0
   let maxRun = 0
+  let maxArea = 0
   function pages(record: any, validate: (item: any) => boolean) {
     if (!object(record)) invalid()
     for (const [key, item] of Object.entries(record)) {
@@ -126,16 +178,18 @@ function readTakeoff(value: unknown): TakeoffFile {
     && finite(c.distanceMm) && c.distanceMm > 0 && finite(c.mmPerPdfUnit) && c.mmPerPdfUnit > 0
     && typeof c.locked === 'boolean' && typeof c.needsRecalibration === 'boolean'
     && (c.needsRecalibration || Math.hypot(c.pointA.x - c.pointB.x, c.pointA.y - c.pointB.y) > 0))
-  function measurement(item: any, prefix: 'L' | 'R') {
+  function measurement(item: any, prefix: 'L' | 'R' | 'A') {
     if (!object(item) || typeof item.id !== 'string' || !new RegExp(`^${prefix}\\d{3,}$`).test(item.id)
       || typeof item.locked !== 'boolean' || ids.has(item.id)) return false
     if (item.name !== undefined && typeof item.name !== 'string') return false
     if (item.groupId !== undefined && (typeof item.groupId !== 'string' || !groupIds.has(item.groupId))) return false
+    if (item.heightM !== undefined && (prefix === 'A' || !finite(item.heightM) || item.heightM <= 0)) return false
     const number = Number(item.id.slice(1))
     if (!integer(number)) return false
     ids.add(item.id)
     if (prefix === 'L') maxLength = Math.max(maxLength, number)
-    else maxRun = Math.max(maxRun, number)
+    else if (prefix === 'R') maxRun = Math.max(maxRun, number)
+    else maxArea = Math.max(maxArea, number)
     return true
   }
   pages(value.lengths, (items) => Array.isArray(items) && items.every((item) =>
@@ -144,7 +198,13 @@ function readTakeoff(value: unknown): TakeoffFile {
     measurement(item, 'R') && Array.isArray(item.points) && item.points.length >= 2
     && item.points.every(point)))
   if (value.nextLengthNumber <= maxLength || value.nextRunNumber <= maxRun) invalid()
-  return { ...value, version: 2, groups, nextGroupNumber } as TakeoffFile
+  const areas = value.version === 3 ? value.areas : {}
+  const nextAreaNumber = value.version === 3 ? value.nextAreaNumber : 1
+  if (!integer(nextAreaNumber)) invalid()
+  pages(areas, (items) => Array.isArray(items) && items.every((item) => measurement(item, 'A')
+    && Array.isArray(item.points) && item.points.every(point) && !polygonProblem(item.points)))
+  if (nextAreaNumber <= maxArea) invalid()
+  return { ...value, version: 3, groups, nextGroupNumber, areas, nextAreaNumber } as TakeoffFile
 }
 
 export default function App() {
@@ -174,6 +234,8 @@ export default function App() {
   const nextLengthNumberRef = useRef(1)
   const nextRunNumberRef = useRef(1)
   const nextGroupNumberRef = useRef(1)
+  const nextAreaNumberRef = useRef(1)
+  const areaDragRef = useRef<{ areaId: string; pointIndex: number; pointerId: number } | null>(null)
   const runDragRef = useRef<{
     runId: string; pointIndex: number; pointerId: number
   } | null>(null)
@@ -232,15 +294,23 @@ export default function App() {
   const [groups, setGroups] = useState<MeasurementGroup[]>([])
   const [newGroupName, setNewGroupName] = useState('')
   const [activeGroupId, setActiveGroupId] = useState('')
+  const [areaMode, setAreaMode] = useState(false)
+  const [areaPoints, setAreaPoints] = useState<Point[]>([])
+  const [areaMeasurements, setAreaMeasurements] = useState<Record<number, AreaMeasurement[]>>({})
+  const [heightDrafts, setHeightDrafts] = useState<Record<string, string>>({})
+  const wallIds = new Set([...Object.values(lengthMeasurements).flat(), ...Object.values(runMeasurements).flat()].map((item) => item.id))
+  const hasInvalidHeight = Object.entries(heightDrafts).some(([id, text]) => wallIds.has(id)
+    && text !== '' && (!Number.isFinite(Number(text)) || Number(text) <= 0))
 
   // View changes do not mark measurements as changed, but the view is saved too.
   const dataSignature = JSON.stringify({ job, calibrations, lengths: lengthMeasurements,
     runs: runMeasurements, nextLengthNumber: nextLengthNumberRef.current,
-    nextRunNumber: nextRunNumberRef.current, groups, nextGroupNumber: nextGroupNumberRef.current })
-  const hasDraft = runMode || lengthMode || calibrationMode || !!pendingCalibration
+    nextRunNumber: nextRunNumberRef.current, groups, nextGroupNumber: nextGroupNumberRef.current,
+    areas: areaMeasurements, nextAreaNumber: nextAreaNumberRef.current })
+  const hasDraft = runMode || lengthMode || areaMode || calibrationMode || !!pendingCalibration
   const hasUnsavedChanges = (savedSignature === null
     ? !!pdf || Object.values(job).some(Boolean)
-    : savedSignature !== dataSignature) || hasDraft
+    : savedSignature !== dataSignature) || hasDraft || hasInvalidHeight
 
   useEffect(() => {
     if (!hasUnsavedChanges) return
@@ -257,6 +327,10 @@ export default function App() {
   }
 
   function resetDrafts() {
+    setAreaMode(false)
+    setAreaPoints([])
+    setHeightDrafts({})
+    areaDragRef.current = null
     setCalibrationMode(false)
     setCalibrationPoints([])
     setPendingCalibration(null)
@@ -275,18 +349,23 @@ export default function App() {
 
   function saveTakeoff() {
     if (!pdf || !pdfBytesRef.current || fileBusyRef.current) return
-    if (hasDraft) {
+    if (hasDraft || hasInvalidHeight) {
+      if (hasInvalidHeight) {
+        setStatus('Enter a wall height greater than zero, or clear the height field before saving.')
+        return
+      }
       setStatus('Finish or cancel the current measurement or calibration before saving.')
       return
     }
     try {
       const savedAt = new Date().toISOString()
       const takeoff: TakeoffFile = {
-        format: 'drylining-takeoff', version: 2, savedAt,
+        format: 'drylining-takeoff', version: 3, savedAt,
         drawing: { name: fileName, pdfBase64: encodePdf(pdfBytesRef.current) },
         job: { ...job }, calibrations, lengths: lengthMeasurements, runs: runMeasurements,
         nextLengthNumber: nextLengthNumberRef.current, nextRunNumber: nextRunNumberRef.current,
         groups, nextGroupNumber: nextGroupNumberRef.current,
+        areas: areaMeasurements, nextAreaNumber: nextAreaNumberRef.current,
         view: { page: pageNumber, rotation, mode: viewMode, scale, pan },
       }
       const blob = new Blob([JSON.stringify(takeoff)], { type: 'application/json' })
@@ -322,7 +401,7 @@ export default function App() {
       const bytes = decodePdf(saved.drawing.pdfBase64)
       // PDF.js may transfer its input buffer to the worker. Keep our own copy for saving again.
       loadedPdf = await pdfjsLib.getDocument({ data: bytes.slice() }).promise
-      const pages = [...Object.keys(saved.calibrations), ...Object.keys(saved.lengths), ...Object.keys(saved.runs)]
+      const pages = [...Object.keys(saved.calibrations), ...Object.keys(saved.lengths), ...Object.keys(saved.runs), ...Object.keys(saved.areas)]
       if (saved.view.page > loadedPdf.numPages || pages.some((key) => Number(key) > loadedPdf!.numPages)) {
         throw new Error('The saved measurements refer to a missing PDF page. Your current work has been kept.')
       }
@@ -334,6 +413,8 @@ export default function App() {
       setCalibrations(saved.calibrations)
       setLengthMeasurements(saved.lengths)
       setRunMeasurements(saved.runs)
+      setAreaMeasurements(saved.areas)
+      nextAreaNumberRef.current = saved.nextAreaNumber
       setGroups(saved.groups)
       setActiveGroupId('')
       setNewGroupName('')
@@ -348,7 +429,8 @@ export default function App() {
       setStageResizeTick((tick) => tick + 1)
       setSavedSignature(JSON.stringify({ job: saved.job, calibrations: saved.calibrations,
         lengths: saved.lengths, runs: saved.runs, nextLengthNumber: saved.nextLengthNumber,
-        nextRunNumber: saved.nextRunNumber, groups: saved.groups, nextGroupNumber: saved.nextGroupNumber }))
+        nextRunNumber: saved.nextRunNumber, groups: saved.groups, nextGroupNumber: saved.nextGroupNumber,
+        areas: saved.areas, nextAreaNumber: saved.nextAreaNumber }))
       setLastSavedAt(saved.savedAt)
       setStatus(`Opened ${file.name}. Your drawing, job details and measurements are restored.`)
       loadedPdf = null // Ownership has passed to the viewer.
@@ -377,6 +459,8 @@ export default function App() {
       setPdf(loadedPdf)
       setFileName(file.name)
       setJob({ ...emptyJob })
+      setAreaMeasurements({})
+      nextAreaNumberRef.current = 1
       setGroups([])
       setActiveGroupId('')
       setNewGroupName('')
@@ -465,7 +549,7 @@ export default function App() {
   }
 
   function previousPage() {
-    if (!pdf || pageNumber <= 1 || runMode) return
+    if (!pdf || pageNumber <= 1 || runMode || areaMode) return
 
     setPageNumber((current) => current - 1)
     setViewMode('fit-page')
@@ -473,7 +557,7 @@ export default function App() {
   }
 
   function nextPage() {
-    if (!pdf || pageNumber >= pdf.numPages || runMode) return
+    if (!pdf || pageNumber >= pdf.numPages || runMode || areaMode) return
 
     setPageNumber((current) => current + 1)
     setViewMode('fit-page')
@@ -570,6 +654,8 @@ export default function App() {
         addCalibrationPoint(event.clientX, event.clientY)
       } else if (runMode) {
         addRunPoint(event.clientX, event.clientY)
+      } else if (areaMode) {
+        addAreaPoint(event.clientX, event.clientY)
       } else if (lengthMode) {
         addLengthPoint(event.clientX, event.clientY)
       }
@@ -760,8 +846,129 @@ export default function App() {
     return !!calibration && calibration.locked && !calibration.needsRecalibration
   }
 
+  function startArea() {
+    if (!hasValidCalibration() || runMode || areaMode) return
+    setLengthMode(false)
+    setLengthPoints([])
+    setCalibrationMode(false)
+    setCalibrationPoints([])
+    setPendingCalibration(null)
+    setAreaMode(true)
+    setAreaPoints([])
+    setStatus('Area: click around the outside of the shape, then press Finish Area to close the outline. Drag to pan; use the wheel to zoom.')
+  }
+
+  function addAreaPoint(clientX: number, clientY: number) {
+    if (!areaMode || !hasValidCalibration()) return
+    const point = clientToPdfPoint(clientX, clientY)
+    if (!point) return
+    if (areaPoints.some((existing) => Math.hypot(existing.x - point.x, existing.y - point.y) < 0.000001)) {
+      setStatus('That corner is already placed. Use Finish Area to close the shape, or click a new corner.')
+      return
+    }
+    setAreaPoints((current) => [...current, point])
+  }
+
+  function finishArea() {
+    if (!areaMode || !hasValidCalibration()) return
+    const problem = polygonProblem(areaPoints)
+    if (problem) { setStatus(problem); return }
+    const id = `A${String(nextAreaNumberRef.current++).padStart(3, '0')}`
+    setAreaMeasurements((current) => ({
+      ...current,
+      [pageNumber]: [...(current[pageNumber] ?? []), {
+        id, points: [...areaPoints], locked: true, ...(activeGroupId ? { groupId: activeGroupId } : {}),
+      }],
+    }))
+    setAreaMode(false)
+    setAreaPoints([])
+    setStatus(`${id} finished and locked. Untick Lock to adjust its corners.`)
+  }
+
+  function cancelArea() {
+    setAreaMode(false)
+    setAreaPoints([])
+    setStatus('Unfinished area cancelled. Saved measurements have been kept.')
+  }
+
+  function toggleAreaLock(id: string) {
+    setAreaMeasurements((current) => ({
+      ...current,
+      [pageNumber]: (current[pageNumber] ?? []).map((item) => item.id === id ? { ...item, locked: !item.locked } : item),
+    }))
+  }
+
+  function deleteArea(id: string) {
+    setAreaMeasurements((current) => ({
+      ...current, [pageNumber]: (current[pageNumber] ?? []).filter((item) => item.id !== id),
+    }))
+    setStatus(`${id} deleted.`)
+  }
+
+  function startAreaHandleDrag(event: React.PointerEvent<SVGCircleElement>, areaId: string, pointIndex: number) {
+    if (event.button !== 0 || hasDraft || !hasValidCalibration()) return
+    const area = (areaMeasurements[pageNumber] ?? []).find((item) => item.id === areaId)
+    if (!area || area.locked) return
+    event.stopPropagation()
+    event.preventDefault()
+    areaDragRef.current = { areaId, pointIndex, pointerId: event.pointerId }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function moveAreaHandle(event: React.PointerEvent<SVGCircleElement>) {
+    const drag = areaDragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    event.stopPropagation()
+    event.preventDefault()
+    if (!hasValidCalibration()) return
+    const point = clientToPdfPoint(event.clientX, event.clientY)
+    const area = (areaMeasurements[pageNumber] ?? []).find((item) => item.id === drag.areaId)
+    if (!point || !area || area.locked) return
+    const points = area.points.map((p, i) => i === drag.pointIndex ? point : p)
+    const problem = polygonProblem(points)
+    if (problem) { setStatus(`Corner unchanged: ${problem}`); return }
+    setAreaMeasurements((current) => ({
+      ...current,
+      [pageNumber]: (current[pageNumber] ?? []).map((item) => item.id === drag.areaId ? { ...item, points } : item),
+    }))
+  }
+
+  function endAreaHandleDrag(event: React.PointerEvent<SVGCircleElement>) {
+    if (areaDragRef.current?.pointerId !== event.pointerId) return
+    event.stopPropagation()
+    event.preventDefault()
+    areaDragRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+
+  function setWallHeight(id: string, text: string) {
+    setHeightDrafts((current) => ({ ...current, [id]: text }))
+    if (text === '') updateMeasurementDetails(id, { heightM: undefined })
+    else if (Number.isFinite(Number(text)) && Number(text) > 0) updateMeasurementDetails(id, { heightM: Number(text) })
+  }
+
+  function wallHeightField(id: string, heightM: number | undefined, lengthMm: number | null) {
+    const text = heightDrafts[id] ?? (heightM === undefined ? '' : String(heightM))
+    const invalid = text !== '' && (!Number.isFinite(Number(text)) || Number(text) <= 0)
+    return (
+      <div className="wall-height-field">
+        <label>
+          Wall height (m, optional)
+          <input type="number" min="0.001" step="any" inputMode="decimal" value={text}
+            placeholder="e.g. 2.4" aria-label={`Wall height for ${id}`} aria-invalid={invalid}
+            onChange={(event) => setWallHeight(id, event.target.value)} />
+        </label>
+        {invalid ? <p className="calibration-warning">Enter a height greater than zero, or clear the field.</p>
+          : heightM !== undefined ? <>
+            <div className="wall-area-result">{lengthMm === null ? 'Calibration required' : `${((lengthMm / 1000) * heightM).toFixed(3)} m²`}</div>
+            <p className="length-note">{lengthMm === null ? '' : `${(lengthMm / 1000).toFixed(3)} m × ${heightM} m · `}One face, before deductions.</p>
+          </> : <p className="length-note">Add height to calculate wall area. Leave blank for length only.</p>}
+      </div>
+    )
+  }
+
   function startRun() {
-    if (!hasValidCalibration() || runMode) return
+    if (!hasValidCalibration() || runMode || areaMode) return
     setLengthMode(false)
     setLengthPoints([])
     setCalibrationMode(false)
@@ -786,14 +993,19 @@ export default function App() {
     setGroups((current) => current.map((group) => group.id === id ? { ...group, name } : group))
   }
 
-  function updateMeasurementDetails(id: string, details: { name?: string; groupId?: string }) {
+  function updateMeasurementDetails(id: string, details: { name?: string; groupId?: string; heightM?: number }) {
     if (details.groupId && !groups.some((group) => group.id === details.groupId)) return
+    if (details.heightM !== undefined && (!Number.isFinite(details.heightM) || details.heightM <= 0 || id.startsWith('A'))) return
     // Names and membership can change while geometry stays locked.
     setLengthMeasurements((current) => ({
       ...current,
       [pageNumber]: (current[pageNumber] ?? []).map((item) => item.id === id ? { ...item, ...details } : item),
     }))
     setRunMeasurements((current) => ({
+      ...current,
+      [pageNumber]: (current[pageNumber] ?? []).map((item) => item.id === id ? { ...item, ...details } : item),
+    }))
+    if (!('heightM' in details)) setAreaMeasurements((current) => ({
       ...current,
       [pageNumber]: (current[pageNumber] ?? []).map((item) => item.id === id ? { ...item, ...details } : item),
     }))
@@ -810,6 +1022,7 @@ export default function App() {
       })]))
     setLengthMeasurements((current) => ungroup(current))
     setRunMeasurements((current) => ungroup(current))
+    setAreaMeasurements((current) => ungroup(current))
     if (activeGroupId === id) setActiveGroupId('')
     setStatus('Group removed. Its measurements have been kept as ungrouped measurements.')
   }
@@ -893,7 +1106,7 @@ export default function App() {
   function startRunHandleDrag(
     event: React.PointerEvent<SVGCircleElement>, runId: string, pointIndex: number
   ) {
-    if (event.button !== 0 || runMode || lengthMode || calibrationMode || !hasValidCalibration()) return
+    if (event.button !== 0 || runMode || areaMode || lengthMode || calibrationMode || !hasValidCalibration()) return
     const run = (runMeasurements[pageNumber] ?? []).find((item) => item.id === runId)
     if (!run || run.locked) return
     event.stopPropagation()
@@ -933,7 +1146,7 @@ export default function App() {
   }
 
   function startLengthMeasurement() {
-    if (runMode) return
+    if (runMode || areaMode) return
     const calibration = calibrations[pageNumber]
 
     if (
@@ -1179,7 +1392,7 @@ export default function App() {
   }
 
   function startCalibration() {
-    if (!pdf || runMode) return
+    if (!pdf || runMode || areaMode) return
 
     setLengthMode(false)
     setLengthPoints([])
@@ -1238,7 +1451,7 @@ export default function App() {
   }
 
   function unlockCalibration() {
-    if (runMode) return
+    if (runMode || areaMode) return
     setRecalibrationDistance('')
 
     setCalibrations((current) => {
@@ -1315,7 +1528,7 @@ export default function App() {
   }
 
   function clearCalibration() {
-    if (runMode) return
+    if (runMode || areaMode) return
     setCalibrations((current) => {
       const updated = { ...current }
       delete updated[pageNumber]
@@ -1535,13 +1748,16 @@ export default function App() {
   }
 
   const currentRuns = runMeasurements[pageNumber] ?? []
-  const allMeasurements = [
+  const allMeasurements: Array<{ id: string; name?: string; groupId?: string; page: number; pdfLength: number; pdfArea: number; heightM?: number; kind: 'wall' | 'area' }> = [
     ...Object.entries(lengthMeasurements).flatMap(([page, items]) => items.map((item) => ({
-      ...item, page: Number(page), pdfLength: Math.hypot(item.pointB.x - item.pointA.x, item.pointB.y - item.pointA.y),
+      ...item, page: Number(page), pdfLength: Math.hypot(item.pointB.x - item.pointA.x, item.pointB.y - item.pointA.y), pdfArea: 0, kind: 'wall' as const,
     }))),
     ...Object.entries(runMeasurements).flatMap(([page, items]) => items.map((item) => ({
-      ...item, page: Number(page), pdfLength: item.points.slice(1).reduce((sum, point, i) =>
+      ...item, page: Number(page), pdfArea: 0, kind: 'wall' as const, pdfLength: item.points.slice(1).reduce((sum, point, i) =>
         sum + Math.hypot(point.x - item.points[i].x, point.y - item.points[i].y), 0),
+    }))),
+    ...Object.entries(areaMeasurements).flatMap(([page, items]) => items.map((item) => ({
+      ...item, page: Number(page), pdfLength: 0, pdfArea: polygonArea(item.points), kind: 'area' as const,
     }))),
   ]
   const groupSummaries = groups.map((group) => {
@@ -1552,8 +1768,30 @@ export default function App() {
     }).map((item) => item.page))].sort((a, b) => a - b)
     const totalMm = invalidPages.length ? null : members.reduce((sum, item) =>
       sum + item.pdfLength * calibrations[item.page].mmPerPdfUnit, 0)
-    return { ...group, members, invalidPages, totalMm }
+    const invalidHeightIds = members.filter((item) => {
+      const text = heightDrafts[item.id]
+      return item.kind === 'wall' && text !== undefined && text !== '' && (!Number.isFinite(Number(text)) || Number(text) <= 0)
+    }).map((item) => item.id)
+    const totalAreaM2 = invalidPages.length || invalidHeightIds.length ? null : members.reduce((sum, item) => {
+      const mmPerUnit = calibrations[item.page].mmPerPdfUnit
+      return sum + (item.kind === 'area' ? item.pdfArea * mmPerUnit ** 2 / 1000000
+        : item.heightM === undefined ? 0 : item.pdfLength * mmPerUnit / 1000 * item.heightM)
+    }, 0)
+    const wallsWithoutHeight = members.filter((item) => item.kind === 'wall' && item.heightM === undefined).length
+    return { ...group, members, invalidPages, totalMm, totalAreaM2, wallsWithoutHeight, invalidHeightIds }
   })
+  const currentAreas = areaMeasurements[pageNumber] ?? []
+  const draftAreaProblem = polygonProblem(areaPoints)
+  const draftAreaM2 = lengthCalibrationValid && !draftAreaProblem
+    ? polygonArea(areaPoints) * currentCalibration.mmPerPdfUnit ** 2 / 1000000 : null
+  const renderedAreas = [...currentAreas, ...(areaMode ? [{ id: 'Draft area', points: areaPoints, locked: true }] : [])].map((area) => ({
+    ...area,
+    handles: area.points.map((point) => {
+      const [x, y] = viewportRef.current?.convertToViewportPoint(point.x, point.y) ?? [0, 0]
+      return { x, y }
+    }),
+    areaM2: lengthCalibrationValid ? polygonArea(area.points) * currentCalibration.mmPerPdfUnit ** 2 / 1000000 : null,
+  }))
   const draftSegments = runSegments(runPoints)
   const draftTotalMm = draftSegments.reduce((sum, mm) => sum + mm, 0)
   const renderedRuns = [
@@ -1629,7 +1867,7 @@ export default function App() {
         </div>
 
         <div className="file-actions">
-          <button className="save-takeoff-button" disabled={!pdf || isFileBusy || hasDraft}
+          <button className="save-takeoff-button" disabled={!pdf || isFileBusy || hasDraft || hasInvalidHeight}
             title={hasDraft ? 'Finish or cancel your current measurement or calibration first' : 'Download the PDF, job details and measurements together'}
             onClick={saveTakeoff}>Save Take-off</button>
           <label className={`upload-button open-takeoff-button ${isFileBusy ? 'file-disabled' : ''}`}>
@@ -1665,7 +1903,7 @@ export default function App() {
         <aside className="sidebar">
           <div className={`save-status ${hasUnsavedChanges ? 'unsaved' : ''}`} role="status">
             <strong>{isFileBusy ? 'Opening file…' : hasUnsavedChanges ? 'Changes not saved' : lastSavedAt ? 'Saved file loaded / downloaded' : 'Start a new take-off'}</strong>
-            <p>{hasDraft ? 'Finish or cancel your current measurement or calibration to save.'
+            <p>{hasInvalidHeight ? 'Correct or clear the invalid wall height before saving.' : hasDraft ? 'Finish or cancel your current measurement or calibration to save.'
               : 'Save Take-off downloads one file with your PDF and measurements. Open Take-off restores it on any device.'}</p>
             {lastSavedAt && <span>Last saved: {new Date(lastSavedAt).toLocaleString()}</span>}
           </div>
@@ -1697,7 +1935,7 @@ export default function App() {
 
           <div className="tool-row">
             <button
-              disabled={!pdf || pageNumber <= 1 || runMode}
+              disabled={!pdf || pageNumber <= 1 || runMode || areaMode}
               onClick={previousPage}
               title="Previous page"
             >
@@ -1710,7 +1948,7 @@ export default function App() {
             </span>
 
             <button
-              disabled={!pdf || pageNumber >= (pdf?.numPages ?? 1) || runMode}
+              disabled={!pdf || pageNumber >= (pdf?.numPages ?? 1) || runMode || areaMode}
               onClick={nextPage}
               title="Next page"
             >
@@ -1779,7 +2017,7 @@ export default function App() {
 
           <div className="groups-panel">
             <h3>Named groups</h3>
-            <p className="length-note">Combine separate lengths and wall runs into one total, across all pages.</p>
+            <p className="length-note">Combine lengths, wall runs and areas across all pages. LM and m² are totalled separately.</p>
             <form onSubmit={(event) => { event.preventDefault(); createGroup() }}>
               <label>
                 New group name
@@ -1812,6 +2050,9 @@ export default function App() {
                   <div className="group-total" aria-live="polite">
                     {group.totalMm === null ? 'Calibration required' : `${(group.totalMm / 1000).toFixed(3)} LM`}
                   </div>
+                  <div className="group-total" aria-live="polite">{group.totalAreaM2 === null ? group.invalidHeightIds.length ? 'Check wall height' : 'Area awaiting calibration' : `${group.totalAreaM2.toFixed(3)} m²`}</div>
+                  {group.invalidHeightIds.length > 0 && <p className="calibration-warning">Correct or clear the height for {group.invalidHeightIds.join(', ')} to show the m² total.</p>}
+                  {group.wallsWithoutHeight > 0 && <p className="length-note">{group.wallsWithoutHeight} length/run measurement{group.wallsWithoutHeight === 1 ? ' has' : 's have'} no height and {group.wallsWithoutHeight === 1 ? 'is' : 'are'} excluded from m².</p>}
                   <div>{group.members.length} measurement{group.members.length === 1 ? '' : 's'} · all pages</div>
                   {group.invalidPages.length > 0 && <p className="calibration-warning">
                     Calibrate and lock page{group.invalidPages.length === 1 ? '' : 's'} {group.invalidPages.join(', ')} to show this group’s total.
@@ -1831,7 +2072,7 @@ export default function App() {
 
           <button
             className="future-tool"
-            disabled={!pdf || runMode}
+            disabled={!pdf || runMode || areaMode}
             onClick={calibrationMode ? cancelCalibration : startCalibration}
           >
             {calibrationMode ? 'Cancel Calibration' : 'Calibrate'}
@@ -1915,7 +2156,7 @@ export default function App() {
                   </button>
                 </>
               ) : currentCalibration.locked ? (
-                <button onClick={unlockCalibration} disabled={runMode}>
+                <button onClick={unlockCalibration} disabled={runMode || areaMode}>
                   Unlock Calibration
                 </button>
               ) : (
@@ -1933,7 +2174,7 @@ export default function App() {
               <button
                 className="secondary-calibration-button"
                 onClick={clearCalibration}
-                disabled={runMode}
+                disabled={runMode || areaMode}
               >
                 Clear Calibration
               </button>
@@ -1943,7 +2184,7 @@ export default function App() {
           <button
             className="future-tool"
             disabled={
-              runMode || !currentCalibration ||
+              runMode || areaMode || !currentCalibration ||
               !currentCalibration.locked ||
               currentCalibration.needsRecalibration
             }
@@ -1957,7 +2198,7 @@ export default function App() {
           </button>
 
           {!runMode ? (
-            <button className="future-tool run-start" disabled={!lengthCalibrationValid} onClick={startRun}>
+            <button className="future-tool run-start" disabled={!lengthCalibrationValid || areaMode} onClick={startRun}>
               + Start Run
             </button>
           ) : (
@@ -2005,6 +2246,7 @@ export default function App() {
                       </div>
                       {measurementDetails(run.id, run.name, run.groupId)}
                       <div className="length-primary">{lengthCalibrationValid ? `${(totalMm / 1000).toFixed(3)} m` : 'Calibration required'}</div>
+                      {wallHeightField(run.id, run.heightM, lengthCalibrationValid ? totalMm : null)}
                       <details>
                         <summary>{segments.length} segments — show lengths</summary>
                         <ol className="run-segments">
@@ -2099,6 +2341,7 @@ export default function App() {
                       </button>
                     </div>
                     {measurementDetails(measurement.id, measurement.name, measurement.groupId)}
+                    {wallHeightField(measurement.id, measurement.heightM, measurement.lengthMm)}
                   </div>
                 ))}
               </div>
@@ -2110,9 +2353,44 @@ export default function App() {
             </div>
           )}
 
-          <button className="future-tool" disabled>
-            Area
-          </button>
+          {!areaMode ? <button className="future-tool area-start" disabled={!lengthCalibrationValid || runMode} onClick={startArea}>+ Add Area</button> : (
+            <div className="area-panel" aria-label="Current area">
+              <strong>Area in progress · {areaPoints.length} corners</strong>
+              <div className="area-primary" aria-live="polite">{draftAreaM2 === null ? '— m²' : `${draftAreaM2.toFixed(3)} m² so far`}</div>
+              <p className="length-note">Click around the outside of the shape. Finish Area joins the last corner to the first. Drag to pan; use the wheel to zoom.</p>
+              {areaPoints.length >= 3 && draftAreaProblem && <p className="calibration-warning">{draftAreaProblem}</p>}
+              <button className="area-finish" onClick={finishArea} disabled={!!draftAreaProblem || !lengthCalibrationValid}>Finish Area</button>
+              <div className="run-actions">
+                <button disabled={!areaPoints.length} onClick={() => setAreaPoints((points) => points.slice(0, -1))}>Undo Last Point</button>
+                <button onClick={cancelArea}>Cancel Area</button>
+              </div>
+              <p className="length-note">Finish or cancel before changing page, calibration or group.</p>
+            </div>
+          )}
+          {currentAreas.length > 0 && <div className={`area-panel ${lengthCalibrationValid ? '' : 'invalid'}`}>
+            <strong>Areas ({currentAreas.length})</strong>
+            {!lengthCalibrationValid && <p className="calibration-warning">Calibrate and lock this page to show areas.</p>}
+            <div className="length-list run-list">
+              {currentAreas.map((area) => (
+                <div className="area-list-item" key={area.id}>
+                  <div className="length-panel-heading">
+                    <strong>{area.id}</strong>
+                    <div className="length-item-actions">
+                      <label className="length-lock-control">
+                        <input type="checkbox" checked={area.locked} aria-label={`Lock ${area.id}`} onChange={() => toggleAreaLock(area.id)} />
+                        <span>Lock</span>
+                      </label>
+                      <button className="delete-length-button" aria-label={`Delete ${area.id}`} onClick={() => deleteArea(area.id)}>×</button>
+                    </div>
+                  </div>
+                  {measurementDetails(area.id, area.name, area.groupId)}
+                  <div className="area-primary">{lengthCalibrationValid ? `${(polygonArea(area.points) * currentCalibration.mmPerPdfUnit ** 2 / 1000000).toFixed(3)} m²` : 'Calibration required'}</div>
+                  <div>{area.points.length} corners</div>
+                  {!area.locked && <p className="length-note">Drag a corner to adjust the outline, then tick Lock.</p>}
+                </div>
+              ))}
+            </div>
+          </div>}
 
           <button className="future-tool" disabled>
             Count
@@ -2123,7 +2401,7 @@ export default function App() {
 
         <section
           ref={stageRef}
-          className={`drawing-stage${isPanning ? ' is-panning' : ''}${calibrationMode || lengthMode || runMode ? ' measurement-active' : ''}`}
+          className={`drawing-stage${isPanning ? ' is-panning' : ''}${calibrationMode || lengthMode || runMode || areaMode ? ' measurement-active' : ''}`}
           onPointerDown={startPan}
           onPointerMove={movePan}
           onPointerUp={endPan}
@@ -2174,6 +2452,23 @@ export default function App() {
                   pointerEvents: 'none',
                 }}
               >
+                {renderedAreas.map((area) => (
+                  <g key={area.id}>
+                    {area.handles.length > 1 && (area.id === 'Draft area'
+                      ? <polyline points={area.handles.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke="#c2410c" strokeWidth="3" strokeDasharray="7 4" />
+                      : <polygon points={area.handles.map((p) => `${p.x},${p.y}`).join(' ')} fill="rgba(234,88,12,0.14)" stroke="#c2410c" strokeWidth="3" />)}
+                    {area.id !== 'Draft area' && area.handles.length > 0 && <text
+                      x={area.handles[0].x + 12} y={area.handles[0].y - 12} className="run-label area-label">
+                      {area.id} · {area.areaM2 === null ? 'invalid' : `${area.areaM2.toFixed(3)} m²`}
+                    </text>}
+                    {area.handles.map((point, i) => <circle key={i} cx={point.x} cy={point.y} r={area.locked ? 5 : 8}
+                      fill="#c2410c" stroke="white" strokeWidth="2"
+                      style={{ pointerEvents: !area.locked && lengthCalibrationValid && !hasDraft ? 'all' : 'none', cursor: 'move' }}
+                      onPointerDown={(event) => startAreaHandleDrag(event, area.id, i)}
+                      onPointerMove={moveAreaHandle} onPointerUp={endAreaHandleDrag} onPointerCancel={endAreaHandleDrag} />)}
+                  </g>
+                ))}
+
                 {calibrationLine && (
                   <line
                     x1={calibrationLine.x1}
@@ -2195,7 +2490,7 @@ export default function App() {
                       stroke="#ffffff"
                       strokeWidth="2"
                       style={{
-                        pointerEvents: runMode || (currentCalibration?.locked && !pendingCalibration) ? 'none' : 'all',
+                        pointerEvents: runMode || areaMode || (currentCalibration?.locked && !pendingCalibration) ? 'none' : 'all',
                         cursor:
                           currentCalibration?.locked && !pendingCalibration
                             ? 'not-allowed'
@@ -2231,7 +2526,7 @@ export default function App() {
                       stroke="#ffffff"
                       strokeWidth="2"
                       style={{
-                        pointerEvents: runMode || (currentCalibration?.locked && !pendingCalibration) ? 'none' : 'all',
+                        pointerEvents: runMode || areaMode || (currentCalibration?.locked && !pendingCalibration) ? 'none' : 'all',
                         cursor:
                           currentCalibration?.locked && !pendingCalibration
                             ? 'not-allowed'
@@ -2312,7 +2607,7 @@ export default function App() {
                         stroke="#ffffff"
                         strokeWidth="2"
                         style={{
-                          pointerEvents: measurement.locked || runMode ? 'none' : 'all',
+                          pointerEvents: measurement.locked || runMode || areaMode ? 'none' : 'all',
                           cursor: measurement.locked
                             ? 'default'
                             : lengthCalibrationValid
@@ -2341,7 +2636,7 @@ export default function App() {
                         stroke="#ffffff"
                         strokeWidth="2"
                         style={{
-                          pointerEvents: measurement.locked || runMode ? 'none' : 'all',
+                          pointerEvents: measurement.locked || runMode || areaMode ? 'none' : 'all',
                           cursor: measurement.locked
                             ? 'default'
                             : lengthCalibrationValid
@@ -2382,7 +2677,7 @@ export default function App() {
                       <circle key={i} cx={point.x} cy={point.y} r={run.locked ? 5 : 8}
                         fill="#0f766e" stroke="white" strokeWidth="2"
                         style={{
-                          pointerEvents: !run.locked && lengthCalibrationValid && !runMode && !lengthMode && !calibrationMode ? 'all' : 'none',
+                          pointerEvents: !run.locked && lengthCalibrationValid && !hasDraft ? 'all' : 'none',
                           cursor: 'move',
                         }}
                         onPointerDown={(event) => startRunHandleDrag(event, run.id, i)}

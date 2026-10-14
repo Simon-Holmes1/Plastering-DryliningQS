@@ -716,3 +716,70 @@ canvas {
   padding: 7px 8px;
   font-size: 12px;
 }
+
+.wall-height-field {
+  width: 100%;
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid #e1e6ee;
+  margin-top: 8px;
+}
+
+.wall-area-result {
+  font-weight: 800;
+  color: #0f766e;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebar input[aria-invalid="true"] {
+  border-color: #b42318;
+}
+
+.area-start {
+  border-color: #c2410c;
+  color: #c2410c;
+  font-weight: 700;
+}
+
+.area-panel {
+  padding: 10px;
+  margin: 10px 0;
+  border: 1px solid #fdba74;
+  border-radius: 8px;
+  background: #fff7ed;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.area-panel.invalid {
+  background: #fff4e5;
+  border-color: #f0a23a;
+}
+
+.area-primary {
+  margin: 6px 0;
+  font-size: 20px;
+  font-weight: 800;
+  color: #c2410c;
+  font-variant-numeric: tabular-nums;
+}
+
+.area-finish {
+  width: 100%;
+  color: white;
+  font-weight: 700;
+  background: #c2410c;
+  border-color: #c2410c;
+}
+
+.area-list-item {
+  padding: 8px;
+  border: 1px solid #fed7aa;
+  border-radius: 7px;
+  background: white;
+}
+
+.area-label {
+  fill: #c2410c;
+}
