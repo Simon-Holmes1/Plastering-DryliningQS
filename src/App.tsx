@@ -151,6 +151,17 @@ function decodePdf(base64: string) {
   return Uint8Array.from(binary, (character) => character.charCodeAt(0))
 }
 
+function isValidPdfBase64(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length % 4 !== 0) return false
+  // Avoid repeating regex groups: their backtracking stack overflows on large PDFs.
+  if (/[^A-Za-z0-9+/=]/.test(value)) return false
+  const paddingStart = value.indexOf('=')
+  if (paddingStart === -1) return true
+  const paddingLength = value.length - paddingStart
+  return (paddingLength === 1 || paddingLength === 2)
+    && value[value.length - 1] === '=' && (paddingLength === 1 || value[value.length - 2] === '=')
+}
+
 // Validate the whole saved file before replacing the current take-off.
 function readTakeoff(value: unknown): TakeoffFile {
   const invalid = () => { throw new Error('This file is incomplete or damaged. Your current take-off has been kept.') }
@@ -159,14 +170,13 @@ function readTakeoff(value: unknown): TakeoffFile {
   const integer = (v: any) => Number.isSafeInteger(v) && v >= 1
   const point = (v: any) => object(v) && finite(v.x) && finite(v.y)
   if (!object(value) || value.format !== 'drylining-takeoff') {
-    throw new Error('Choose a saved take-off (.takeoff.json), or use Upload drawing for a PDF.')
+    throw new Error('Choose a saved take-off (.takeoff.json), or use Import New Drawing for a PDF.')
   }
   if (![1, 2, 3, 4, 5].includes(value.version)) {
     throw new Error('This take-off uses a different file version. Open it with the version of the app that saved it.')
   }
   if (!object(value.drawing) || typeof value.drawing.name !== 'string' || !value.drawing.name.trim()
-    || typeof value.drawing.pdfBase64 !== 'string' || !value.drawing.pdfBase64.length
-    || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value.drawing.pdfBase64)
+    || !isValidPdfBase64(value.drawing.pdfBase64)
     || typeof value.savedAt !== 'string' || !Number.isFinite(Date.parse(value.savedAt))) invalid()
   if (!object(value.job) || !['site', 'plot', 'houseType', 'revision'].every((key) => typeof value.job[key] === 'string')) invalid()
   const view = value.view
@@ -373,9 +383,24 @@ export default function App() {
   const [startingWallHeight, setStartingWallHeight] = useState('')
   const [runHeightM, setRunHeightM] = useState<number | undefined>(undefined)
   const [viewCategoryId, setViewCategoryId] = useState('')
+  const [showCalibrationWarning, setShowCalibrationWarning] = useState(false)
+  const calibrationDockRef = useRef<HTMLElement | null>(null)
   const activeGroup = groups.find((group) => group.id === activeGroupId)
   const activeCategory = categories.find((category) => category.id === activeGroup?.categoryId)
   const activeIsCount = activeCategory?.mode === 'count'
+  const pageCalibration = calibrations[pageNumber]
+  const calibrationIssue = !pageCalibration ? 'missing' : pageCalibration.needsRecalibration ? 'changed' : !pageCalibration.locked ? 'unlocked' : 'ready'
+
+  useEffect(() => {
+    if (pdf && !isFileBusy && calibrationIssue !== 'ready') setShowCalibrationWarning(true)
+    else setShowCalibrationWarning(false)
+  }, [pdf, pageNumber, calibrationIssue, isFileBusy])
+
+  function reviewCalibration() {
+    setShowCalibrationWarning(false)
+    if (calibrationIssue === 'missing') startCalibration()
+    else calibrationDockRef.current?.querySelector<HTMLInputElement>('input[type="number"]')?.focus()
+  }
   const wallIds = new Set([...Object.values(lengthMeasurements).flat(), ...Object.values(runMeasurements).flat()].map((item) => item.id))
   const hasInvalidHeight = Object.entries(heightDrafts).some(([id, text]) => wallIds.has(id)
     && text !== '' && (!Number.isFinite(Number(text)) || Number(text) <= 0))
@@ -426,10 +451,11 @@ export default function App() {
   }, [hasUnsavedChanges])
 
   function allowReplacingTakeoff() {
-    return !hasUnsavedChanges || window.confirm('You have work that has not been saved. Replace it? Cancel and use Save Take-off to keep it first.')
+    return !hasUnsavedChanges || window.confirm('You have work that has not been saved. Replace it? Cancel and use Save Measure to keep it first.')
   }
 
   function resetDrafts() {
+    setShowCalibrationWarning(false)
     setHeightPromptOpen(false)
     setStartingWallHeight('')
     setRunHeightM(undefined)
@@ -2257,7 +2283,7 @@ export default function App() {
 
   return (
     <div className="app-shell" aria-busy={isFileBusy}>
-      <header className="topbar" inert={!!measurementChooser || heightPromptOpen}>
+      <header className="topbar" inert={isFileBusy || !!measurementChooser || heightPromptOpen}>
         <div>
           <div className="eyebrow">DRYLINING TAKE-OFF</div>
           <h1>{fileName || 'New take-off'}</h1>
@@ -2266,9 +2292,9 @@ export default function App() {
         <div className="file-actions">
           <button className="save-takeoff-button" disabled={!pdf || isFileBusy || hasDraft || hasInvalidHeight}
             title={hasDraft ? 'Finish or cancel your current measurement or calibration first' : 'Download the PDF, job details and measurements together'}
-            onClick={saveTakeoff}>Save Take-off</button>
+            onClick={saveTakeoff}>Save Measure</button>
           <label className={`upload-button open-takeoff-button ${isFileBusy ? 'file-disabled' : ''}`}>
-            Open Take-off
+            Open Measure
             <input type="file" accept=".json,.takeoff.json,application/json" disabled={isFileBusy}
               onChange={(event) => {
                 const file = event.target.files?.[0]
@@ -2277,7 +2303,7 @@ export default function App() {
               }} />
           </label>
         <label className={`upload-button ${isFileBusy ? 'file-disabled' : ''}`}>
-          Upload drawing
+          Import New Drawing
 
           <input
             type="file"
@@ -2294,47 +2320,178 @@ export default function App() {
           />
         </label>
         </div>
+        <section className="banner-job" aria-label="Job details">
+
+          <label>
+            Site
+            <input disabled={isFileBusy} placeholder="e.g. Oak Meadow" value={job.site} onChange={(event) => setJob((current) => ({ ...current, site: event.target.value }))} />
+          </label>
+
+          <label>
+            Plot
+            <input disabled={isFileBusy} placeholder="e.g. 23" value={job.plot} onChange={(event) => setJob((current) => ({ ...current, plot: event.target.value }))} />
+          </label>
+
+          <label>
+            House type
+            <input disabled={isFileBusy} placeholder="e.g. Warwick" value={job.houseType} onChange={(event) => setJob((current) => ({ ...current, houseType: event.target.value }))} />
+          </label>
+
+          <label>
+            Drawing revision
+            <input disabled={isFileBusy} placeholder="e.g. Rev B" value={job.revision} onChange={(event) => setJob((current) => ({ ...current, revision: event.target.value }))} />
+          </label>
+
+
+
+</section>
       </header>
 
       <main className="workspace" inert={isFileBusy || !!measurementChooser || heightPromptOpen}>
         <aside className="sidebar">
+          <div className="sidebar-fixed">
           <nav className="sidebar-tabs" aria-label="Take-off sections">
             {(['measure', 'groups', 'summary'] as const).map((tab) => <button key={tab}
               aria-pressed={sidebarTab === tab} onClick={() => setSidebarTab(tab)}>
               {tab === 'measure' ? 'Measure' : tab === 'groups' ? 'Groups' : 'Summary'}
             </button>)}
           </nav>
+          <section ref={calibrationDockRef} className={`calibration-dock ${!pdf ? 'calibration-empty' : lengthCalibrationValid ? 'calibration-ready' : 'calibration-not-ready'}`} aria-label="Page calibration">
+            <div className="calibration-readiness" role="status">
+              <span aria-hidden="true">{!pdf ? '○' : lengthCalibrationValid ? '✓' : '✕'}</span>
+              <div><strong>{!pdf ? 'Import a drawing to begin' : lengthCalibrationValid ? 'Set up and ready' : 'Calibration required'}</strong>
+                <div>{!pdf ? 'Use Import New Drawing above.' : lengthCalibrationValid ? `Page ${pageNumber} calibrated and locked.` : calibrationIssue === 'unlocked' ? 'Calibration is unlocked. Lock it before measuring.' : calibrationIssue === 'changed' ? 'Calibration points changed. Recalibrate before measuring.' : `Page ${pageNumber} needs calibration before measuring.`}</div>
+              </div>
+            </div>
+            <details className="calibration-dock-tools" open={!!pdf && (!lengthCalibrationValid || calibrationMode || !!pendingCalibration)}>
+              <summary>Calibration tools</summary>
+          {!lengthCalibrationValid && pdf && <p className="calibration-first-note">
+            {!currentCalibration ? 'Calibrate your drawing to enable measurement tools.' : currentCalibration.needsRecalibration ? 'Update the calibration below to enable measurement tools.' : 'Lock the calibration below to enable measurement tools.'}
+          </p>}
+          <button
+            className={`future-tool ${calibrationAttention ? 'calibrate-attention' : ''}`}
+            disabled={!pdf || runMode || areaMode || countMode}
+            onClick={calibrationMode ? cancelCalibration : startCalibration}
+          >
+            {calibrationMode ? 'Cancel Calibration' : calibrationAttention ? 'Calibrate Drawing' : 'Calibrate'}
+          </button>
+
+          {pendingCalibration && (
+            <div className="calibration-panel">
+              <label>
+                Known distance (mm)
+                <input
+                  autoFocus
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={calibrationDistance}
+                  onChange={(event) => setCalibrationDistance(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      saveCalibration()
+                    }
+                  }}
+                  placeholder="e.g. 3600"
+                />
+              </label>
+
+              <button onClick={saveCalibration}>
+                Save Calibration
+              </button>
+            </div>
+          )}
+
+          {currentCalibration && (
+            <div
+              className={`calibration-panel ${
+                currentCalibration.needsRecalibration || !currentCalibration.locked
+                  ? 'needs-recalibration'
+                  : 'calibrated'
+              }`}
+            >
+              <strong>
+                {currentCalibration.needsRecalibration
+                  ? '⚠ Recalibration required'
+                  : currentCalibration.locked
+                  ? '✓ Page calibrated · Locked'
+                  : 'Calibration unlocked'}
+              </strong>
+
+              <div>
+                Known distance: {currentCalibration.distanceMm.toLocaleString()} mm
+              </div>
+
+              {currentCalibration.needsRecalibration ? (
+                <>
+                  <div className="calibration-warning">
+                    A calibration point has moved. Enter the known distance for
+                    the points in their new positions before taking measurements.
+                  </div>
+
+                  <label>
+                    New known distance (mm)
+                    <input
+                      autoFocus
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={recalibrationDistance}
+                      onChange={(event) =>
+                        setRecalibrationDistance(event.target.value)
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          recalibrateCurrentPoints()
+                        }
+                      }}
+                      placeholder="e.g. 3600"
+                    />
+                  </label>
+
+                  <button onClick={recalibrateCurrentPoints}>
+                    Recalibrate & Lock
+                  </button>
+                </>
+              ) : currentCalibration.locked ? (
+                <button onClick={unlockCalibration} disabled={runMode || areaMode || countMode}>
+                  Unlock Calibration
+                </button>
+              ) : (
+                <>
+                  <div className="calibration-note">
+                    Drag point A or B to fine-tune its position.
+                  </div>
+
+                  <button onClick={lockCalibration}>
+                    Lock Calibration
+                  </button>
+                </>
+              )}
+
+              <button
+                className="secondary-calibration-button"
+                onClick={clearCalibration}
+                disabled={runMode || areaMode || countMode}
+              >
+                Clear Calibration
+              </button>
+            </div>
+          )}
+
+
+            </details>
+          </section>
+          </div>
+          <div className="sidebar-scroll">
+
           <div className={`save-status ${hasUnsavedChanges ? 'unsaved' : ''}`} role="status">
             <strong>{isFileBusy ? 'Opening file…' : hasUnsavedChanges ? 'Changes not saved' : lastSavedAt ? 'Saved file loaded / downloaded' : 'Start a new take-off'}</strong>
             <p>{hasInvalidHeight ? 'Correct or clear the invalid wall height before saving.' : hasDraft ? 'Finish or cancel your current measurement or calibration to save.'
-              : 'Save Take-off downloads one file with your PDF and measurements. Open Take-off restores it on any device.'}</p>
+              : 'Save Measure downloads one file with your PDF and measurements. Open Measure restores it on any device.'}</p>
             {lastSavedAt && <span>Last saved: {new Date(lastSavedAt).toLocaleString()}</span>}
           </div>
           <div hidden={sidebarTab !== 'measure'}>
-          <h2>Job</h2>
-
-          <label>
-            Site
-            <input placeholder="e.g. Oak Meadow" value={job.site} onChange={(event) => setJob((current) => ({ ...current, site: event.target.value }))} />
-          </label>
-
-          <label>
-            Plot
-            <input placeholder="e.g. 23" value={job.plot} onChange={(event) => setJob((current) => ({ ...current, plot: event.target.value }))} />
-          </label>
-
-          <label>
-            House type
-            <input placeholder="e.g. Warwick" value={job.houseType} onChange={(event) => setJob((current) => ({ ...current, houseType: event.target.value }))} />
-          </label>
-
-          <label>
-            Drawing revision
-            <input placeholder="e.g. Rev B" value={job.revision} onChange={(event) => setJob((current) => ({ ...current, revision: event.target.value }))} />
-          </label>
-
-          <hr />
-
           <h2>Drawing</h2>
 
           <div className="tool-row">
@@ -2562,120 +2719,6 @@ export default function App() {
             <strong>{activeCategory?.name || 'Uncategorised'}</strong>
             <div>{activeGroup?.name || 'Ungrouped'} · {lengthMode ? 'Click the second point to finish' : 'Press Enter to finish'}</div>
           </div>}
-
-          {!lengthCalibrationValid && pdf && <p className="calibration-first-note">
-            {!currentCalibration ? 'Calibrate your drawing to enable measurement tools.' : currentCalibration.needsRecalibration ? 'Update the calibration below to enable measurement tools.' : 'Lock the calibration below to enable measurement tools.'}
-          </p>}
-          <button
-            className={`future-tool ${calibrationAttention ? 'calibrate-attention' : ''}`}
-            disabled={!pdf || runMode || areaMode || countMode}
-            onClick={calibrationMode ? cancelCalibration : startCalibration}
-          >
-            {calibrationMode ? 'Cancel Calibration' : calibrationAttention ? 'Calibrate Drawing' : 'Calibrate'}
-          </button>
-
-          {pendingCalibration && (
-            <div className="calibration-panel">
-              <label>
-                Known distance (mm)
-                <input
-                  autoFocus
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={calibrationDistance}
-                  onChange={(event) => setCalibrationDistance(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      saveCalibration()
-                    }
-                  }}
-                  placeholder="e.g. 3600"
-                />
-              </label>
-
-              <button onClick={saveCalibration}>
-                Save Calibration
-              </button>
-            </div>
-          )}
-
-          {currentCalibration && (
-            <div
-              className={`calibration-panel ${
-                currentCalibration.needsRecalibration
-                  ? 'needs-recalibration'
-                  : 'calibrated'
-              }`}
-            >
-              <strong>
-                {currentCalibration.needsRecalibration
-                  ? '⚠ Recalibration required'
-                  : currentCalibration.locked
-                  ? '✓ Page calibrated · Locked'
-                  : 'Calibration unlocked'}
-              </strong>
-
-              <div>
-                Known distance: {currentCalibration.distanceMm.toLocaleString()} mm
-              </div>
-
-              {currentCalibration.needsRecalibration ? (
-                <>
-                  <div className="calibration-warning">
-                    A calibration point has moved. Enter the known distance for
-                    the points in their new positions before taking measurements.
-                  </div>
-
-                  <label>
-                    New known distance (mm)
-                    <input
-                      autoFocus
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={recalibrationDistance}
-                      onChange={(event) =>
-                        setRecalibrationDistance(event.target.value)
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          recalibrateCurrentPoints()
-                        }
-                      }}
-                      placeholder="e.g. 3600"
-                    />
-                  </label>
-
-                  <button onClick={recalibrateCurrentPoints}>
-                    Recalibrate & Lock
-                  </button>
-                </>
-              ) : currentCalibration.locked ? (
-                <button onClick={unlockCalibration} disabled={runMode || areaMode || countMode}>
-                  Unlock Calibration
-                </button>
-              ) : (
-                <>
-                  <div className="calibration-note">
-                    Drag point A or B to fine-tune its position.
-                  </div>
-
-                  <button onClick={lockCalibration}>
-                    Lock Calibration
-                  </button>
-                </>
-              )}
-
-              <button
-                className="secondary-calibration-button"
-                onClick={clearCalibration}
-                disabled={runMode || areaMode || countMode}
-              >
-                Clear Calibration
-              </button>
-            </div>
-          )}
 
           <button
             className="future-tool"
@@ -2916,6 +2959,7 @@ export default function App() {
           </div>
 
           <p className="status" role="status">{status}</p>
+          </div>
         </aside>
 
         <section
@@ -2932,7 +2976,7 @@ export default function App() {
         >
           {!pdf && (
             <label className="drop-zone">
-              <strong>Upload a construction drawing</strong>
+              <strong>Import a construction drawing</strong>
               <span>PDF only for the first prototype</span>
 
               <input
@@ -3250,6 +3294,23 @@ export default function App() {
           )}
         </section>
       </main>
+      {showCalibrationWarning && !measurementChooser && !heightPromptOpen && <div className="calibration-notice-position" onKeyDown={(event) => {
+        if (event.key === 'Escape') { event.stopPropagation(); setShowCalibrationWarning(false) }
+      }}>
+        <section className="calibration-notice calibration-warning-dialog" role="status" aria-live="polite"
+          aria-labelledby="calibration-warning-title" aria-describedby="calibration-warning-description">
+          <h2 id="calibration-warning-title">✕ Calibration required</h2>
+          <p id="calibration-warning-description">{calibrationIssue === 'missing'
+            ? `Page ${pageNumber} has not been calibrated. Set a known distance on the drawing before measuring.`
+            : calibrationIssue === 'unlocked' ? 'The page calibration is unlocked. Lock it again before measuring.'
+            : 'The calibration points have changed. Enter the new known distance and recalibrate before measuring.'}</p>
+          <p>You can keep browsing pages. Calibrate this page when you are ready to measure.</p>
+          <div className="dialog-actions">
+            <button type="button" onClick={() => setShowCalibrationWarning(false)}>Not Now</button>
+            <button type="button" className="run-finish" onClick={reviewCalibration}>{calibrationIssue === 'missing' ? 'Calibrate Now' : 'Review Calibration'}</button>
+          </div>
+        </section>
+      </div>}
       {measurementChooser && !heightPromptOpen && <div className="measurement-dialog-backdrop" onKeyDown={(event) => {
         if (event.key === 'Escape') { event.stopPropagation(); setMeasurementChooser(null) }
       }}>
