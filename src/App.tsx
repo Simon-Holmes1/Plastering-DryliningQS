@@ -133,7 +133,7 @@ type TakeoffFile = {
   groups: MeasurementGroup[]
   nextGroupNumber: number
   nextAreaNumber: number
-  view: { page: number; rotation: number; mode: ViewMode; scale: number; pan: Pan; hiddenGroupIds?: string[]; showUngrouped?: boolean; categoryId?: string }
+  view: { page: number; rotation: number; mode: ViewMode; scale: number; pan: Pan; hiddenGroupIds?: string[]; showUngrouped?: boolean; categoryId?: string; groupId?: string }
 }
 
 const emptyJob: JobDetails = { site: '', plot: '', houseType: '', revision: '' }
@@ -269,6 +269,7 @@ function readTakeoff(value: unknown): TakeoffFile {
   if (view.hiddenGroupIds !== undefined && (!Array.isArray(view.hiddenGroupIds) || !view.hiddenGroupIds.every((id: unknown) => typeof id === 'string' && groupIds.has(id)))) invalid()
   if (view.showUngrouped !== undefined && typeof view.showUngrouped !== 'boolean') invalid()
   if (view.categoryId !== undefined && (typeof view.categoryId !== 'string' || (view.categoryId !== '' && !categoryIds.has(view.categoryId)))) invalid()
+  if (view.groupId !== undefined && (typeof view.groupId !== 'string' || (view.groupId !== '' && !groupIds.has(view.groupId)))) invalid()
   return { ...value, version: 5, groups, nextGroupNumber, areas, nextAreaNumber, categories, counts, nextCountNumber } as TakeoffFile
 }
 
@@ -383,6 +384,8 @@ export default function App() {
   const [startingWallHeight, setStartingWallHeight] = useState('')
   const [runHeightM, setRunHeightM] = useState<number | undefined>(undefined)
   const [viewCategoryId, setViewCategoryId] = useState('')
+  const [viewGroupId, setViewGroupId] = useState('')
+  const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null)
   const [showCalibrationWarning, setShowCalibrationWarning] = useState(false)
   const calibrationDockRef = useRef<HTMLElement | null>(null)
   const activeGroup = groups.find((group) => group.id === activeGroupId)
@@ -455,6 +458,7 @@ export default function App() {
   }
 
   function resetDrafts() {
+    setSelectedWorkId(null)
     setShowCalibrationWarning(false)
     setHeightPromptOpen(false)
     setStartingWallHeight('')
@@ -503,7 +507,7 @@ export default function App() {
         groups, nextGroupNumber: nextGroupNumberRef.current,
         areas: areaMeasurements, nextAreaNumber: nextAreaNumberRef.current,
         counts: countMeasurements, nextCountNumber: nextCountNumberRef.current, categories,
-        view: { page: pageNumber, rotation, mode: viewMode, scale, pan, hiddenGroupIds, showUngrouped, categoryId: viewCategoryId },
+        view: { page: pageNumber, rotation, mode: viewMode, scale, pan, hiddenGroupIds, showUngrouped, categoryId: viewCategoryId, groupId: viewGroupId },
       }
       const blob = new Blob([JSON.stringify(takeoff)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
@@ -557,6 +561,7 @@ export default function App() {
       setHiddenGroupIds([])
       setShowUngrouped(true)
       setViewCategoryId(saved.view.categoryId ?? '')
+      setViewGroupId(saved.view.groupId ?? '')
       setSidebarTab('measure')
       setNewCategoryName('')
       nextAreaNumberRef.current = saved.nextAreaNumber
@@ -612,6 +617,7 @@ export default function App() {
       setHiddenGroupIds([])
       setShowUngrouped(true)
       setViewCategoryId('')
+      setViewGroupId('')
       setSidebarTab('measure')
       setNewCategoryName('')
       nextAreaNumberRef.current = 1
@@ -1004,6 +1010,8 @@ export default function App() {
 
   function revealActiveGroup() {
     setSidebarTab('measure')
+    setSelectedWorkId(null)
+    setViewGroupId('')
     setViewCategoryId(activeGroup?.categoryId ?? '')
     if (activeGroupId) setHiddenGroupIds((current) => current.filter((id) => id !== activeGroupId))
     else setShowUngrouped(true)
@@ -1086,11 +1094,13 @@ export default function App() {
   function selectViewCategory(categoryId: string) {
     if (categoryId && !categories.some((category) => category.id === categoryId)) return
     setViewCategoryId(categoryId)
+    setViewGroupId('')
     setHiddenGroupIds([])
     setShowUngrouped(true)
   }
 
   function matchesViewCategory(groupId?: string, pointCategoryId?: string, isWall = false, heightM?: number) {
+    if (viewGroupId) return groupId === viewGroupId
     if (!viewCategoryId) return true
     const category = categories.find((item) => item.id === viewCategoryId)
     const group = groups.find((item) => item.id === groupId)
@@ -1103,6 +1113,7 @@ export default function App() {
   }
 
   function isMeasurementVisible(groupId?: string, pointCategoryId?: string, isWall = false, heightM?: number) {
+    if (viewGroupId) return groupId === viewGroupId
     if (viewCategoryId) return matchesViewCategory(groupId, pointCategoryId, isWall, heightM)
     return groupId ? !hiddenGroupIds.includes(groupId) : showUngrouped
   }
@@ -1153,6 +1164,8 @@ export default function App() {
     setViewCategoryId(groups.find((group) => group.id === groupId)?.categoryId ?? 'svp-boxing')
     setHiddenGroupIds((current) => current.filter((id) => id !== groupId))
     setSidebarTab('measure')
+    setSelectedWorkId(null)
+    setViewGroupId('')
     setCountMode(true)
     setStatus('Points: click once at each location to add a cross. Press Enter or Done Marking when finished.')
   }
@@ -1405,6 +1418,8 @@ export default function App() {
       [page, items.map((item) => ({ ...item, categoryId: countCategoryId(item) }))]))))
     setHiddenGroupIds((current) => current.filter((groupId) => groupId !== id))
     if (activeGroupId === id) setActiveGroupId('')
+    if (selectedWorkId === id) setSelectedWorkId(null)
+    if (viewGroupId === id) setViewGroupId('')
     setStatus('Group removed. Its measurements have been kept as ungrouped measurements.')
   }
 
@@ -2182,9 +2197,45 @@ export default function App() {
       count: category.mode === 'count' ? Object.values(countMeasurements).flat().filter((item) => countCategoryId(item) === category.id).length : 0,
       wallsWithoutHeight: sourceGroups.reduce((sum, group) => sum + group.wallsWithoutHeight, 0) }
   })
+  const selectedWork = groupSummaries.find((group) => group.id === selectedWorkId)
+  const showingAllWork = selectedWorkId === '__all__'
+  const viewedWork = groupSummaries.find((group) => group.id === viewGroupId)
+
+  function openMeasuredWork(id: string) {
+    if (hasDraft || !groups.some((group) => group.id === id)) return
+    showOnlyMeasuredWork(id)
+    setSelectedWorkId(id)
+  }
+
+  function openAllMeasuredWork() {
+    if (hasDraft) return
+    showAllMeasurements()
+    setSelectedWorkId('__all__')
+    setSidebarTab('groups')
+  }
+
+  function showOnlyMeasuredWork(id: string) {
+    if (hasDraft || !groups.some((group) => group.id === id)) return
+    setViewGroupId(id)
+    setViewCategoryId('')
+    setHiddenGroupIds([])
+    setShowUngrouped(true)
+    const members = groupSummaries.find((group) => group.id === id)?.members ?? []
+    if (members.length && !members.some((item) => item.page === pageNumber)) {
+      setPageNumber(members[0].page)
+      setViewMode('fit-page')
+      setPan({ x: 0, y: 0 })
+    }
+  }
+
+  function showAllMeasurements() {
+    if (hasDraft) return
+    selectViewCategory('')
+  }
   const currentCounts = countMeasurements[pageNumber] ?? []
-  const viewSummary = categorySummaries.find((category) => category.id === viewCategoryId)
-  const viewItems = allMeasurements.filter((item) => matchesViewCategory(item.groupId, item.categoryId, item.kind === 'wall', item.heightM)).map((item) => {
+  const viewSummary = viewedWork ? { ...viewedWork, mode: categories.find((category) => category.id === viewedWork.categoryId)?.mode ?? 'measure' }
+    : categorySummaries.find((category) => category.id === viewCategoryId)
+  function withQuantities(item: (typeof allMeasurements)[number]) {
     const calibration = calibrations[item.page]
     const valid = !!calibration && calibration.locked && !calibration.needsRecalibration
     const lengthMm = valid ? item.pdfLength * calibration.mmPerPdfUnit : null
@@ -2193,7 +2244,21 @@ export default function App() {
     const areaM2 = !valid || invalidHeight ? null : item.kind === 'area' ? item.pdfArea * calibration.mmPerPdfUnit ** 2 / 1000000
       : item.heightM !== undefined ? item.pdfLength * calibration.mmPerPdfUnit / 1000 * item.heightM : null
     return { ...item, lengthMm, areaM2 }
-  })
+  }
+  const viewItems = allMeasurements.filter((item) => matchesViewCategory(item.groupId, item.categoryId, item.kind === 'wall', item.heightM)).map(withQuantities)
+  const selectedWorkItems = allMeasurements.filter((item) => item.groupId === selectedWorkId).map(withQuantities)
+  const ungroupedItems = allMeasurements.filter((item) => !item.groupId).map(withQuantities)
+  const ungroupedGeometry = ungroupedItems.filter((item) => item.kind !== 'count')
+  const workOverviewRows = [
+    ...groupSummaries.map((group) => ({ id: group.id, name: group.name || group.id,
+      mode: categories.find((category) => category.id === group.categoryId)?.mode ?? 'measure',
+      totalMm: group.totalMm, totalAreaM2: group.totalAreaM2, count: group.count })),
+    ...(ungroupedItems.length ? [{ id: '__ungrouped__', name: 'Ungrouped Measurements', mode: 'mixed',
+      totalMm: ungroupedGeometry.some((item) => item.lengthMm === null) ? null : ungroupedGeometry.reduce((sum, item) => sum + (item.lengthMm ?? 0), 0),
+      totalAreaM2: ungroupedGeometry.some((item) => item.kind === 'area' || item.heightM !== undefined ? item.areaM2 === null : false) ? null
+        : ungroupedGeometry.reduce((sum, item) => sum + (item.areaM2 ?? 0), 0),
+      count: ungroupedItems.filter((item) => item.kind === 'count').length }] : []),
+  ]
   const calibrationAttention = !!pdf && !currentCalibration && !calibrationMode && !pendingCalibration
   const renderedCounts = currentCounts.filter((item) => isMeasurementVisible(item.groupId, countCategoryId(item))).map((item) => {
     const [x, y] = viewportRef.current?.convertToViewportPoint(item.point.x, item.point.y) ?? [0, 0]
@@ -2347,13 +2412,13 @@ export default function App() {
 </section>
       </header>
 
-      <main className="workspace" inert={isFileBusy || !!measurementChooser || heightPromptOpen}>
+      <main className={`workspace ${selectedWork || showingAllWork ? 'has-work-details' : ''}`} inert={isFileBusy || !!measurementChooser || heightPromptOpen}>
         <aside className="sidebar">
           <div className="sidebar-fixed">
           <nav className="sidebar-tabs" aria-label="Take-off sections">
             {(['measure', 'groups', 'summary'] as const).map((tab) => <button key={tab}
-              aria-pressed={sidebarTab === tab} onClick={() => setSidebarTab(tab)}>
-              {tab === 'measure' ? 'Measure' : tab === 'groups' ? 'Groups' : 'Summary'}
+              aria-pressed={sidebarTab === tab} onClick={() => { setSidebarTab(tab); if (tab !== 'groups') setSelectedWorkId(null) }}>
+              {tab === 'measure' ? 'New Measure' : tab === 'groups' ? 'Measured Work' : 'Summary'}
             </button>)}
           </nav>
           <section ref={calibrationDockRef} className={`calibration-dock ${!pdf ? 'calibration-empty' : lengthCalibrationValid ? 'calibration-ready' : 'calibration-not-ready'}`} aria-label="Page calibration">
@@ -2574,79 +2639,28 @@ export default function App() {
 
           <hr />
 
-          <h2>View</h2>
           </div>
 
-          <div className="groups-panel" hidden={sidebarTab !== 'groups'}>
-            <h3>Named groups</h3>
-            <p className="length-note">Combine lengths, wall runs and areas across all pages. LM and m² are totalled separately.</p>
-            <form onSubmit={(event) => { event.preventDefault(); createGroup() }}>
-              <label>
-                New group name
-                <input value={newGroupName} maxLength={100} placeholder="e.g. Internal timber walls"
-                  disabled={!pdf || hasDraft} onChange={(event) => setNewGroupName(event.target.value)} />
-              </label>
-              <button className="wide-control" type="submit" disabled={!pdf || hasDraft || !newGroupName.trim()}>+ Create Group</button>
-            </form>
-            <label className="active-group-control">
-              Add new measurements to
-              <select value={activeGroupId} disabled={!pdf || hasDraft} onChange={(event) => setActiveGroupId(event.target.value)}>
-                <option value="">Ungrouped</option>
-                {groups.map((group) => <option key={group.id} value={group.id}>{group.name.trim() || group.id}</option>)}
-              </select>
-            </label>
-            {hasDraft && <p className="length-note">Finish or cancel this measurement before changing the group for new measurements.</p>}
-            <div className="group-list">
-              <button onClick={() => { selectViewCategory(''); setSidebarTab('measure') }}>Show everything on drawing</button>
-              {groupSummaries.map((group) => (
-                <div className="group-card" key={group.id}>
-                  <div className="length-panel-heading">
-                    <strong>{group.id}</strong>
-                    <button className="remove-group-button" disabled={hasDraft} onClick={() => removeGroup(group.id)}
-                      title="Remove this group and keep its measurements ungrouped">Remove group</button>
-                  </div>
-                  <label>
-                    Group name
-                    <input value={group.name} maxLength={100} placeholder={group.id} aria-label={`Name ${group.id}`}
-                      onChange={(event) => renameGroup(group.id, event.target.value)} />
-                  </label>
-                  <label>
-                    Work category
-                    <select value={group.categoryId ?? ''} disabled={hasDraft} aria-label={`Category for ${group.id}`}
-                      onChange={(event) => setGroupCategory(group.id, event.target.value)}>
-                      <option value="">Uncategorised</option>
-                      {categories.filter((category) => category.mode !== 'derived').map((category) => <option key={category.id} value={category.id}>{category.name || category.id}</option>)}
-                    </select>
-                  </label>
-                  {categories.find((category) => category.id === group.categoryId)?.skimTarget && <label className="length-lock-control skim-control">
-                    <input type="checkbox" checked={group.includeSkim !== false} onChange={(event) => setGroups((current) => current.map((item) => item.id === group.id ? { ...item, includeSkim: event.target.checked } : item))} />
-                    <span>Include this area in skim</span>
-                  </label>}
-                  <button className="view-category-button" disabled={hasDraft} onClick={() => { selectViewCategory(group.categoryId ?? ''); setSidebarTab('measure') }}>View this category</button>
-                  {categories.find((category) => category.id === group.categoryId)?.mode === 'count' && <div className="group-total">{group.count} points</div>}
-                  {categories.find((category) => category.id === group.categoryId)?.mode !== 'count' && <>
-                  <div className="group-total" aria-live="polite">
-                    {group.totalMm === null ? 'Calibration required' : `${(group.totalMm / 1000).toFixed(3)} LM`}
-                  </div>
-                  <div className="group-total" aria-live="polite">{group.totalAreaM2 === null ? group.invalidHeightIds.length ? 'Check wall height' : 'Area awaiting calibration' : `${group.totalAreaM2.toFixed(3)} m²`}</div>
-                  {group.invalidHeightIds.length > 0 && <p className="calibration-warning">Correct or clear the height for {group.invalidHeightIds.join(', ')} to show the m² total.</p>}
-                  {group.wallsWithoutHeight > 0 && <p className="length-note">{group.wallsWithoutHeight} length/run measurement{group.wallsWithoutHeight === 1 ? ' has' : 's have'} no height and {group.wallsWithoutHeight === 1 ? 'is' : 'are'} excluded from m².</p>}
-                  </>}
-                  <div>{group.members.length} measurement{group.members.length === 1 ? '' : 's'} · all pages</div>
-                  {group.invalidPages.length > 0 && <p className="calibration-warning">
-                    Calibrate and lock page{group.invalidPages.length === 1 ? '' : 's'} {group.invalidPages.join(', ')} to show this group’s total.
-                  </p>}
-                  {group.members.length === 0 ? <p className="length-note">Select this group above and measure, or assign an existing measurement using its Group dropdown.</p> : (
-                    <details>
-                      <summary>Show measurements</summary>
-                      <ul className="group-members">
-                        {group.members.map((item) => <li key={item.id}>{item.name?.trim() || item.id} · {item.id} · page {item.page}</li>)}
-                      </ul>
-                    </details>
-                  )}
-                </div>
-              ))}
+
+          <div className="measured-work-list" hidden={sidebarTab !== 'groups'}>
+            <h2>Measured Work</h2>
+            <p className="length-note">Choose a work item to see its quantities and measurements on the right.</p>
+            <button className="show-all-work-button" disabled={hasDraft} aria-pressed={showingAllWork} onClick={openAllMeasuredWork}>Show All Measured Work</button>
+            <div className="work-buttons">
+              {groupSummaries.map((group) => <button className="work-item-button" key={group.id}
+                aria-pressed={selectedWorkId === group.id} disabled={hasDraft} onClick={() => openMeasuredWork(group.id)}>
+                <strong>{group.name || group.id}</strong>
+                <span>{categories.find((category) => category.id === group.categoryId)?.name || 'Uncategorised'} · {group.members.length} measurements</span>
+              </button>)}
             </div>
+            {!groups.length && <p className="length-note">No measured work yet. Start a measurement in New Measure to create your first work item.</p>}
+            <details className="create-work-item"><summary>Create a work item (optional)</summary>
+              <form onSubmit={(event) => { event.preventDefault(); createGroup() }}>
+                <label>Work item name<input value={newGroupName} maxLength={100} placeholder="e.g. First floor timber walls"
+                  disabled={!pdf || hasDraft} onChange={(event) => setNewGroupName(event.target.value)} /></label>
+                <button className="wide-control" type="submit" disabled={!pdf || hasDraft || !newGroupName.trim()}>Create Work Item</button>
+              </form>
+            </details>
           </div>
 
           <div hidden={sidebarTab !== 'summary'} className="summary-panel">
@@ -2664,7 +2678,7 @@ export default function App() {
               </details>}
               {category.wallsWithoutHeight > 0 && <p className="length-note">{category.wallsWithoutHeight} lengths/runs without height are excluded from m².</p>}
             </div>)}
-            <p className="length-note">{groups.filter((group) => !group.categoryId).length} groups are uncategorised. Assign their categories in Groups to include them above. Ungrouped geometry is also excluded.</p>
+            <p className="length-note">{groups.filter((group) => !group.categoryId).length} work items are uncategorised. Assign categories in Measured Work settings to include them above. Ungrouped geometry is also excluded.</p>
             <details className="category-settings"><summary>Edit category names and colours</summary>
               {categories.map((category) => <div className="category-editor" key={category.id}>
                 <input aria-label={`Name category ${category.id}`} value={category.name} maxLength={100} onChange={(event) => updateCategory(category.id, { name: event.target.value })} />
@@ -2683,38 +2697,6 @@ export default function App() {
           </div>
 
           <div hidden={sidebarTab !== 'measure'}>
-          <div className="category-view-panel">
-            <label>Show on drawing
-              <select aria-label="View category" value={viewCategoryId} disabled={hasDraft} onChange={(event) => selectViewCategory(event.target.value)}>
-                <option value="">Show Everything</option>
-                {categories.map((category) => <option key={category.id} value={category.id}>{category.name || category.id}</option>)}
-              </select>
-            </label>
-            <strong>{viewSummary?.name || 'All measured elements'}</strong>
-            {viewSummary && <div className="summary-values">
-              {viewSummary.mode === 'count' ? <span>{viewSummary.count} no.</span> : <>
-                {viewSummary.mode !== 'derived' && <span>{viewSummary.totalMm === null ? 'Check calibration' : `${(viewSummary.totalMm / 1000).toFixed(3)} LM`}</span>}
-                <span>{viewSummary.totalAreaM2 === null ? 'Check calibration / heights' : `${viewSummary.totalAreaM2.toFixed(3)} m²`}</span>
-              </>}
-            </div>}
-            <p className="length-note">Drawing: page {pageNumber}. The list and totals include all pages. Click a page number to cross-reference.</p>
-            <details key={viewCategoryId} open={!!viewCategoryId} className="view-items">
-              <summary>{viewItems.length} measured elements</summary>
-              <div className="view-item-list">
-                {viewItems.map((item) => <div key={item.id} className="view-item">
-                  <strong>{item.name || item.id}{item.name ? ` · ${item.id}` : ''}</strong>
-                  <div>{item.kind === 'count' ? '1 no.' : item.kind === 'wall' ? <>
-                    {item.lengthMm === null ? 'Check calibration' : `${(item.lengthMm / 1000).toFixed(3)} m`}
-                    {item.heightM !== undefined && ` · ${item.areaM2 === null ? 'Check height / calibration' : `${item.areaM2.toFixed(3)} m²`}`}
-                  </> : item.areaM2 === null ? 'Check calibration' : `${item.areaM2.toFixed(3)} m²`}</div>
-                  <button disabled={hasDraft} onClick={() => {
-                    setPageNumber(item.page); setViewMode('fit-page'); setPan({ x: 0, y: 0 }); setStageResizeTick((tick) => tick + 1)
-                  }}>Page {item.page}</button>
-                </div>)}
-                {viewItems.length === 0 && <p className="length-note">No measured elements in this view yet.</p>}
-              </div>
-            </details>
-          </div>
           {(lengthMode || runMode || areaMode || countMode) && <div className="measuring-banner" role="status">
             <strong>{activeCategory?.name || 'Uncategorised'}</strong>
             <div>{activeGroup?.name || 'Ungrouped'} · {lengthMode ? 'Click the second point to finish' : 'Press Enter to finish'}</div>
@@ -3293,6 +3275,78 @@ export default function App() {
             </div>
           )}
         </section>
+        {showingAllWork && <aside className="work-details-panel" aria-label="All Measured Work quantities" onKeyDown={(event) => {
+          if (event.key === 'Escape') { event.stopPropagation(); setSelectedWorkId(null) }
+        }}>
+          <div className="work-details-header"><h2>All Measured Work</h2>
+            <button aria-label="Close measured work overview" onClick={() => setSelectedWorkId(null)}>×</button>
+          </div>
+          <div className="work-details-body work-overview">
+            {workOverviewRows.map((work) => <div className="work-overview-row" key={work.id}>
+              <h3>{work.name}</h3>
+              <div className="work-overview-quantities">
+                {work.mode !== 'count' && <>
+                  <span>{work.totalMm === null ? 'Check calibration' : `${(work.totalMm / 1000).toFixed(3)} LM`}</span>
+                  <span>{work.totalAreaM2 === null ? 'Check calibration / height' : `${work.totalAreaM2.toFixed(3)} m²`}</span>
+                </>}
+                {(work.mode === 'count' || work.count > 0) && <span>{work.count} no.</span>}
+              </div>
+            </div>)}
+            {!workOverviewRows.length && <p className="length-note">No measurements yet.</p>}
+          </div>
+        </aside>}
+        {selectedWork && <aside className="work-details-panel" aria-label="Measured Work details" onKeyDown={(event) => {
+          if (event.key === 'Escape') { event.stopPropagation(); setSelectedWorkId(null) }
+        }}>
+          <div className="work-details-header">
+            <div><div className="work-details-eyebrow">MEASURED WORK · {selectedWork.id}</div><h2>{selectedWork.name || selectedWork.id}</h2></div>
+            <button aria-label="Close measured work details" onClick={() => setSelectedWorkId(null)}>×</button>
+          </div>
+          <div className="work-details-body">
+            <p className="work-category-name"><span className="category-swatch" style={{ background: categories.find((category) => category.id === selectedWork.categoryId)?.color ?? '#64748b' }} />{categories.find((category) => category.id === selectedWork.categoryId)?.name || 'Uncategorised'}</p>
+            <div className="work-quantity-summary" aria-live="polite">
+              {categories.find((category) => category.id === selectedWork.categoryId)?.mode === 'count'
+                ? <strong>{selectedWork.count} no.</strong> : <>
+                  <strong>{selectedWork.totalMm === null ? 'Check calibration' : `${(selectedWork.totalMm / 1000).toFixed(3)} LM`}</strong>
+                  <strong>{selectedWork.totalAreaM2 === null ? 'Check calibration / heights' : `${selectedWork.totalAreaM2.toFixed(3)} m²`}</strong>
+                </>}
+            </div>
+            <p className="length-note">{selectedWork.members.length} measurements · totals across all pages</p>
+            {selectedWork.invalidPages.length > 0 && <p className="calibration-warning">Calibrate and lock pages {selectedWork.invalidPages.join(', ')} to show complete totals.</p>}
+            {selectedWork.wallsWithoutHeight > 0 && <p className="length-note">{selectedWork.wallsWithoutHeight} lengths/runs have no height and are excluded from m².</p>}
+            <div className="work-visibility-actions">
+              <button disabled={hasDraft} aria-pressed={viewGroupId === selectedWork.id} onClick={() => showOnlyMeasuredWork(selectedWork.id)}>Show Only This Measure on Drawing</button>
+              <button disabled={hasDraft} onClick={showAllMeasurements}>Show All Measurements</button>
+            </div>
+            <h3>Individual measurements</h3>
+            <div className="work-member-list">
+              {selectedWorkItems.map((item) => <details className="work-member-card" key={item.id}>
+                <summary><strong>{item.name || item.id}</strong><span>Page {item.page} · {item.kind === 'count' ? '1 no.' : item.kind === 'area'
+                  ? item.areaM2 === null ? 'Check calibration' : `${item.areaM2.toFixed(3)} m²`
+                  : item.lengthMm === null ? 'Check calibration' : `${(item.lengthMm / 1000).toFixed(3)} m`}</span></summary>
+                <p className="length-note">{item.id}{item.heightM !== undefined ? ` · height ${item.heightM} m` : ''}</p>
+                {item.kind === 'wall' && item.heightM !== undefined && <strong>{item.areaM2 === null ? 'Check calibration / height' : `${item.areaM2.toFixed(3)} m²`}</strong>}
+                <button className="wide-control" disabled={hasDraft} onClick={() => { setPageNumber(item.page); setViewMode('fit-page'); setPan({ x: 0, y: 0 }); setStageResizeTick((tick) => tick + 1) }}>Go to Page {item.page}</button>
+                {item.page === pageNumber ? <>
+                  {measurementDetails(item.id, item.name, item.groupId)}
+                  {item.kind === 'wall' && wallHeightField(item.id, item.heightM, item.lengthMm)}
+                </> : <p className="length-note">Go to its page to edit this measurement.</p>}
+              </details>)}
+              {!selectedWorkItems.length && <p className="length-note">This work item has no measurements yet.</p>}
+            </div>
+            <details className="work-item-settings"><summary>Work item settings</summary>
+              <label>Name<input value={selectedWork.name} maxLength={100} onChange={(event) => renameGroup(selectedWork.id, event.target.value)} /></label>
+              <label>Category<select value={selectedWork.categoryId ?? ''} disabled={hasDraft} onChange={(event) => setGroupCategory(selectedWork.id, event.target.value)}>
+                <option value="">Uncategorised</option>
+                {categories.filter((category) => category.mode !== 'derived').map((category) => <option key={category.id} value={category.id}>{category.name || category.id}</option>)}
+              </select></label>
+              {categories.find((category) => category.id === selectedWork.categoryId)?.skimTarget && <label className="length-lock-control">
+                <input type="checkbox" checked={selectedWork.includeSkim !== false} onChange={(event) => setGroups((current) => current.map((group) => group.id === selectedWork.id ? { ...group, includeSkim: event.target.checked } : group))} />Include area in skim
+              </label>}
+              <button className="remove-group-button" disabled={hasDraft} onClick={() => removeGroup(selectedWork.id)}>Remove work item — keep measurements</button>
+            </details>
+          </div>
+        </aside>}
       </main>
       {showCalibrationWarning && !measurementChooser && !heightPromptOpen && <div className="calibration-notice-position" onKeyDown={(event) => {
         if (event.key === 'Escape') { event.stopPropagation(); setShowCalibrationWarning(false) }
