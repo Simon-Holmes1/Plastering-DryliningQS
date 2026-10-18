@@ -53,6 +53,24 @@ type WorkCategory = { id: string; name: string; color: string; mode: 'measure' |
 type CountMeasurement = { id: string; name?: string; groupId?: string; categoryId?: string; point: Point; locked: boolean }
 type MeasurementKind = 'length' | 'run' | 'area' | 'point'
 
+type UiIconName = 'file' | 'save' | 'import' | 'length' | 'run' | 'area' | 'point' | 'check' | 'work' | 'summary' | 'lock'
+const uiIconPaths: Record<UiIconName, string> = {
+  file: 'M6 3h8l4 4v14H6z M14 3v5h5 M9 12h6 M9 16h6',
+  save: 'M5 3h12l3 3v15H4V3z M8 3v6h8V3 M8 21v-8h8v8',
+  import: 'M12 15V3 M7 8l5-5 5 5 M4 14v6h16v-6',
+  length: 'M4 20L20 4 M3 17l4 4 M17 3l4 4',
+  run: 'M5 16h7V7h7 M3 14h4v4H3z M10 5h4v4h-4z M17 5h4v4h-4z',
+  area: 'M4 8V4h4 M12 4h3 M19 4h1v4 M20 12v3 M20 19v1h-4 M12 20H9 M5 20H4v-4 M4 12v-1',
+  point: 'M6 6l12 12 M18 6L6 18 M12 2v2 M12 20v2 M2 12h2 M20 12h2',
+  check: 'M5 12l4 4L19 6',
+  work: 'M4 5h2 M10 5h10 M4 12h2 M10 12h10 M4 19h2 M10 19h10',
+  summary: 'M4 20V4 M4 20h17 M9 16v-4 M14 16V8 M19 16V5',
+  lock: 'M7 10V7a5 5 0 0 1 10 0v3 M5 10h14v11H5z M12 14v3',
+}
+function UiIcon({ name, className = '' }: { name: UiIconName; className?: string }) {
+  return <svg className={`ui-icon ${className}`} viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d={uiIconPaths[name]} /></svg>
+}
+
 const initialCategories: WorkCategory[] = [
   { id: 'tack-ceiling', name: 'Tack Ceiling', color: '#2563eb', mode: 'measure', skimTarget: 'ceilings' },
   { id: 'tack-timber-wall', name: 'Tack Timber Wall', color: '#0f766e', mode: 'measure', skimTarget: 'walls' },
@@ -2349,17 +2367,23 @@ export default function App() {
   return (
     <div className="app-shell" aria-busy={isFileBusy}>
       <header className="topbar" inert={isFileBusy || !!measurementChooser || heightPromptOpen}>
-        <div>
-          <div className="eyebrow">DRYLINING TAKE-OFF</div>
-          <h1>{fileName || 'New take-off'}</h1>
+        <div className="brand-and-project">
+          <div className="takeoff-brand">
+            <svg className="brand-mark" viewBox="0 0 34 38" aria-hidden="true"><path fill="#21d4ce" d="M17 1 32 9 17 18 2 10z" /><path fill="#00a8a4" d="m2 13 12 7v14L2 27z" /><path fill="#19d1c7" d="m19 20 13-8v15l-13 9z" /><path fill="#6ce8df" d="m8 17 7 4-7 12z" /></svg>
+            <span>TAKEOFF</span>
+          </div>
+          <div className="project-heading"><div className="eyebrow">DRYLINING WORKSPACE</div><h1>{fileName || 'New take-off'}</h1></div>
+          <span className={`header-save-state ${hasUnsavedChanges ? 'is-unsaved' : ''}`}>
+            <span className="save-state-dot" />{isFileBusy ? 'Opening…' : hasUnsavedChanges ? 'Unsaved changes' : pdf ? 'Measure saved' : 'Ready to start'}
+          </span>
         </div>
 
         <div className="file-actions">
           <button className="save-takeoff-button" disabled={!pdf || isFileBusy || hasDraft || hasInvalidHeight}
             title={hasDraft ? 'Finish or cancel your current measurement or calibration first' : 'Download the PDF, job details and measurements together'}
-            onClick={saveTakeoff}>Save Measure</button>
+            onClick={saveTakeoff}><UiIcon name="save" />Save Measure</button>
           <label className={`upload-button open-takeoff-button ${isFileBusy ? 'file-disabled' : ''}`}>
-            Open Measure
+            <UiIcon name="file" />Open Measure
             <input type="file" accept=".json,.takeoff.json,application/json" disabled={isFileBusy}
               onChange={(event) => {
                 const file = event.target.files?.[0]
@@ -2368,7 +2392,7 @@ export default function App() {
               }} />
           </label>
         <label className={`upload-button ${isFileBusy ? 'file-disabled' : ''}`}>
-          Import New Drawing
+          <UiIcon name="import" />Import New Drawing
 
           <input
             type="file"
@@ -2418,7 +2442,8 @@ export default function App() {
           <nav className="sidebar-tabs" aria-label="Take-off sections">
             {(['measure', 'groups', 'summary'] as const).map((tab) => <button key={tab}
               aria-pressed={sidebarTab === tab} onClick={() => { setSidebarTab(tab); if (tab !== 'groups') setSelectedWorkId(null) }}>
-              {tab === 'measure' ? 'New Measure' : tab === 'groups' ? 'Measured Work' : 'Summary'}
+              <UiIcon name={tab === 'measure' ? 'length' : tab === 'groups' ? 'work' : 'summary'} />
+              <span>{tab === 'measure' ? 'New Measure' : tab === 'groups' ? 'Measured Work' : 'Summary'}</span>
             </button>)}
           </nav>
           <section ref={calibrationDockRef} className={`calibration-dock ${!pdf ? 'calibration-empty' : lengthCalibrationValid ? 'calibration-ready' : 'calibration-not-ready'}`} aria-label="Page calibration">
@@ -2556,92 +2581,6 @@ export default function App() {
               : 'Save Measure downloads one file with your PDF and measurements. Open Measure restores it on any device.'}</p>
             {lastSavedAt && <span>Last saved: {new Date(lastSavedAt).toLocaleString()}</span>}
           </div>
-          <div hidden={sidebarTab !== 'measure'}>
-          <h2>Drawing</h2>
-
-          <div className="tool-row">
-            <button
-              disabled={!pdf || pageNumber <= 1 || runMode || areaMode}
-              onClick={previousPage}
-              title="Previous page"
-            >
-              ←
-            </button>
-
-            <span>
-              Page {pageNumber}
-              {pdf ? ` / ${pdf.numPages}` : ''}
-            </span>
-
-            <button
-              disabled={!pdf || pageNumber >= (pdf?.numPages ?? 1) || runMode || areaMode}
-              onClick={nextPage}
-              title="Next page"
-            >
-              →
-            </button>
-          </div>
-
-          <button
-            className="wide-control"
-            disabled={!pdf}
-            onClick={fitPage}
-          >
-            Fit Page
-          </button>
-
-          <div className="rotate-row">
-            <button
-              disabled={!pdf}
-              onClick={rotateLeft}
-              title="Rotate 90° left and refit page"
-            >
-              ↶ 90°
-            </button>
-
-            <button
-              disabled={!pdf}
-              onClick={rotateRight}
-              title="Rotate 90° right and refit page"
-            >
-              90° ↷
-            </button>
-          </div>
-
-          <div className="zoom-control">
-            <div className="zoom-heading">
-              <span>Zoom</span>
-              <strong>{Math.round(scale * 100)}%</strong>
-            </div>
-
-            <input
-              className="zoom-slider"
-              type="range"
-              min="25"
-              max="1500"
-              step="5"
-              value={zoomPercent}
-              disabled={!pdf}
-              onChange={(event) => handleZoomSlider(event.target.value)}
-            />
-
-            <div className="zoom-labels">
-              <span>25%</span>
-              <span>1500%</span>
-            </div>
-          </div>
-
-          <div className="view-status">
-            {pdf
-              ? `${viewMode === 'fit-page' ? 'Fit page' : 'Manual zoom'} · ${rotation}°`
-              : 'No drawing loaded'}
-          </div>
-
-          <hr />
-
-          </div>
-
-
           <div className="measured-work-list" hidden={sidebarTab !== 'groups'}>
             <h2>Measured Work</h2>
             <p className="length-note">Choose a work item to see its quantities and measurements on the right.</p>
@@ -2664,7 +2603,8 @@ export default function App() {
           </div>
 
           <div hidden={sidebarTab !== 'summary'} className="summary-panel">
-            <h2>Work summary · all pages</h2>
+            <h2>Plot summary</h2>
+            <div className="panel-subtitle">{categories.length} work categories · all pages</div>
             <p className="length-note">Drawing visibility does not change these totals. Skim rows reuse the source areas and represent separate work.</p>
             {categorySummaries.map((category) => <div className="category-summary" key={category.id}>
               <strong><span className="category-swatch" style={{ background: category.color }} />{category.name || category.id}</strong>
@@ -2696,33 +2636,28 @@ export default function App() {
             </details>
           </div>
 
-          <div hidden={sidebarTab !== 'measure'}>
+          <div hidden={sidebarTab !== 'measure'} className="measure-toolbox">
+          <div className="toolbox-heading"><UiIcon name="length" /><h2>Measure</h2><span>Drawing tools</span></div>
+          <div className="tool-selector-grid" aria-label="Measurement tools">
+            <button className="tool-tile" aria-pressed={lengthMode} disabled={runMode || areaMode || countMode || calibrationMode || !!pendingCalibration || !lengthCalibrationValid}
+              onClick={lengthMode ? cancelLengthMeasurement : () => requestMeasurement('length')}>
+              <UiIcon name="length" /><span>{lengthMode ? 'Cancel Length' : 'Measure Single Length'}</span>
+            </button>
+            <button className="tool-tile" aria-pressed={runMode} disabled={!lengthCalibrationValid || (hasDraft && !runMode)}
+              onClick={() => { if (!runMode) requestMeasurement('run') }}><UiIcon name="run" /><span>Measure Continuous Length</span></button>
+            <button className="tool-tile" aria-pressed={areaMode} disabled={!lengthCalibrationValid || (hasDraft && !areaMode)}
+              onClick={() => { if (!areaMode) requestMeasurement('area') }}><UiIcon name="area" /><span>Measure Area</span></button>
+            <button className="tool-tile" aria-pressed={countMode} disabled={!lengthCalibrationValid || (hasDraft && !countMode)}
+              onClick={() => { if (!countMode) requestMeasurement('point') }}><UiIcon name="point" /><span>Add Point Marker</span></button>
+          </div>
           {(lengthMode || runMode || areaMode || countMode) && <div className="measuring-banner" role="status">
             <strong>{activeCategory?.name || 'Uncategorised'}</strong>
             <div>{activeGroup?.name || 'Ungrouped'} · {lengthMode ? 'Click the second point to finish' : 'Press Enter to finish'}</div>
           </div>}
 
-          <button
-            className="future-tool"
-            disabled={
-              runMode || areaMode || countMode || calibrationMode || !!pendingCalibration || !currentCalibration ||
-              !currentCalibration.locked ||
-              currentCalibration.needsRecalibration
-            }
-            onClick={
-              lengthMode
-                ? cancelLengthMeasurement
-                : () => requestMeasurement('length')
-            }
-          >
-            {lengthMode ? 'Cancel Length' : 'Measure Single Length'}
-          </button>
 
-          {!runMode ? (
-            <button className="future-tool run-start" disabled={!lengthCalibrationValid || hasDraft} onClick={() => requestMeasurement('run')}>
-              Measure Continuous Length
-            </button>
-          ) : (
+
+          {runMode && (
             <div className="run-panel" aria-label="Current run">
               <strong>Run in progress</strong>
               <div className="length-primary" aria-live="polite">
@@ -2880,7 +2815,7 @@ export default function App() {
             </details>
           )}
 
-          {!areaMode ? <button className="future-tool area-start" disabled={!lengthCalibrationValid || hasDraft} onClick={() => requestMeasurement('area')}>Measure Area</button> : (
+          {areaMode && (
             <div className="area-panel" aria-label="Current area">
               <strong>Area in progress · {areaPoints.length} corners</strong>
               <div className="area-primary" aria-live="polite">{draftAreaM2 === null ? '— m²' : `${draftAreaM2.toFixed(3)} m² so far`}</div>
@@ -2922,7 +2857,7 @@ export default function App() {
             </div>
           </details>}
 
-          {!countMode ? <button className="future-tool count-start" disabled={!lengthCalibrationValid || hasDraft} onClick={() => requestMeasurement('point')}>Add Point Marker</button> : <div className="count-panel">
+          {countMode && <div className="count-panel">
             <strong>{activeCategory?.name || 'Point marks'}</strong>
             <p>Click once at each location. Each cross counts as one. Press Enter or Done Marking to finish.</p>
             <button className="wide-control" onClick={finishCounting}>Done Marking</button>
@@ -2939,6 +2874,92 @@ export default function App() {
             </details>)}</div>
           </details>}
           </div>
+
+          <div hidden={sidebarTab !== 'measure'} className="drawing-controls">
+          <div className="toolbox-heading"><UiIcon name="file" /><h2>Drawing</h2></div>
+
+          <div className="tool-row">
+            <button
+              disabled={!pdf || pageNumber <= 1 || runMode || areaMode}
+              onClick={previousPage}
+              title="Previous page"
+            >
+              ←
+            </button>
+
+            <span>
+              Page {pageNumber}
+              {pdf ? ` / ${pdf.numPages}` : ''}
+            </span>
+
+            <button
+              disabled={!pdf || pageNumber >= (pdf?.numPages ?? 1) || runMode || areaMode}
+              onClick={nextPage}
+              title="Next page"
+            >
+              →
+            </button>
+          </div>
+
+          <button
+            className="wide-control"
+            disabled={!pdf}
+            onClick={fitPage}
+          >
+            Fit Page
+          </button>
+
+          <div className="rotate-row">
+            <button
+              disabled={!pdf}
+              onClick={rotateLeft}
+              title="Rotate 90° left and refit page"
+            >
+              ↶ 90°
+            </button>
+
+            <button
+              disabled={!pdf}
+              onClick={rotateRight}
+              title="Rotate 90° right and refit page"
+            >
+              90° ↷
+            </button>
+          </div>
+
+          <div className="zoom-control">
+            <div className="zoom-heading">
+              <span>Zoom</span>
+              <strong>{Math.round(scale * 100)}%</strong>
+            </div>
+
+            <input
+              className="zoom-slider"
+              type="range"
+              min="25"
+              max="1500"
+              step="5"
+              value={zoomPercent}
+              disabled={!pdf}
+              onChange={(event) => handleZoomSlider(event.target.value)}
+            />
+
+            <div className="zoom-labels">
+              <span>25%</span>
+              <span>1500%</span>
+            </div>
+          </div>
+
+          <div className="view-status">
+            {pdf
+              ? `${viewMode === 'fit-page' ? 'Fit page' : 'Manual zoom'} · ${rotation}°`
+              : 'No drawing loaded'}
+          </div>
+
+          <hr />
+
+          </div>
+
 
           <p className="status" role="status">{status}</p>
           </div>
@@ -3274,6 +3295,16 @@ export default function App() {
               </svg>
             </div>
           )}
+          {pdf && <div className="drawing-footer" onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+            <div className={`drawing-scale-badge ${lengthCalibrationValid ? 'is-ready' : ''}`}><UiIcon name="lock" /><span>{lengthCalibrationValid ? 'Scale locked' : 'Calibration required'}</span></div>
+            <span className="footer-zoom">{Math.round(scale * 100)}%</span>
+            <div className="footer-page-controls">
+              <button title="Previous drawing page" disabled={pageNumber <= 1 || runMode || areaMode} onClick={previousPage}>‹</button>
+              <span>Page {pageNumber} / {pdf.numPages}</span>
+              <button title="Next drawing page" disabled={pageNumber >= pdf.numPages || runMode || areaMode} onClick={nextPage}>›</button>
+            </div>
+            <span className="footer-help">Drag to pan <span>·</span> Scroll to zoom</span>
+          </div>}
         </section>
         {showingAllWork && <aside className="work-details-panel" aria-label="All Measured Work quantities" onKeyDown={(event) => {
           if (event.key === 'Escape') { event.stopPropagation(); setSelectedWorkId(null) }
@@ -3293,6 +3324,7 @@ export default function App() {
               </div>
             </div>)}
             {!workOverviewRows.length && <p className="length-note">No measurements yet.</p>}
+            <div className="workspace-tally"><span>Measured elements</span><strong>{allMeasurements.length}</strong><p>Across {pdf?.numPages ?? 0} drawing pages</p></div>
           </div>
         </aside>}
         {selectedWork && <aside className="work-details-panel" aria-label="Measured Work details" onKeyDown={(event) => {
