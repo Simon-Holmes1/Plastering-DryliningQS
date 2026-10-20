@@ -135,11 +135,39 @@ function polygonProblem(points: Point[]): string | null {
 }
 
 type JobDetails = { site: string; plot: string; houseType: string; revision: string }
+type DrawingPage = { source: number; page: number; name: string }
+type DrawingSource = { name: string; bytes: Uint8Array; doc: PdfDoc }
+
+function defaultDrawingPages(source: DrawingSource, sourceIndex = 0): DrawingPage[] {
+  return Array.from({ length: source.doc.numPages }, (_, i) => ({ source: sourceIndex, page: i + 1,
+    name: (sourceIndex === 0 ? `Page ${i + 1}` : source.name.replace(/\.pdf$/i, '') + (source.doc.numPages > 1 ? ` — ${i + 1}` : '')).slice(0, 80) }))
+}
+
+// The viewer presents retained pages from embedded PDFs as a single drawing set.
+// Existing PDF coordinates remain unchanged, preserving calibration and geometry.
+function drawingSet(sources: DrawingSource[], pages: DrawingPage[]): PdfDoc {
+  return {
+    numPages: pages.length,
+    getPage(number: number) {
+      const page = pages[number - 1]
+      if (!page || !sources[page.source]) return Promise.reject(new Error('Drawing page is missing.'))
+      return sources[page.source].doc.getPage(page.page)
+    },
+    async destroy() { await Promise.all(sources.map((source) => source.doc.destroy())) },
+  } as unknown as PdfDoc
+}
+
+function removePageRecord<T>(record: Record<number, T>, removedPage: number): Record<number, T> {
+  return Object.fromEntries(Object.entries(record).filter(([key]) => Number(key) !== removedPage)
+    .map(([key, value]) => [Number(key) > removedPage ? Number(key) - 1 : Number(key), value]))
+}
+
+
 type TakeoffFile = {
   format: 'drylining-takeoff'
-  version: 5
+  version: 6
   savedAt: string
-  drawing: { name: string; pdfBase64: string }
+  drawing: { name: string; pdfBase64: string; additionalPdfs?: Array<{ name: string; pdfBase64: string }>; pages?: DrawingPage[] }
   job: JobDetails
   calibrations: Record<number, Calibration>
   lengths: Record<number, LengthMeasurement[]>
@@ -192,12 +220,22 @@ function readTakeoff(value: unknown): TakeoffFile {
   if (!object(value) || value.format !== 'drylining-takeoff') {
     throw new Error('Choose a saved take-off (.takeoff.json), or use Import New Drawing for a PDF.')
   }
-  if (![1, 2, 3, 4, 5].includes(value.version)) {
+  if (![1, 2, 3, 4, 5, 6].includes(value.version)) {
     throw new Error('This take-off uses a different file version. Open it with the version of the app that saved it.')
   }
   if (!object(value.drawing) || typeof value.drawing.name !== 'string' || !value.drawing.name.trim()
     || !isValidPdfBase64(value.drawing.pdfBase64)
     || typeof value.savedAt !== 'string' || !Number.isFinite(Date.parse(value.savedAt))) invalid()
+  if (value.version === 6) {
+    if (!Array.isArray(value.drawing.additionalPdfs) || !Array.isArray(value.drawing.pages) || !value.drawing.pages.length) invalid()
+    for (const source of value.drawing.additionalPdfs) if (!object(source) || typeof source.name !== 'string' || !source.name.trim() || !isValidPdfBase64(source.pdfBase64)) invalid()
+    const seenPages = new Set<string>()
+    for (const page of value.drawing.pages) {
+      if (!object(page) || !Number.isSafeInteger(page.source) || page.source < 0 || page.source > value.drawing.additionalPdfs.length || !integer(page.page)
+        || typeof page.name !== 'string' || !page.name.trim() || page.name.length > 80 || seenPages.has(page.source + ':' + page.page)) invalid()
+      seenPages.add(page.source + ':' + page.page)
+    }
+  }
   if (!object(value.job) || !['site', 'plot', 'houseType', 'revision'].every((key) => typeof value.job[key] === 'string')) invalid()
   const view = value.view
   if (!object(view) || !integer(view.page) || ![0, 90, 180, 270].includes(view.rotation)
@@ -294,7 +332,7 @@ function readTakeoff(value: unknown): TakeoffFile {
   if (view.showUngrouped !== undefined && typeof view.showUngrouped !== 'boolean') invalid()
   if (view.categoryId !== undefined && (typeof view.categoryId !== 'string' || (view.categoryId !== '' && !categoryIds.has(view.categoryId)))) invalid()
   if (view.groupId !== undefined && (typeof view.groupId !== 'string' || (view.groupId !== '' && !groupIds.has(view.groupId)))) invalid()
-  return { ...value, version: 5, groups, nextGroupNumber, areas, nextAreaNumber, categories, counts, nextCountNumber } as TakeoffFile
+  return { ...value, version: 6, drawing: { ...value.drawing, additionalPdfs: value.version === 6 ? value.drawing.additionalPdfs : [], pages: value.version === 6 ? value.drawing.pages : undefined }, groups, nextGroupNumber, areas, nextAreaNumber, categories, counts, nextCountNumber } as TakeoffFile
 }
 
 type SnapSegment = { a: Point; b: Point }
@@ -395,7 +433,84 @@ function nearestSnap(point: Point, indices: SnapIndex[], tolerance: number, endp
   return best
 }
 
+function SummaryDrawingPreview({ pdf, number, rotation, lengths, runs, areas, counts, colorFor, appearanceFor, preparePage }: {
+  pdf: PdfDoc; number: number; rotation: number; lengths: LengthMeasurement[]; runs: RunMeasurement[];
+  areas: AreaMeasurement[]; counts: Array<CountMeasurement & { previewColor?: string }>; colorFor: (groupId: string | undefined, fallback: string) => string;
+  appearanceFor: (groupId?: string) => { width: number; opacity: number };
+  preparePage: (number: number, page: any) => Promise<void>;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const canvas = useRef<HTMLCanvasElement | null>(null)
+  const [visible, setVisible] = useState(false)
+  const [viewport, setViewport] = useState<any>(null)
+  const [error, setError] = useState('')
+  const [resolution, setResolution] = useState({ width: 0, pixelRatio: 1 })
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined' || !containerRef.current) { setVisible(true); return }
+    const observer = new IntersectionObserver((entries) => { if (entries.some((entry) => entry.isIntersecting)) { setVisible(true); observer.disconnect() } }, { rootMargin: '500px' })
+    observer.observe(containerRef.current)
+    return () => observer.disconnect()
+  }, [])
+  useEffect(() => {
+    if (!visible || !containerRef.current) return
+    const measure = () => {
+      const width = Math.ceil(containerRef.current?.getBoundingClientRect().width ?? 0)
+      const pixelRatio = Math.max(1, window.devicePixelRatio || 1)
+      setResolution((current) => current.width === width && current.pixelRatio === pixelRatio ? current : { width, pixelRatio })
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(containerRef.current)
+    const densityQuery = window.matchMedia?.(`(resolution: ${window.devicePixelRatio || 1}dppx)`)
+    densityQuery?.addEventListener('change', measure)
+    window.addEventListener('resize', measure)
+    return () => { observer.disconnect(); densityQuery?.removeEventListener('change', measure); window.removeEventListener('resize', measure) }
+  }, [visible, resolution.pixelRatio])
+  useEffect(() => {
+    if (!visible || resolution.width <= 0) return
+    let disposed = false, task: any = null
+    setViewport(null); setError('')
+    async function render() {
+      try {
+        const page = await pdf.getPage(number)
+        if (disposed) return
+        await preparePage(number, page)
+        if (disposed || !canvas.current) return
+        const base = page.getViewport({ scale: 1, rotation })
+        const view = page.getViewport({ scale: resolution.width / base.width, rotation })
+        const context = canvas.current.getContext('2d')
+        if (!context) throw new Error('Drawing preview is unavailable.')
+        const outputScale = Math.min(resolution.pixelRatio, Math.sqrt(16000000 / (view.width * view.height)), 8192 / Math.max(view.width, view.height))
+        canvas.current.width = Math.ceil(view.width * outputScale); canvas.current.height = Math.ceil(view.height * outputScale)
+        task = page.render({ canvas: canvas.current, canvasContext: context, viewport: view,
+          transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0] })
+        await task.promise
+        if (!disposed) setViewport(view)
+      } catch (failure: any) {
+        if (!disposed && failure?.name !== 'RenderingCancelledException') setError('Could not show this drawing preview. Open the drawing to inspect it.')
+      }
+    }
+    void render()
+    return () => { disposed = true; task?.cancel() }
+  }, [pdf, number, rotation, visible, resolution.width, resolution.pixelRatio])
+  const point = (p: Point) => viewport.convertToViewportPoint(p.x, p.y) as [number, number]
+  const outline = (points: Point[]) => points.map((p) => point(p).join(',')).join(' ')
+  return <div className="summary-drawing-preview" ref={containerRef} style={viewport ? { minHeight: 0, aspectRatio: `${viewport.width} / ${viewport.height}` } : undefined} aria-label={`Drawing ${number} with all measured overlays`}>
+    <canvas ref={canvas} aria-label={`Drawing ${number} preview`} />
+    {!viewport && !error && <p className="preview-loading">{visible ? 'Loading drawing…' : 'Drawing preview'}</p>}
+    {error && <p className="preview-error">{error}</p>}
+    {viewport && <svg className="summary-measurement-overlay" viewBox={`0 0 ${viewport.width} ${viewport.height}`} aria-label="All measurements on this drawing">
+      {areas.map((item) => <polygon key={item.id} points={outline(item.points)} fill={colorFor(item.groupId, '#c2410c') + '18'} stroke={colorFor(item.groupId, '#c2410c')} strokeWidth={appearanceFor(item.groupId).width} opacity={appearanceFor(item.groupId).opacity} />)}
+      {lengths.map((item) => { const a=point(item.pointA), b=point(item.pointB); return <line key={item.id} x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke={colorFor(item.groupId,'#2563eb')} strokeWidth={appearanceFor(item.groupId).width} opacity={appearanceFor(item.groupId).opacity} /> })}
+      {runs.map((item) => <polyline key={item.id} points={outline(item.points)} fill="none" stroke={colorFor(item.groupId,'#0f766e')} strokeWidth={appearanceFor(item.groupId).width} opacity={appearanceFor(item.groupId).opacity} />)}
+      {counts.map((item) => { const [x,y]=point(item.point); return <path key={item.id} d={`M ${x-7} ${y-7} L ${x+7} ${y+7} M ${x+7} ${y-7} L ${x-7} ${y+7}`} stroke={item.previewColor ?? colorFor(item.groupId,'#dc2626')} strokeWidth={appearanceFor(item.groupId).width} opacity={appearanceFor(item.groupId).opacity} /> })}
+    </svg>}
+  </div>
+}
+
+
 export default function App() {
+  useEffect(() => { document.title = 'Holmes QS' }, [])
   const [jobPanelOpen, setJobPanelOpen] = useState(false)
   const [toolboxOpen, setToolboxOpen] = useState(false)
   const [toolboxPosition, setToolboxPosition] = useState<Point>({ x: 310, y: 18 })
@@ -413,7 +528,7 @@ export default function App() {
   const [readyToolKind, setReadyToolKind] = useState<MeasurementKind | null>(null)
   const [overviewDrawing, setOverviewDrawing] = useState(false)
   const [groupHeightDrafts, setGroupHeightDrafts] = useState<Record<string, string>>({})
-  const [workMenu, setWorkMenu] = useState<{ groupId: string; x: number; y: number } | null>(null)
+  const [workMenu, setWorkMenu] = useState<{ groupId: string; x: number; y: number; scopePage?: number } | null>(null)
   const [measurementMenu, setMeasurementMenu] = useState<{ id: string; kind: MeasurementKind; x: number; y: number } | null>(null)
   const [toolCustomName, setToolCustomName] = useState('')
   const [toolSwitchNotice, setToolSwitchNotice] = useState('')
@@ -465,6 +580,9 @@ export default function App() {
     panY: 0,
   })
 
+  const [drawingSources, setDrawingSources] = useState<DrawingSource[]>([])
+  const [drawingPages, setDrawingPages] = useState<DrawingPage[]>([])
+  const [toolCalibrationNotice, setToolCalibrationNotice] = useState('')
   const [pdf, setPdf] = useState<PdfDoc | null>(null)
   const [fileName, setFileName] = useState('')
   const [job, setJob] = useState<JobDetails>({ ...emptyJob })
@@ -549,12 +667,13 @@ export default function App() {
     if (calibrationIssue === 'missing') startCalibration()
     else calibrationDockRef.current?.querySelector<HTMLInputElement>('input[type="number"]')?.focus()
   }
+  useEffect(() => { setToolCalibrationNotice('') }, [pdf, pageNumber, calibrations])
   const wallIds = new Set([...Object.values(lengthMeasurements).flat(), ...Object.values(runMeasurements).flat()].map((item) => item.id))
-  const hasInvalidHeight = toolHeightInvalid || Object.entries(groupHeightDrafts).some(([id, text]) => groups.some((group) => group.id === id) && text !== '' && (!Number.isFinite(Number(text)) || Number(text) <= 0)) || Object.entries(heightDrafts).some(([id, text]) => wallIds.has(id)
+  const hasInvalidHeight = toolHeightInvalid || Object.entries(groupHeightDrafts).some(([id, text]) => groups.some((group) => group.id === id.split(':')[0]) && text !== '' && (!Number.isFinite(Number(text)) || Number(text) <= 0)) || Object.entries(heightDrafts).some(([id, text]) => wallIds.has(id)
     && text !== '' && (!Number.isFinite(Number(text)) || Number(text) <= 0))
 
   // View changes do not mark measurements as changed, but the view is saved too.
-  const dataSignature = JSON.stringify({ job, calibrations, lengths: lengthMeasurements,
+  const dataSignature = JSON.stringify({ job, drawingPages, calibrations, lengths: lengthMeasurements,
     runs: runMeasurements, nextLengthNumber: nextLengthNumberRef.current,
     nextRunNumber: nextRunNumberRef.current, groups, nextGroupNumber: nextGroupNumberRef.current,
     areas: areaMeasurements, nextAreaNumber: nextAreaNumberRef.current,
@@ -653,8 +772,8 @@ export default function App() {
     try {
       const savedAt = new Date().toISOString()
       const takeoff: TakeoffFile = {
-        format: 'drylining-takeoff', version: 5, savedAt,
-        drawing: { name: fileName, pdfBase64: encodePdf(pdfBytesRef.current) },
+        format: 'drylining-takeoff', version: 6, savedAt,
+        drawing: { name: fileName, pdfBase64: encodePdf(pdfBytesRef.current), additionalPdfs: drawingSources.slice(1).map((source) => ({ name: source.name, pdfBase64: encodePdf(source.bytes) })), pages: drawingPages },
         job: { ...job }, calibrations, lengths: lengthMeasurements, runs: runMeasurements,
         nextLengthNumber: nextLengthNumberRef.current, nextRunNumber: nextRunNumberRef.current,
         groups, nextGroupNumber: nextGroupNumberRef.current,
@@ -687,6 +806,7 @@ export default function App() {
     setIsFileBusy(true)
     setStatus('Opening saved take-off…')
     let loadedPdf: PdfDoc | null = null
+    let loadedSources: DrawingSource[] = []
     try {
       let raw: unknown
       try { raw = JSON.parse(await file.text()) }
@@ -694,7 +814,16 @@ export default function App() {
       const saved = readTakeoff(raw)
       const bytes = decodePdf(saved.drawing.pdfBase64)
       // PDF.js may transfer its input buffer to the worker. Keep our own copy for saving again.
-      loadedPdf = await pdfjsLib.getDocument({ data: bytes.slice() }).promise
+      const primaryDoc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise
+      loadedSources.push({ name: saved.drawing.name, bytes, doc: primaryDoc })
+      for (const source of saved.drawing.additionalPdfs ?? []) {
+        const extraBytes = decodePdf(source.pdfBase64)
+        const doc = await pdfjsLib.getDocument({ data: extraBytes.slice() }).promise
+        loadedSources.push({ name: source.name, bytes: extraBytes, doc })
+      }
+      const restoredPages = saved.drawing.pages ?? defaultDrawingPages(loadedSources[0])
+      if (restoredPages.some((page) => page.page > loadedSources[page.source].doc.numPages)) throw new Error('A saved drawing page is missing. Your current work has been kept.')
+      loadedPdf = drawingSet(loadedSources, restoredPages)
       const pages = [...Object.keys(saved.calibrations), ...Object.keys(saved.lengths), ...Object.keys(saved.runs), ...Object.keys(saved.areas), ...Object.keys(saved.counts)]
       if (saved.view.page > loadedPdf.numPages || pages.some((key) => Number(key) > loadedPdf!.numPages)) {
         throw new Error('The saved measurements refer to a missing PDF page. Your current work has been kept.')
@@ -702,6 +831,8 @@ export default function App() {
       resetDrafts()
       pdfBytesRef.current = bytes
       setPdf(loadedPdf)
+      setDrawingSources(loadedSources)
+      setDrawingPages(restoredPages)
       setFileName(saved.drawing.name)
       setJob(saved.job)
       setCalibrations(saved.calibrations)
@@ -730,7 +861,7 @@ export default function App() {
       setScale(saved.view.scale)
       setPan(saved.view.pan)
       setStageResizeTick((tick) => tick + 1)
-      setSavedSignature(JSON.stringify({ job: saved.job, calibrations: saved.calibrations,
+      setSavedSignature(JSON.stringify({ job: saved.job, drawingPages: restoredPages, calibrations: saved.calibrations,
         lengths: saved.lengths, runs: saved.runs, nextLengthNumber: saved.nextLengthNumber,
         nextRunNumber: saved.nextRunNumber, groups: saved.groups, nextGroupNumber: saved.nextGroupNumber,
         areas: saved.areas, nextAreaNumber: saved.nextAreaNumber,
@@ -738,11 +869,12 @@ export default function App() {
       setLastSavedAt(saved.savedAt)
       setStatus(`Opened ${file.name}. Your drawing, job details and measurements are restored.`)
       loadedPdf = null // Ownership has passed to the viewer.
+      loadedSources = []
     } catch (error) {
       console.error(error)
       setStatus(error instanceof Error ? error.message : 'Could not open that take-off. Your current work has been kept.')
     } finally {
-      if (loadedPdf) void loadedPdf.destroy()
+      if (loadedSources.length) void Promise.all(loadedSources.map((source) => source.doc.destroy()))
       fileBusyRef.current = false
       setIsFileBusy(false)
     }
@@ -756,9 +888,14 @@ export default function App() {
       setStatus('Loading drawing…')
 
       const bytes = new Uint8Array(await file.arrayBuffer())
-      const loadedPdf = await pdfjsLib.getDocument({ data: bytes.slice() }).promise
+      const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise
+      const sources = [{ name: file.name, bytes, doc }]
+      const pages = defaultDrawingPages(sources[0])
+      const loadedPdf = drawingSet(sources, pages)
 
       pdfBytesRef.current = bytes
+      setDrawingSources(sources)
+      setDrawingPages(pages)
       resetDrafts()
       setPdf(loadedPdf)
       setFileName(file.name)
@@ -811,6 +948,97 @@ export default function App() {
       setIsFileBusy(false)
     }
   }
+
+  async function importDrawingPages(files: File[]) {
+    if (!files.length || !pdf || fileBusyRef.current) return
+    stopMeasurement()
+    fileBusyRef.current = true; setIsFileBusy(true)
+    const additions: DrawingSource[] = []
+    try {
+      setStatus('Importing drawing pages…')
+      for (const file of files) {
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise
+        additions.push({ name: file.name, bytes, doc })
+      }
+      const sources = [...drawingSources, ...additions]
+      const pages = [...drawingPages, ...additions.flatMap((source, i) => defaultDrawingPages(source, drawingSources.length + i))]
+      const nextPdf = drawingSet(sources, pages)
+      const cachedPages = pdfSnapCache.current.doc === pdf ? pdfSnapCache.current.pages : new Map<number, SnapIndex>()
+      pdfSnapCache.current = { doc: nextPdf, pages: new Map(cachedPages) }
+      setDrawingSources(sources); setDrawingPages(pages); setPdf(nextPdf)
+      setPageNumber(drawingPages.length + 1); setViewMode('fit-page'); setPan({ x: 0, y: 0 })
+      setStatus(`Added ${pages.length - drawingPages.length} drawing pages. Existing measurements and calibration have been kept.`)
+      additions.length = 0
+    } catch (error) {
+      console.error(error)
+      setStatus('Could not import those drawing pages. Existing drawings and measurements have been kept.')
+    } finally {
+      if (additions.length) void Promise.all(additions.map((source) => source.doc.destroy()))
+      fileBusyRef.current = false; setIsFileBusy(false)
+    }
+  }
+
+  function renameDrawingPage(number: number, name: string) {
+    const trimmed = name.trim().slice(0, 80)
+    if (!trimmed || !drawingPages[number - 1]) return
+    setDrawingPages((current) => current.map((page, index) => index === number - 1 ? { ...page, name: trimmed } : page))
+  }
+
+  function goToDrawingPage(number: number) {
+    if (!pdf || fileBusyRef.current || number < 1 || number > drawingPages.length) return
+    stopMeasurement()
+    setPageNumber(number); setViewMode('fit-page'); setPan({ x: 0, y: 0 })
+    if (sidebarTab === 'groups') {
+      setSelectedWorkId('__all__'); setViewGroupId(''); setViewCategoryId(''); setHiddenGroupIds([]); setShowUngrouped(true); setOverviewDrawing(true)
+    }
+    setMeasurementMenu(null); setWorkMenu(null)
+  }
+
+  function deleteDrawingPage(number: number) {
+    if (fileBusyRef.current || !drawingPages[number - 1]) return
+    if (drawingPages.length <= 1) { setStatus('Keep at least one drawing page. Import another page before removing this one.'); return }
+    if (hasDraft) { setStatus('Finish or stop measuring before deleting a drawing page.'); return }
+    const members = [...(lengthMeasurements[number] ?? []), ...(runMeasurements[number] ?? []), ...(areaMeasurements[number] ?? []), ...(countMeasurements[number] ?? [])]
+    if (!window.confirm(`Delete "${drawingPageName(number)}"? Its ${members.length} measurements and calibration will also be removed. Other pages will be kept.`)) return
+    stopMeasurement()
+    const pages = drawingPages.filter((_, index) => index !== number - 1)
+    const nextPdf = drawingSet(drawingSources, pages)
+    const cached = pdfSnapCache.current.doc === pdf ? pdfSnapCache.current.pages : new Map<number, SnapIndex>()
+    pdfSnapCache.current = { doc: nextPdf, pages: new Map([...cached].filter(([key]) => key !== number).map(([key, value]) => [key > number ? key - 1 : key, value])) }
+    setCalibrations((current) => removePageRecord(current, number))
+    setLengthMeasurements((current) => removePageRecord(current, number))
+    setRunMeasurements((current) => removePageRecord(current, number))
+    setAreaMeasurements((current) => removePageRecord(current, number))
+    setCountMeasurements((current) => removePageRecord(current, number))
+    setHeightDrafts((current) => Object.fromEntries(Object.entries(current).filter(([id]) => !members.some((item) => item.id === id))))
+    setGroupHeightDrafts((current) => Object.fromEntries(Object.entries(current).flatMap(([key,value]) => {
+      const [id,page]=key.split(':'); if (!page) return [[key,value]]
+      const numeric=Number(page); return numeric === number ? [] : [[id+':'+(numeric>number ? numeric-1 : numeric),value]]
+    })))
+    setDrawingPages(pages); setPdf(nextPdf)
+    setPageNumber((current) => current > number ? current - 1 : Math.min(current, pages.length))
+    setViewMode('fit-page'); setPan({ x: 0, y: 0 })
+    setMeasurementMenu(null); setWorkMenu(null)
+    setStatus('Drawing page deleted. Remaining pages keep their names, calibration and measurements.')
+  }
+
+  function measurementToolHelp() {
+    return !pdf ? 'Import a drawing, then calibrate this drawing page before starting measurements.'
+      : !hasValidCalibration() ? 'Calibrate this drawing page before starting measurements.'
+      : 'Finish the calibration and lock it before starting measurements.'
+  }
+
+  function activateMeasurementTool(kind: MeasurementKind) {
+    if (!pdf || !hasValidCalibration() || calibrationMode || pendingCalibration) {
+      setToolCalibrationNotice(measurementToolHelp())
+      if (pdf && !hasValidCalibration()) setShowCalibrationWarning(true)
+      return
+    }
+    setToolCalibrationNotice('')
+    startToolMeasurement(kind)
+  }
+
 
   async function calculateFitPageScale(
     document: PdfDoc,
@@ -1032,6 +1260,8 @@ export default function App() {
   }
   useEffect(() => { setSnapPreview(null) }, [pdf, pageNumber, scale, rotation, snapEnabled, snapSource, snapEndpoints, snapMidpoints, lengthMode, runMode, areaMode, countMode, calibrationMode])
 
+  function drawingPageName(number: number) { return drawingPages[number - 1]?.name || 'Page ' + number }
+
   function clampToolbox(position: Point): Point {
     const bounds=workspaceRef.current?.getBoundingClientRect()
     const box=toolboxRef.current?.getBoundingClientRect()
@@ -1040,10 +1270,11 @@ export default function App() {
   }
   useEffect(() => {
     if (!toolboxOpen || !workspaceRef.current) return
-    const resize=() => setToolboxPosition((position) => clampToolbox(position))
+    const resize=() => setToolboxPosition((position) => { const next=clampToolbox(position); return next.x === position.x && next.y === position.y ? position : next })
     resize()
     const observer=new ResizeObserver(resize)
     observer.observe(workspaceRef.current)
+    if (toolboxRef.current) observer.observe(toolboxRef.current)
     return () => observer.disconnect()
   }, [toolboxOpen])
   function startToolboxDrag(event: React.PointerEvent<HTMLDivElement>) {
@@ -1329,7 +1560,10 @@ export default function App() {
   function navigateWorkspace(tab: typeof sidebarTab) {
     stopMeasurement()
     setSidebarTab(tab)
-    if (tab !== 'groups') setSelectedWorkId(null)
+    if (tab === 'groups' || tab === 'summary') {
+      setViewGroupId(''); setViewCategoryId(''); setHiddenGroupIds([]); setShowUngrouped(true); setOverviewDrawing(true)
+    }
+    setSelectedWorkId(tab === 'groups' ? '__all__' : null)
     setWorkMenu(null); setMeasurementMenu(null)
   }
 
@@ -1673,13 +1907,13 @@ export default function App() {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   }
 
-  function setWorkWallHeight(groupId: string, text: string) {
-    setGroupHeightDrafts((current) => ({ ...current, [groupId]: text }))
+  function setWorkWallHeight(groupId: string, text: string, scopePage?: number) {
+    setGroupHeightDrafts((current) => ({ ...current, [scopePage === undefined ? groupId : groupId + ':' + scopePage]: text }))
     if (text !== '' && (!Number.isFinite(Number(text)) || Number(text) <= 0)) return
     const heightM = text === '' ? undefined : Number(text)
     const change = <T extends { id: string; groupId?: string; heightM?: number },>(record: Record<number, T[]>) =>
-      Object.fromEntries(Object.entries(record).map(([page, items]) => [page, items.map((item) => item.groupId === groupId ? { ...item, heightM } : item)]))
-    const walls = [...Object.values(lengthMeasurements).flat(), ...Object.values(runMeasurements).flat()].filter((item) => item.groupId === groupId)
+      Object.fromEntries(Object.entries(record).map(([page, items]) => [page, items.map((item) => item.groupId === groupId && (scopePage === undefined || Number(page) === scopePage) ? { ...item, heightM } : item)]))
+    const walls = [...Object.entries(lengthMeasurements).flatMap(([page, items]) => scopePage === undefined || Number(page) === scopePage ? items : []), ...Object.entries(runMeasurements).flatMap(([page, items]) => scopePage === undefined || Number(page) === scopePage ? items : [])].filter((item) => item.groupId === groupId)
     setLengthMeasurements(change)
     setRunMeasurements(change)
     setHeightDrafts((current) => ({ ...current, ...Object.fromEntries(walls.map((item) => [item.id, text])) }))
@@ -1687,7 +1921,7 @@ export default function App() {
 
   function setWallHeight(id: string, text: string, measurementPage = pageNumber) {
     const wall = [...(lengthMeasurements[measurementPage] ?? []), ...(runMeasurements[measurementPage] ?? [])].find((item) => item.id === id)
-    if (wall?.groupId) setGroupHeightDrafts((current) => { const next = { ...current }; delete next[wall.groupId!]; return next })
+    if (wall?.groupId) setGroupHeightDrafts((current) => { const next = { ...current }; delete next[wall.groupId!]; delete next[wall.groupId! + ':' + measurementPage]; return next })
     setHeightDrafts((current) => ({ ...current, [id]: text }))
     if (text === '') updateMeasurementDetails(id, { heightM: undefined }, measurementPage)
     else if (Number.isFinite(Number(text)) && Number(text) > 0) updateMeasurementDetails(id, { heightM: Number(text) }, measurementPage)
@@ -2317,7 +2551,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!pdf || viewMode !== 'fit-page') return
+    if (!pdf || sidebarTab === 'summary' || viewMode !== 'fit-page') return
 
     let cancelled = false
 
@@ -2338,7 +2572,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [pdf, pageNumber, rotation, viewMode, stageResizeTick])
+  }, [pdf, pageNumber, rotation, viewMode, stageResizeTick, sidebarTab])
 
   useEffect(() => {
     const stage = stageRef.current
@@ -2363,7 +2597,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!pdf || !canvasRef.current) return
+    if (!pdf || sidebarTab === 'summary' || !canvasRef.current) return
 
     const document = pdf
     let disposed = false
@@ -2463,7 +2697,7 @@ export default function App() {
         // Ignore cancellation errors during cleanup.
       }
     }
-  }, [pdf, pageNumber, scale, rotation])
+  }, [pdf, pageNumber, scale, rotation, sidebarTab])
 
   const currentCalibration = calibrations[pageNumber]
 
@@ -2553,8 +2787,7 @@ export default function App() {
       ...item, categoryId: countCategoryId(item), page: Number(page), pdfLength: 0, pdfArea: 0, kind: 'count' as const,
     }))),
   ]
-  const groupSummaries = groups.map((group) => {
-    const members = allMeasurements.filter((item) => item.groupId === group.id)
+  function summarizeWork(group: MeasurementGroup, members: typeof allMeasurements) {
     const invalidPages = [...new Set(members.filter((item) => {
       const calibration = calibrations[item.page]
       return item.kind !== 'count' && (!calibration || !calibration.locked || calibration.needsRecalibration)
@@ -2574,9 +2807,11 @@ export default function App() {
     const wallsWithoutHeight = members.filter((item) => item.kind === 'wall' && item.heightM === undefined).length
     return { ...group, members, invalidPages, totalMm, totalAreaM2, wallsWithoutHeight, invalidHeightIds,
       count: members.filter((item) => item.kind === 'count').length }
-  })
-  const categorySummaries = categories.map((category) => {
-    const sourceGroups = groupSummaries.filter((group) => category.mode === 'derived'
+  }
+  const groupSummaries = groups.map((group) => summarizeWork(group, allMeasurements.filter((item) => item.groupId === group.id)))
+  const currentPageGroupSummaries = groups.map((group) => summarizeWork(group, allMeasurements.filter((item) => item.groupId === group.id && item.page === pageNumber))).filter((group) => group.members.length > 0)
+  function summarizeCategories(work: ReturnType<typeof summarizeWork>[], scopePage?: number) { return categories.map((category) => {
+    const sourceGroups = work.filter((group) => category.mode === 'derived'
       ? group.includeSkim !== false && categories.find((item) => item.id === group.categoryId)?.skimTarget === (category.id === 'skimmed-walls' ? 'walls' : 'ceilings')
       : group.categoryId === category.id)
     const totalMm = category.mode === 'derived' ? 0 : sourceGroups.some((group) => group.totalMm === null) ? null
@@ -2584,12 +2819,14 @@ export default function App() {
     const totalAreaM2 = sourceGroups.some((group) => group.totalAreaM2 === null) ? null
       : sourceGroups.reduce((sum, group) => sum + (group.totalAreaM2 ?? 0), 0)
     return { ...category, sourceGroups, totalMm, totalAreaM2,
-      count: category.mode === 'count' ? Object.values(countMeasurements).flat().filter((item) => countCategoryId(item) === category.id).length : 0,
+      count: category.mode === 'count' ? allMeasurements.filter((item) => item.kind === 'count' && item.categoryId === category.id && (scopePage === undefined || item.page === scopePage)).length : 0,
       wallsWithoutHeight: sourceGroups.reduce((sum, group) => sum + group.wallsWithoutHeight, 0) }
   })
+  }
+  const categorySummaries = summarizeCategories(groupSummaries)
   const measuredCategorySummaries = categorySummaries.filter((category) => category.mode === 'count' ? category.count > 0
     : category.sourceGroups.some((group) => group.members.some((item) => category.mode !== 'derived' || item.kind === 'area' || (item.kind === 'wall' && item.heightM !== undefined))))
-  const selectedWork = groupSummaries.find((group) => group.id === selectedWorkId)
+  const selectedWork = currentPageGroupSummaries.find((group) => group.id === selectedWorkId)
   const showingAllWork = selectedWorkId === '__all__'
   const viewedWork = groupSummaries.find((group) => group.id === viewGroupId)
 
@@ -2642,7 +2879,7 @@ export default function App() {
     return { ...item, lengthMm, areaM2 }
   }
   const viewItems = allMeasurements.filter((item) => matchesViewCategory(item.groupId, item.categoryId, item.kind === 'wall', item.heightM)).map(withQuantities)
-  const selectedWorkItems = allMeasurements.filter((item) => item.groupId === selectedWorkId).map(withQuantities)
+  const selectedWorkItems = allMeasurements.filter((item) => item.groupId === selectedWorkId && item.page === pageNumber).map(withQuantities)
   const ungroupedItems = allMeasurements.filter((item) => !item.groupId).map(withQuantities)
   const ungroupedGeometry = ungroupedItems.filter((item) => item.kind !== 'count')
   const workOverviewRows = [
@@ -2661,6 +2898,45 @@ export default function App() {
     })),
 
   ]
+  function summaryColorFor(groupId: string | undefined, fallback: string) {
+    const group = groups.find((item) => item.id === groupId)
+    return group?.appearance?.color ?? categories.find((item) => item.id === group?.categoryId)?.color ?? fallback
+  }
+
+  function drawingSummary(number: number) {
+    const members = allMeasurements.filter((item) => item.page === number)
+    const work = groups.map((group) => summarizeWork(group, members.filter((item) => item.groupId === group.id))).filter((group) => group.members.length)
+    const categoriesOnPage = summarizeCategories(work, number).filter((category) => category.mode === 'count' ? category.count > 0
+      : category.sourceGroups.some((group) => group.members.some((item) => category.mode !== 'derived' || item.kind === 'area' || (item.kind === 'wall' && item.heightM !== undefined))))
+    const rows = categoriesOnPage.map((category) => ({
+      id: category.id, name: category.name, mode: category.mode as string, totalMm: category.totalMm, totalAreaM2: category.totalAreaM2, count: category.count,
+      colors: [...new Set(category.sourceGroups.map((group) => summaryColorFor(group.id,category.color)))].length ? [...new Set(category.sourceGroups.map((group) => summaryColorFor(group.id,category.color)))] : [category.color],
+      sourceNote: category.mode === 'derived' ? 'N.B. Reuses measured areas from ' + category.sourceGroups.filter((group) => group.members.some((item) => item.kind === 'area' || item.heightM !== undefined)).map((group) => group.name || group.id).join(', ') + ' on this drawing. No extra measurement is added; skim opt-outs are respected.' : '',
+      wallsWithoutHeight: category.wallsWithoutHeight,
+    }))
+    const ungrouped = members.filter((item) => !item.groupId && item.kind !== 'count').map(withQuantities)
+    const geometry = ungrouped.filter((item) => item.kind !== 'count')
+    if (ungrouped.length) rows.push({ id:'__ungrouped__', name:'Ungrouped Measurements', mode:'mixed',
+      totalMm:geometry.some((item) => item.lengthMm === null) ? null : geometry.reduce((sum,item) => sum+(item.lengthMm ?? 0),0),
+      totalAreaM2:geometry.some((item) => (item.kind === 'area' || item.heightM !== undefined) && item.areaM2 === null) ? null : geometry.reduce((sum,item) => sum+(item.areaM2 ?? 0),0),
+      count:0, colors:[...new Set(ungrouped.map((item) => item.kind === 'area' ? '#c2410c' : item.id.startsWith('R') ? '#0f766e' : '#2563eb'))], sourceNote:'Not assigned to a work category.', wallsWithoutHeight:geometry.filter((item) => item.kind === 'wall' && item.heightM === undefined).length })
+    const calibration=calibrations[number]
+    return { number, name:drawingPageName(number), rows, measurementCount:members.length,
+      needsCalibration:members.some((item) => item.kind !== 'count') && (!calibration || !calibration.locked || calibration.needsRecalibration) }
+  }
+  const pageDrawingSummaries = sidebarTab === 'summary' ? drawingPages.map((_,index) => drawingSummary(index+1)) : []
+
+  async function prepareSummaryPage(number: number, page: any) {
+    const document=pdf
+    if (!document) return
+    if (pdfSnapCache.current.doc !== document) pdfSnapCache.current={doc:document,pages:new Map()}
+    if (pdfSnapCache.current.pages.has(number)) return
+    try {
+      const operators=await page.getOperatorList()
+      if (pdfSnapCache.current.doc === document && !pdfSnapCache.current.pages.has(number)) pdfSnapCache.current.pages.set(number,makeSnapIndex(pdfLineSegments(operators,pdfjsLib.OPS),'PDF'))
+    } catch { /* Preview rendering can continue when PDF line detection is unavailable. */ }
+  }
+
   const calibrationAttention = !!pdf && !currentCalibration && !calibrationMode && !pendingCalibration
   const renderedCounts = currentCounts.filter((item) => isMeasurementVisible(item.groupId, countCategoryId(item))).map((item) => {
     const [x, y] = viewportRef.current?.convertToViewportPoint(item.point.x, item.point.y) ?? [0, 0]
@@ -2746,56 +3022,58 @@ export default function App() {
     temporaryLengthAHandle = { x, y }
   }
 
-  function workLockState(id: string): 'locked' | 'unlocked' | 'mixed' | 'empty' {
-    const members = [...Object.values(lengthMeasurements).flat(), ...Object.values(runMeasurements).flat(), ...Object.values(areaMeasurements).flat(), ...Object.values(countMeasurements).flat()].filter((item) => item.groupId === id)
+  function workLockState(id: string, scopePage?: number): 'locked' | 'unlocked' | 'mixed' | 'empty' {
+    const members: Array<{locked:boolean}> = []
+    for (const record of [lengthMeasurements,runMeasurements,areaMeasurements,countMeasurements]) for (const [page,items] of Object.entries(record)) if (scopePage === undefined || Number(page) === scopePage) members.push(...items.filter((item: {groupId?:string;locked:boolean}) => item.groupId === id))
     if (!members.length) return 'empty'
     return members.every((item) => item.locked) ? 'locked' : members.every((item) => !item.locked) ? 'unlocked' : 'mixed'
   }
 
-  function setWorkLocked(id: string, locked: boolean) {
+  function setWorkLocked(id: string, locked: boolean, scopePage?: number) {
     const change = <T extends { groupId?: string; locked: boolean },>(record: Record<number, T[]>) =>
-      Object.fromEntries(Object.entries(record).map(([page, items]) => [page, items.map((item) => item.groupId === id ? { ...item, locked } : item)]))
+      Object.fromEntries(Object.entries(record).map(([page, items]) => [page, items.map((item) => item.groupId === id && (scopePage === undefined || Number(page) === scopePage) ? { ...item, locked } : item)]))
     setLengthMeasurements(change); setRunMeasurements(change); setAreaMeasurements(change); setCountMeasurements(change)
-    setStatus(`${groups.find((group) => group.id === id)?.name || id}: all measurements ${locked ? 'locked' : 'unlocked'}.`)
+    setStatus(`${groups.find((group) => group.id === id)?.name || id}: measurements ${locked ? 'locked' : 'unlocked'} ${scopePage === undefined ? 'across all drawings' : 'on ' + drawingPageName(scopePage)}.`)
   }
 
-  function openWorkMenu(event: React.MouseEvent<HTMLElement>, groupId: string) {
+  function openWorkMenu(event: React.MouseEvent<HTMLElement>, groupId: string, scopePage?: number) {
     event.preventDefault(); event.stopPropagation()
     stopMeasurement()
     setMeasurementMenu(null)
     const bounds = workspaceRef.current?.getBoundingClientRect()
-    setWorkMenu({ groupId, x: Math.max(8, Math.min(event.clientX - (bounds?.left ?? 0), (bounds?.width ?? 1000) - 228)), y: Math.max(8, Math.min(event.clientY - (bounds?.top ?? 0), (bounds?.height ?? 700) - 230)) })
+    setWorkMenu({ groupId, scopePage, x: Math.max(8, Math.min(event.clientX - (bounds?.left ?? 0), (bounds?.width ?? 1000) - 228)), y: Math.max(8, Math.min(event.clientY - (bounds?.top ?? 0), (bounds?.height ?? 700) - 230)) })
   }
 
   function workMenuAction(action: 'edit' | 'lock' | 'delete') {
     if (!workMenu) return
-    const { groupId } = workMenu
+    const { groupId, scopePage } = workMenu
     const group = groups.find((item) => item.id === groupId)
     if (!group) { setWorkMenu(null); return }
     if (action === 'delete') {
-      const members = allMeasurements.filter((item) => item.groupId === groupId)
-      if (!window.confirm(`Delete "${group.name || group.id}" and its ${members.length} measurements across all pages?`)) { setWorkMenu(null); return }
-      const remove = <T extends { groupId?: string },>(record: Record<number, T[]>) => Object.fromEntries(Object.entries(record).map(([page, items]) => [page, items.filter((item) => item.groupId !== groupId)]))
+      const members = allMeasurements.filter((item) => item.groupId === groupId && (scopePage === undefined || item.page === scopePage))
+      if (!window.confirm(`Delete "${group.name || group.id}" and its ${members.length} measurements ${scopePage === undefined ? 'across all pages' : 'on ' + drawingPageName(scopePage) + ' only'}?`)) { setWorkMenu(null); return }
+      const remove = <T extends { groupId?: string },>(record: Record<number, T[]>) => Object.fromEntries(Object.entries(record).map(([page, items]) => [page, items.filter((item) => item.groupId !== groupId || (scopePage !== undefined && Number(page) !== scopePage))]))
       setLengthMeasurements(remove); setRunMeasurements(remove); setAreaMeasurements(remove); setCountMeasurements(remove)
-      setGroups((current) => current.filter((item) => item.id !== groupId))
+      const removeGroupToo = !allMeasurements.some((item) => item.groupId === groupId && scopePage !== undefined && item.page !== scopePage)
+      if (removeGroupToo) setGroups((current) => current.filter((item) => item.id !== groupId))
       setHeightDrafts((current) => Object.fromEntries(Object.entries(current).filter(([id]) => !members.some((item) => item.id === id))))
-      setGroupHeightDrafts((current) => { const next = { ...current }; delete next[groupId]; return next })
-      setHiddenGroupIds((current) => current.filter((id) => id !== groupId))
-      if (activeGroupId === groupId) setActiveGroupId('')
+      setGroupHeightDrafts((current) => { const next = { ...current }; for (const key of Object.keys(next)) if (removeGroupToo ? key === groupId || key.startsWith(groupId + ':') : key === groupId + ':' + scopePage) delete next[key]; return next })
+      if (removeGroupToo) setHiddenGroupIds((current) => current.filter((id) => id !== groupId))
+      if (removeGroupToo && activeGroupId === groupId) setActiveGroupId('')
       if (viewGroupId === groupId) setViewGroupId('')
       if (selectedWorkId === groupId) setSelectedWorkId(null)
       setStatus(`${group.name || group.id} and its measurements deleted.`)
-    } else if (action === 'lock') setWorkLocked(groupId, workLockState(groupId) !== 'locked')
+    } else if (action === 'lock') setWorkLocked(groupId, workLockState(groupId,scopePage) !== 'locked', scopePage)
     else {
-      const members = allMeasurements.filter((item) => item.groupId === groupId)
-      setWorkLocked(groupId, false)
+      const members = allMeasurements.filter((item) => item.groupId === groupId && (scopePage === undefined || item.page === scopePage))
+      setWorkLocked(groupId, false, scopePage)
       setSidebarTab('measure')
       setSelectedWorkId(groupId)
       setViewGroupId(groupId); setViewCategoryId(''); setHiddenGroupIds([]); setShowUngrouped(true); setOverviewDrawing(false)
       if (members.length && !members.some((item) => item.page === pageNumber)) {
         setPageNumber(members[0].page); setViewMode('fit-page'); setPan({ x: 0, y: 0 })
       }
-      setStatus(`${group.name || group.id}: points unlocked on all pages. Drag individual points on the displayed page; use the padlock to lock them again.`)
+      setStatus(`${group.name || group.id}: points unlocked ${scopePage === undefined ? 'on all pages' : 'on ' + drawingPageName(scopePage)}. Drag individual points on the displayed page; use the padlock to lock them again.`)
     }
     setWorkMenu(null)
   }
@@ -2884,7 +3162,7 @@ export default function App() {
         <div className="brand-and-project">
           <div className="takeoff-brand">
             <svg className="brand-mark" viewBox="0 0 34 38" aria-hidden="true"><path fill="#21d4ce" d="M17 1 32 9 17 18 2 10z" /><path fill="#00a8a4" d="m2 13 12 7v14L2 27z" /><path fill="#19d1c7" d="m19 20 13-8v15l-13 9z" /><path fill="#6ce8df" d="m8 17 7 4-7 12z" /></svg>
-            <span>TAKEOFF</span>
+            <span>Holmes QS</span>
           </div>
           <button className="project-menu-button" aria-expanded={jobPanelOpen} aria-controls="job-details-panel" onClick={() => setJobPanelOpen((open) => !open)} title={fileName || 'Job details'}>
             <span>{[job.site, job.plot ? 'Plot ' + job.plot : '', job.houseType].filter(Boolean).join(' / ') || 'Job details'}</span><span aria-hidden="true">⌄</span>
@@ -2960,26 +3238,27 @@ export default function App() {
 </section>
       </header>
 
-      <main ref={workspaceRef} className={`workspace ${selectedWork || showingAllWork ? 'has-work-details' : ''}`} inert={isFileBusy || !!measurementChooser || heightPromptOpen}>
-          <div hidden={!toolboxOpen} ref={toolboxRef} className="measure-toolbox floating-toolbox" role="region" aria-label="Movable measurement toolbox" style={{ left: toolboxPosition.x, top: toolboxPosition.y }} onWheel={(event) => event.stopPropagation()}>
+      <main ref={workspaceRef} className={`workspace ${sidebarTab === 'summary' ? 'is-summary' : ''} ${selectedWork || showingAllWork ? 'has-work-details' : ''}`} inert={isFileBusy || !!measurementChooser || heightPromptOpen}>
+          <div hidden={!toolboxOpen} ref={toolboxRef} className="measure-toolbox floating-toolbox" role="region" aria-label="Movable measurement toolbox" style={{ left: toolboxPosition.x, top: toolboxPosition.y, maxWidth: `calc(100% - ${toolboxPosition.x + 8}px)`, maxHeight: `calc(100% - ${toolboxPosition.y + 8}px)` }} onWheel={(event) => event.stopPropagation()}>
           <div className="toolbox-heading toolbox-drag-handle" tabIndex={0} aria-label="Move measurement toolbox with arrow keys" onPointerDown={startToolboxDrag} onPointerMove={moveToolboxDrag} onPointerUp={endToolboxDrag} onPointerCancel={endToolboxDrag} onKeyDown={(event) => {
             const delta: Record<string, Point> = { ArrowLeft:{x:-20,y:0}, ArrowRight:{x:20,y:0}, ArrowUp:{x:0,y:-20}, ArrowDown:{x:0,y:20} }
             if (event.target === event.currentTarget && delta[event.key]) { event.preventDefault(); setToolboxPosition((p) => clampToolbox({ x:p.x+delta[event.key].x, y:p.y+delta[event.key].y })) }
           }}><span className="drag-grip" aria-hidden="true">⠿</span><h2>Measure</h2><button aria-label="Close measurement toolbox" onClick={closeMeasureToolbox}>×</button></div>
           <div className="toolbox-body">
           <div className="tool-selector-grid" aria-label="Measurement tools">
-            <button className="tool-tile" aria-pressed={lengthMode || readyToolKind === 'length'} disabled={calibrationMode || !!pendingCalibration || !lengthCalibrationValid}
-              onClick={() => startToolMeasurement('length')}>
-              <UiIcon name="length" /><span>{'Measure Single Length'}</span>
+            <button className="tool-tile" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : undefined} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={lengthMode || readyToolKind === 'length'} aria-disabled={calibrationMode || !!pendingCalibration || !lengthCalibrationValid}
+              onClick={() => activateMeasurementTool('length')}>
+              <UiIcon name="length" /><span>{'Single Length'}</span>
             </button>
-            <button className="tool-tile" aria-pressed={runMode || readyToolKind === 'run'} disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
-              onClick={() => startToolMeasurement('run')}><UiIcon name="run" /><span>Measure Continuous Length</span></button>
-            <button className="tool-tile" aria-pressed={areaMode || readyToolKind === 'area'} disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
-              onClick={() => startToolMeasurement('area')}><UiIcon name="area" /><span>Measure Area</span></button>
-            <button className="tool-tile" aria-pressed={countMode || readyToolKind === 'point'} disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
-              onClick={() => startToolMeasurement('point')}><UiIcon name="point" /><span>Add Point Marker</span></button>
+            <button className="tool-tile" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : undefined} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={runMode || readyToolKind === 'run'} aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
+              onClick={() => activateMeasurementTool('run')}><UiIcon name="run" /><span>Multiple Length</span></button>
+            <button className="tool-tile" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : undefined} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={areaMode || readyToolKind === 'area'} aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
+              onClick={() => activateMeasurementTool('area')}><UiIcon name="area" /><span>Area</span></button>
+            <button className="tool-tile" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : undefined} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={countMode || readyToolKind === 'point'} aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
+              onClick={() => activateMeasurementTool('point')}><UiIcon name="point" /><span>Point Marker</span></button>
           </div>
 
+          {toolCalibrationNotice && <p className="tool-calibration-help" role="status">{toolCalibrationNotice}</p>}
           <label className="toolbox-category">Work category<select value={chooserCategoryId || activeCategory?.id || 'tack-ceiling'} onChange={(event) => changeToolCategory(event.target.value)}>
             {categories.filter((category) => category.mode !== 'derived').map((category) => <option key={category.id} value={category.id}>{category.name || category.id}</option>)}
           </select></label>
@@ -3205,27 +3484,34 @@ export default function App() {
           </div>
           <div className="measured-work-list" hidden={sidebarTab !== 'groups'}>
             <h2>Measured Work</h2>
+            <div className="measured-work-page-controls" aria-label="Measured Work drawing navigation">
+              <button aria-label="Previous Measured Work drawing" disabled={pageNumber <= 1} onClick={() => goToDrawingPage(pageNumber-1)}>‹</button>
+              <select aria-label="Measured Work drawing page" value={pageNumber} disabled={!pdf} onChange={(event) => goToDrawingPage(Number(event.target.value))}>{drawingPages.map((page,index) => <option key={index} value={index+1}>{page.name} ({index+1}/{drawingPages.length})</option>)}</select>
+              <button aria-label="Next Measured Work drawing" disabled={!pdf || pageNumber >= drawingPages.length} onClick={() => goToDrawingPage(pageNumber+1)}>›</button>
+            </div>
+            <p className="page-scope-note">Showing work on <strong>{drawingPageName(pageNumber)}</strong> only.</p>
             <p className="length-note">Choose a work item to see its quantities and measurements on the right.</p>
             <button className="show-all-work-button" disabled={hasDraft} aria-pressed={showingAllWork} onClick={openAllMeasuredWork}>Show All Measured Work</button>
             <div className="work-buttons">
-              {groupSummaries.map((group) => {
-                const lockState = workLockState(group.id)
-                return <div className="work-item-row" key={group.id} onContextMenu={(event) => openWorkMenu(event, group.id)}>
+              {currentPageGroupSummaries.map((group) => {
+                const lockState = workLockState(group.id,pageNumber)
+                return <div className="work-item-row" key={group.id} onContextMenu={(event) => openWorkMenu(event, group.id, pageNumber)}>
                   <button className="work-item-button" aria-pressed={selectedWorkId === group.id} disabled={hasDraft} onClick={() => openMeasuredWork(group.id)}>
-                    <strong>{group.name || group.id}</strong><span>{categories.find((category) => category.id === group.categoryId)?.name || 'Uncategorised'} · {group.members.length} measurements</span>
+                    <strong>{group.name || group.id}</strong><span>{categories.find((category) => category.id === group.categoryId)?.name || 'Uncategorised'} · {group.members.length} measurements · {drawingPageName(pageNumber)}</span>
                   </button>
-                  <button className={`work-padlock is-${lockState}`} aria-label={`${group.name || group.id}: ${lockState}. Click to ${lockState === 'locked' ? 'unlock' : 'lock'} all measurements`} title={lockState === 'mixed' ? 'Mixed locks — click to lock all' : lockState === 'empty' ? 'No measurements to lock' : lockState === 'locked' ? 'Unlock all measurements' : 'Lock all measurements'} disabled={lockState === 'empty'} onClick={() => { stopMeasurement(); setWorkLocked(group.id, lockState !== 'locked') }}>
+                  <button className={`work-padlock is-${lockState}`} aria-label={`${group.name || group.id}: ${lockState}. Click to ${lockState === 'locked' ? 'unlock' : 'lock'} measurements on this drawing`} title={lockState === 'mixed' ? 'Mixed locks — click to lock this drawing' : lockState === 'empty' ? 'No measurements to lock' : lockState === 'locked' ? 'Unlock measurements on this drawing' : 'Lock measurements on this drawing'} disabled={lockState === 'empty'} onClick={() => { stopMeasurement(); setWorkLocked(group.id, lockState !== 'locked', pageNumber) }}>
                     <UiIcon name={lockState === 'locked' ? 'lock' : lockState === 'mixed' ? 'mixed-lock' : 'unlock'} />
                   </button>
                 </div>
               })}
             </div>
-            {!groups.length && <p className="length-note">No measured work yet. Open Measure above to create your first work item.</p>}
+            {!currentPageGroupSummaries.length && <p className="length-note">No measured work on {drawingPageName(pageNumber)} yet.</p>}
 
           </div>
 
           <div hidden={sidebarTab !== 'materials'} className="materials-panel"><h2>Materials</h2><p>Materials calculations coming next.</p><p className="length-note">This will use your Measured Work to calculate material quantities.</p></div>
           <div hidden={sidebarTab !== 'summary'} className="summary-panel">
+            <div className="summary-job-heading">{[job.site, job.plot ? 'Plot ' + job.plot : '', job.houseType, job.revision ? (/^rev\b/i.test(job.revision) ? job.revision : 'Rev ' + job.revision) : ''].filter(Boolean).join(' / ') || 'Job details not entered'}</div>
             <h2>Plot summary</h2>
             <div className="panel-subtitle">{measuredCategorySummaries.length} measured categories · all pages</div>
             <p className="length-note">Drawing visibility does not change these totals. Skim rows reuse the source areas and represent separate work.</p>
@@ -3438,7 +3724,20 @@ export default function App() {
 </div>
 
           <div hidden={sidebarTab !== 'measure'} className="drawing-controls">
-          <div className="toolbox-heading"><UiIcon name="file" /><h2>Drawing</h2></div>
+          <div className="toolbox-heading"><UiIcon name="file" /><h2>Drawings</h2></div>
+          <label className={`import-pages-button ${!pdf || isFileBusy ? 'file-disabled' : ''}`}><UiIcon name="import" />Import Additional Pages
+            <input type="file" accept="application/pdf" multiple disabled={!pdf || isFileBusy} onChange={(event) => { const files=Array.from(event.target.files ?? []); event.target.value=''; if (files.length) void importDrawingPages(files) }} />
+          </label>
+          {pdf && <div className="drawing-page-manager">
+            <label>Drawing page<select aria-label="Select drawing page" value={pageNumber} onChange={(event) => goToDrawingPage(Number(event.target.value))}>{drawingPages.map((page,index) => <option key={index} value={index+1}>{index+1}. {page.name}</option>)}</select></label>
+            <details><summary>Rename or remove pages</summary>
+              {drawingPages.map((page,index) => <div className={`drawing-page-row ${pageNumber === index+1 ? 'is-current' : ''}`} key={index}>
+                <button className="page-number-button" onClick={() => goToDrawingPage(index+1)} title={`Go to ${page.name}`}>{index+1}</button>
+                <input aria-label={`Name for drawing page ${index+1}`} maxLength={80} defaultValue={page.name} key={page.source + ':' + page.page + ':' + page.name} onBlur={(event) => { const value=event.target.value.trim(); if (value) renameDrawingPage(index+1,value); else event.target.value=page.name }} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }} />
+                <button className="delete-page-button" aria-label={`Delete drawing page ${page.name}`} disabled={drawingPages.length <= 1 || hasDraft} title={drawingPages.length <= 1 ? 'Keep at least one drawing page' : 'Remove this page and its measurements'} onClick={() => deleteDrawingPage(index+1)}>×</button>
+              </div>)}
+            </details>
+          </div>}
 
           <div className="tool-row">
             <button
@@ -3528,6 +3827,7 @@ export default function App() {
         </aside>
 
         <section
+          hidden={sidebarTab === 'summary'}
           ref={stageRef}
           tabIndex={-1}
           className={`drawing-stage${isPanning ? ' is-panning' : ''}${calibrationMode || lengthMode || runMode || areaMode || countMode || readyToolKind ? ' measurement-active' : ''}`}
@@ -3869,16 +4169,36 @@ export default function App() {
             <span className="footer-zoom">{Math.round(scale * 100)}%</span>
             <div className="footer-page-controls">
               <button title="Previous drawing page" disabled={pageNumber <= 1 || runMode || areaMode} onClick={previousPage}>‹</button>
-              <span>Page {pageNumber} / {pdf.numPages}</span>
+              <span>{drawingPageName(pageNumber)} · {pageNumber} / {pdf.numPages}</span>
               <button title="Next drawing page" disabled={pageNumber >= pdf.numPages || runMode || areaMode} onClick={nextPage}>›</button>
             </div>
             <span className="footer-help">Drag to pan <span>·</span> Scroll to zoom</span>
           </div>}
         </section>
+        {sidebarTab === 'summary' && <section className="summary-gallery" aria-label="All drawings and page quantities">
+          <header className="summary-gallery-heading"><h2>All Drawings — Page Breakdown</h2><p>Whole-plot totals are on the left. Each drawing below has its own measurements and quantities.</p></header>
+          {!pdf && <p className="summary-empty">Import a drawing to see the page breakdown.</p>}
+          {pdf && pageDrawingSummaries.map((page) => <article className="summary-page-card" key={page.number}>
+            <header className="summary-page-heading"><div><h3>{page.name}</h3><p>Drawing {page.number} of {drawingPages.length} · {page.measurementCount} measured elements</p></div><button onClick={() => { goToDrawingPage(page.number); navigateWorkspace('measure') }}>Open drawing</button></header>
+            <div className="summary-page-content">
+              <SummaryDrawingPreview pdf={pdf} number={page.number} rotation={rotation} lengths={lengthMeasurements[page.number] ?? []} runs={runMeasurements[page.number] ?? []} areas={areaMeasurements[page.number] ?? []} counts={(countMeasurements[page.number] ?? []).map((item) => ({...item,previewColor:summaryColorFor(item.groupId,categories.find((category) => category.id === countCategoryId(item))?.color ?? '#dc2626')}))} colorFor={summaryColorFor} appearanceFor={measurementAppearance} preparePage={prepareSummaryPage} />
+              <div className="summary-page-quantities"><h4>{page.name} quantities</h4>
+                {page.needsCalibration && <p className="calibration-warning">Calibrate and lock this drawing to show complete quantities.</p>}
+                {!page.rows.length && <p className="length-note">No measured work on this drawing yet.</p>}
+                {page.rows.map((row) => <div className="summary-page-quantity" key={row.id}>
+                  <h5><span className="work-legend-swatches">{row.colors.map((color) => <span className="work-legend-swatch" key={color} style={{background:color}} />)}</span>{row.name}</h5>
+                  <div className="summary-page-values">{row.mode !== 'count' && <><strong>{row.totalAreaM2 === null ? 'Check calibration / heights' : row.totalAreaM2.toFixed(2) + ' m²'}</strong>{row.mode !== 'derived' && <span>{row.totalMm === null ? 'Check calibration' : (row.totalMm/1000).toFixed(2) + ' LM'}</span>}</>}{(row.mode === 'count' || row.count>0) && <strong>{row.count} no.</strong>}</div>
+                  {row.wallsWithoutHeight>0 && <p className="length-note">{row.wallsWithoutHeight} lengths/runs without height excluded from m².</p>}
+                  {row.sourceNote && <p className="skim-source-note">{row.sourceNote}</p>}
+                </div>)}
+              </div>
+            </div>
+          </article>)}
+        </section>}
         {showingAllWork && <aside className="work-details-panel" aria-label="All Measured Work quantities" onKeyDown={(event) => {
           if (event.key === 'Escape') { event.stopPropagation(); setSelectedWorkId(null) }
         }}>
-          <div className="work-details-header"><h2>All Measured Work</h2>
+          <div className="work-details-header"><h2>All Measured Work — All Drawings</h2>
             <button aria-label="Close measured work overview" onClick={() => setSelectedWorkId(null)}>×</button>
           </div>
           <div className="work-details-body work-overview">
@@ -3901,7 +4221,7 @@ export default function App() {
           if (event.key === 'Escape') { event.stopPropagation(); setSelectedWorkId(null) }
         }}>
           <div className="work-details-header">
-            <div><div className="work-details-eyebrow">MEASURED WORK · {selectedWork.id}</div><h2>{selectedWork.name || selectedWork.id}</h2></div>
+            <div><div className="work-details-eyebrow">{drawingPageName(pageNumber)} · THIS DRAWING ONLY</div><h2>{selectedWork.name || selectedWork.id}</h2></div>
             <button aria-label="Close measured work details" onClick={() => setSelectedWorkId(null)}>×</button>
           </div>
           <div className="work-details-body">
@@ -3913,15 +4233,15 @@ export default function App() {
                   <strong>{selectedWork.totalMm === null ? 'Check calibration' : `${(selectedWork.totalMm / 1000).toFixed(2)} LM`}</strong>
                 </>}
             </div>
-            <p className="length-note">{selectedWork.members.length} measurements · totals across all pages</p>
+            <p className="length-note">{selectedWork.members.length} measurements · quantities on {drawingPageName(pageNumber)} only</p>
             {selectedWork.invalidPages.length > 0 && <p className="calibration-warning">Calibrate and lock pages {selectedWork.invalidPages.join(', ')} to show complete totals.</p>}
             {selectedWork.wallsWithoutHeight > 0 && <p className="length-note">{selectedWork.wallsWithoutHeight} lengths/runs have no height and are excluded from m².</p>}
             {selectedWorkItems.some((item) => item.kind === 'wall') && (() => {
               const walls = selectedWorkItems.filter((item) => item.kind === 'wall')
               const heights = [...new Set(walls.map((item) => item.heightM))]
-              const value = groupHeightDrafts[selectedWork.id] ?? (heights.length === 1 && heights[0] !== undefined ? String(heights[0]) : '')
+              const value = groupHeightDrafts[selectedWork.id + ':' + pageNumber] ?? (heights.length === 1 && heights[0] !== undefined ? String(heights[0]) : '')
               const invalid = value !== '' && (!Number.isFinite(Number(value)) || Number(value) <= 0)
-              return <div className="work-height-editor"><label>Wall height for this work (m)<input type="number" min="0.001" step="any" aria-label="Work wall height" aria-invalid={invalid} value={value} placeholder={heights.length > 1 ? 'Mixed heights' : 'Add wall height'} onChange={(event) => setWorkWallHeight(selectedWork.id, event.target.value)} /></label><p className="length-note">Applies to every length/run in this work, across all pages. You can also edit individual heights below.</p>{invalid && <p className="calibration-warning">Enter a height greater than zero, or clear it.</p>}</div>
+              return <div className="work-height-editor"><label>Wall height on this drawing (m)<input type="number" min="0.001" step="any" aria-label="Work wall height" aria-invalid={invalid} value={value} placeholder={heights.length > 1 ? 'Mixed heights' : 'Add wall height'} onChange={(event) => setWorkWallHeight(selectedWork.id, event.target.value, pageNumber)} /></label><p className="length-note">Applies to this work’s lengths/runs on this drawing only. You can also edit individual heights below.</p>{invalid && <p className="calibration-warning">Enter a height greater than zero, or clear it.</p>}</div>
             })()}
             <div className="work-visibility-actions">
               <button disabled={hasDraft} aria-pressed={viewGroupId === selectedWork.id} onClick={() => showOnlyMeasuredWork(selectedWork.id)}>Show Only This Measure on Drawing</button>
@@ -3936,12 +4256,12 @@ export default function App() {
             <h3>Individual measurements</h3>
             <div className="work-member-list">
               {selectedWorkItems.map((item) => <details className="work-member-card" key={item.id}>
-                <summary><strong>{item.name || item.id}</strong><span>Page {item.page} · {item.kind === 'count' ? '1 no.' : item.kind === 'area'
+                <summary><strong>{item.name || item.id}</strong><span>{drawingPageName(item.page)} · {item.kind === 'count' ? '1 no.' : item.kind === 'area'
                   ? item.areaM2 === null ? 'Check calibration' : `${item.areaM2.toFixed(2)} m²`
                   : item.lengthMm === null ? 'Check calibration' : `${(item.lengthMm / 1000).toFixed(2)} m`}</span></summary>
                 <p className="length-note">{item.id}{item.heightM !== undefined ? ` · height ${item.heightM} m` : ''}</p>
                 {item.kind === 'wall' && item.heightM !== undefined && <strong>{item.areaM2 === null ? 'Check calibration / height' : `${item.areaM2.toFixed(2)} m²`}</strong>}
-                <button className="wide-control" disabled={hasDraft} onClick={() => { setPageNumber(item.page); setViewMode('fit-page'); setPan({ x: 0, y: 0 }); setStageResizeTick((tick) => tick + 1) }}>Go to Page {item.page}</button>
+                <button className="wide-control" disabled={hasDraft} onClick={() => { setPageNumber(item.page); setViewMode('fit-page'); setPan({ x: 0, y: 0 }); setStageResizeTick((tick) => tick + 1) }}>Go to {drawingPageName(item.page)}</button>
                 {item.page === pageNumber ? <>
                   {measurementDetails(item.id, item.name, item.groupId)}
 
@@ -3950,7 +4270,8 @@ export default function App() {
               </details>)}
               {!selectedWorkItems.length && <p className="length-note">This work item has no measurements yet.</p>}
             </div>
-            <details className="work-item-settings"><summary>Work item settings</summary>
+            <details className="work-item-settings"><summary>Work item settings — all drawings</summary>
+              <p className="length-note">The work item’s name and category apply across all drawings.</p>
               <label>Name<input value={selectedWork.name} maxLength={100} onChange={(event) => renameGroup(selectedWork.id, event.target.value)} /></label>
               <label>Category<select value={selectedWork.categoryId ?? ''} disabled={hasDraft} onChange={(event) => setGroupCategory(selectedWork.id, event.target.value)}>
                 <option value="">Uncategorised</option>
@@ -3964,10 +4285,10 @@ export default function App() {
           </div>
         </aside>}
         {workMenu && groups.some((group) => group.id === workMenu.groupId) && <div className="measurement-context-menu work-context-menu" data-work-menu role="menu" aria-label="Measured Work actions" style={{left:workMenu.x,top:workMenu.y}} onContextMenu={(event) => event.preventDefault()}>
-          <div className="context-menu-title">{groups.find((group) => group.id === workMenu.groupId)?.name || workMenu.groupId}<span>{workLockState(workMenu.groupId)}</span></div>
-          <button role="menuitem" autoFocus disabled={workLockState(workMenu.groupId) === 'empty'} onClick={() => workMenuAction('edit')}>Edit points</button>
-          <button role="menuitem" disabled={workLockState(workMenu.groupId) === 'empty'} onClick={() => workMenuAction('lock')}>{workLockState(workMenu.groupId) === 'locked' ? 'Unlock all measurements' : 'Lock all measurements'}</button>
-          <button role="menuitem" className="context-menu-delete" onClick={() => workMenuAction('delete')}>Delete work and measurements</button>
+          <div className="context-menu-title">{groups.find((group) => group.id === workMenu.groupId)?.name || workMenu.groupId}<span>{workLockState(workMenu.groupId,workMenu.scopePage)} · {workMenu.scopePage === undefined ? 'All drawings' : drawingPageName(workMenu.scopePage)}</span></div>
+          <button role="menuitem" autoFocus disabled={workLockState(workMenu.groupId,workMenu.scopePage) === 'empty'} onClick={() => workMenuAction('edit')}>Edit points</button>
+          <button role="menuitem" disabled={workLockState(workMenu.groupId,workMenu.scopePage) === 'empty'} onClick={() => workMenuAction('lock')}>{workLockState(workMenu.groupId,workMenu.scopePage) === 'locked' ? 'Unlock all measurements' : 'Lock all measurements'}</button>
+          <button role="menuitem" className="context-menu-delete" onClick={() => workMenuAction('delete')}>Delete selected measurements</button>
           <button role="menuitem" onClick={() => setWorkMenu(null)}>Close</button>
         </div>}
         {measurementMenu && contextItem && <div className="measurement-context-menu" data-measurement-menu role="menu" aria-label="Measurement actions" style={{left:measurementMenu.x,top:measurementMenu.y}} onContextMenu={(event) => event.preventDefault()}>

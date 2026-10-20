@@ -1957,3 +1957,62 @@ canvas { box-shadow: 0 3px 24px #1b39421c; }
 .work-item-row .work-padlock.is-mixed { color: #92621e; background: #fff8e9; border-color: #ead7b2; }
 .work-item-row .work-padlock:hover { background: #def3ee; border-color: #70b9a4; }
 .skim-source-note { margin: 9px 0 0; padding: 8px; border-radius: 5px; background: #f4f7fa; color: #6e7f8d; font-size: 10px; line-height: 1.6; }
+
+.floating-toolbox { resize: both; min-width: min(280px, calc(100% - 16px)); min-height: min(260px, calc(100dvh - 120px)); }
+.floating-toolbox .tool-tile[aria-disabled="true"] { opacity: .4; cursor: help; }
+.tool-calibration-help { margin: 10px 0; padding: 10px; border: 1px solid #e4b9ae; border-radius: 6px; background: #fff3ee; color: #9a4230; font-size: 12px; line-height: 1.5; }
+.summary-job-heading { margin: 16px 0 5px; color: #1a7569; font-size: 14px; font-weight: 650; line-height: 1.5; overflow-wrap: anywhere; }
+.summary-job-heading + h2 { margin-top: 5px; }
+.import-pages-button { display: flex; align-items: center; justify-content: center; gap: 7px; margin: 12px 0; padding: 10px; border: 1px solid #a5d2c8; border-radius: 6px; background: #ecf8f5; color: #226f60; font-size: 11px; cursor: pointer; }
+.import-pages-button input { display: none; }
+.import-pages-button:focus-within { outline: 2px solid #079e90; outline-offset: 2px; }
+.drawing-page-manager { margin-bottom: 14px; }
+.drawing-page-manager > label { display: block; font-size: 11px; color: #617589; }
+.drawing-page-manager select { width: 100%; margin: 6px 0 12px; }
+.drawing-page-manager details > summary { color: #516e7e; font-size: 11px; }
+.drawing-page-row { display: flex; align-items: center; gap: 5px; padding: 7px 0; }
+.drawing-page-row input { flex: 1; min-width: 0; padding: 7px; font-size: 11px; }
+.drawing-page-row.is-current input { border-color: #7abfb1; background: #f4fcfa; }
+.drawing-page-row .page-number-button { width: 25px; padding: 7px 2px; font-size: 10px; }
+.drawing-page-row .delete-page-button { width: 24px; padding: 4px; border-color: transparent; background: transparent; color: #b25e52; font-size: 19px; }
+
+/* Page-specific work navigation and the full drawing summary. */
+.measured-work-page-controls { display: flex; gap: 7px; align-items: center; margin: 13px 0 9px; }
+.measured-work-page-controls select { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; padding: 9px 7px; }
+.measured-work-page-controls button { flex: 0 0 35px; height: 38px; font-size: 25px; padding: 0; line-height: 1; }
+.page-scope-note { font-size: 11px; color: #61798a; line-height: 1.5; }
+.drawing-controls { font-size: 13px; }
+.drawing-controls .toolbox-heading h2 { font-size: 16px; }
+.drawing-controls .tool-row { gap: 9px; font-size: 14px; font-weight: 650; }
+.drawing-controls .tool-row button { min-width: 43px; min-height: 42px; font-size: 15px; font-weight: 650; }
+.drawing-controls .tool-row button[title="Previous page"], .drawing-controls .tool-row button[title="Next page"] { font-size: 25px; }
+.drawing-controls > button, .drawing-controls .wide-control { min-height: 41px; font-size: 14px; font-weight: 650; }
+.drawing-controls .zoom-panel, .drawing-controls .view-status { font-size: 12px; font-weight: 600; }
+.drawing-controls .zoom-labels { font-size: 11px; }
+.drawing-controls .drawing-page-manager > label, .drawing-controls .drawing-page-manager details > summary { font-size: 13px; font-weight: 600; }
+.drawing-controls .drawing-page-manager select, .drawing-controls .drawing-page-row input { font-size: 13px; padding: 9px 7px; }
+.drawing-controls .import-pages-button { font-size: 12px; font-weight: 650; }
+.summary-gallery { grid-column: 2; grid-row: 1; min-height: 0; overflow-y: auto; padding: 24px; background: #edf2f5; overscroll-behavior: contain; }
+.summary-gallery-heading { margin: 0 0 20px; }
+.summary-gallery-heading h2 { margin: 0 0 7px; color: #20394d; font-size: 22px; }
+.summary-gallery-heading p { margin: 0; color: #718695; font-size: 13px; line-height: 1.6; }
+.summary-page-card { background: white; border: 1px solid #dce5eb; border-radius: 10px; box-shadow: 0 3px 12px #19304408; overflow: hidden; margin-bottom: 24px; }
+.summary-page-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 17px 20px; border-bottom: 1px solid #e8eef2; }
+.summary-page-heading h3 { margin: 0 0 4px; font-size: 19px; color: #1a7266; }
+.summary-page-heading p { margin: 0; color: #7a8e9e; font-size: 11px; }
+.summary-page-heading button { padding: 9px 12px; font-size: 12px; white-space: nowrap; }
+.summary-page-content { display: grid; grid-template-columns: minmax(0, 1fr) 270px; align-items: start; }
+.summary-drawing-preview { position: relative; min-height: 310px; width: 100%; background: white; }
+.summary-drawing-preview canvas { display: block; width: 100%; height: auto; }
+.summary-measurement-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.preview-loading, .preview-error { position: absolute; top: 50%; left: 15px; right: 15px; margin: 0; text-align: center; color: #79909d; font-size: 12px; }
+.preview-error { color: #9a533f; }
+.summary-page-quantities { padding: 18px; border-left: 1px solid #e5ecf1; }
+.summary-page-quantities h4 { margin: 0 0 15px; font-size: 14px; color: #314c60; }
+.summary-page-quantity { padding: 12px 0; border-top: 1px solid #edf1f4; }
+.summary-page-quantity h5 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 12px; font-weight: 600; color: #435c6d; }
+.summary-page-values { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; color: #637c8d; }
+.summary-page-values strong { color: #243e52; font-size: 16px; font-weight: 650; }
+.summary-empty { padding: 35px; text-align: center; color: #698292; }
+@media (max-width: 1250px) { .summary-page-content { grid-template-columns: minmax(0,1fr); } .summary-page-quantities { border-left: 0; border-top: 1px solid #e5ecf1; } }
+@media (max-width: 800px) { .summary-gallery { grid-column: 1; grid-row: 2; padding: 15px; min-height: 65vh; } .workspace.is-summary { overflow-y: auto; } .summary-page-heading { padding: 14px; } }
