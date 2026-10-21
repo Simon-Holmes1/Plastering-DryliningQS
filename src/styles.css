@@ -2016,3 +2016,217 @@ canvas { box-shadow: 0 3px 24px #1b39421c; }
 .summary-empty { padding: 35px; text-align: center; color: #698292; }
 @media (max-width: 1250px) { .summary-page-content { grid-template-columns: minmax(0,1fr); } .summary-page-quantities { border-left: 0; border-top: 1px solid #e5ecf1; } }
 @media (max-width: 800px) { .summary-gallery { grid-column: 1; grid-row: 2; padding: 15px; min-height: 65vh; } .workspace.is-summary { overflow-y: auto; } .summary-page-heading { padding: 14px; } }
+
+/* Compact, resizable measuring palette. */
+.floating-toolbox { width: 400px; min-width: min(310px, calc(100% - 16px)); min-height: min(180px, calc(100dvh - 120px)); }
+.floating-toolbox .toolbox-body { padding: 10px; }
+.compact-tool-row { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 14px; }
+.compact-tool-row small { display: block; font-size: 10px; font-weight: 700; color: #526579; margin-bottom: 5px; }
+.floating-toolbox .tool-selector-grid { display: flex; gap: 5px; margin: 0; }
+.floating-toolbox .tool-tile, .compact-snap-buttons button { width: 36px; height: 36px; min-height: 36px; padding: 7px; border: 1px solid #d1dce5; border-radius: 5px; background: #f4f7fa; color: #30475b; }
+.floating-toolbox .tool-tile span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.floating-toolbox .tool-tile .ui-icon, .compact-snap-buttons .ui-icon { width: 20px; height: 20px; }
+.compact-snap-buttons { display: flex; gap: 5px; }
+.floating-toolbox .tool-tile[aria-pressed="true"], .compact-snap-buttons button[aria-pressed="true"]:not(:disabled) { background: #d7f7f2; border-color: #009f97; color: #00796f; box-shadow: inset 0 0 0 1px #009f97; }
+.compact-snap-buttons button:disabled { opacity: .35; }
+.floating-toolbox .compact-snap-source { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; font-size: 10px; }
+.floating-toolbox .compact-snap-source select { width: auto; min-height: 27px; margin: 0; font-size: 10px; padding: 4px; }
+.compact-snap-source span { color: #617387; font-size: 9px; }
+.floating-toolbox .toolbox-category { display: block; }
+.floating-toolbox .toolbox-height { margin: 7px 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.floating-toolbox .toolbox-height > div { width: 100px; }
+.floating-toolbox .toolbox-height input { margin: 0; min-height: 29px; }
+.floating-toolbox .custom-category-toggle { font-size: 10px; padding: 4px 0; color: #00877e; background: transparent; border: 0; cursor: pointer; }
+.floating-toolbox .toolbox-custom[hidden] { display: none; }
+.floating-toolbox .toolbox-custom { margin: 4px 0 8px; }
+.floating-toolbox .ready-tool-banner, .floating-toolbox .measuring-banner { margin: 7px 0; padding: 6px 8px; font-size: 11px; }
+.floating-toolbox .run-panel, .floating-toolbox .area-panel, .floating-toolbox .count-panel { margin-top: 7px; padding: 8px; }
+.floating-toolbox .run-panel > .length-note, .floating-toolbox .area-panel > .length-note, .floating-toolbox .count-panel > p { display: none; }
+.floating-toolbox .run-actions { margin-top: 6px; gap: 6px; }
+.floating-toolbox .run-actions button { padding: 6px; font-size: 11px; }
+.area-value-label .area-quantity-text { font-size: 18px; font-weight: 800; fill: #152e43; }
+.overview-drawing .area-value-label { display: none; }
+.selected-edit-point { stroke: #12394e; stroke-width: 4px; filter: drop-shadow(0 0 3px white); }
+.page-delete-prompt { position: fixed; z-index: 120; box-sizing: border-box; width: 260px; max-width: calc(100vw - 16px); padding: 12px; border: 1px solid #b54b40; border-radius: 8px; background: white; color: #22384d; box-shadow: 0 7px 24px #10283c38; font-size: 12px; }
+.page-delete-prompt strong { display: block; overflow-wrap: anywhere; }
+.page-delete-prompt p { margin: 8px 0; color: #5b6d7e; }
+.page-delete-prompt > div { display: flex; gap: 8px; }
+.page-delete-prompt button { padding: 7px 12px; border-radius: 5px; border: 1px solid #d3dce4; cursor: pointer; background: #f6f8fa; }
+.page-delete-prompt .delete-page-confirm { color: white; background: #ad4135; border-color: #ad4135; }
+
+/* Docked measuring toolbar, with a persistent floating position. */
+.workspace.has-measure-toolbar { grid-template-rows: auto minmax(0, 1fr); }
+.workspace.has-measure-toolbar > .sidebar, .workspace.has-measure-toolbar > .drawing-stage, .workspace.has-measure-toolbar > .work-details-panel { grid-row: 2; }
+.measure-dock-zone { grid-column: 1 / -1; grid-row: 1; min-height: 92px; background: #e6edf2; border-bottom: 1px solid #c7d5df; z-index: 35; }
+.measure-dock-zone.is-empty { min-height: 28px; display: flex; align-items: center; justify-content: center; border-bottom-style: dashed; }
+.dock-instruction { color: #61778a; font-size: 11px; pointer-events: none; padding: 6px; }
+.measure-dock-zone.dock-hover { background: #cef4eb; outline: 2px solid #08a493; outline-offset: -2px; }
+.floating-toolbox.is-docked { position: relative; left: auto; top: auto; width: 100%; max-width: 100%; max-height: min(245px, 40dvh); min-height: 0; min-width: 0; margin: 0; border: 0; border-radius: 0; padding: 0; box-shadow: none; resize: none; overflow: visible; display: flex; align-items: stretch; }
+.floating-toolbox.is-docked .toolbox-drag-handle { position: static; flex: 0 0 32px; width: 32px; padding: 8px 4px; justify-content: center; border-radius: 0; writing-mode: vertical-rl; }
+.floating-toolbox.is-docked .toolbox-drag-handle h2 { display: none; }
+.floating-toolbox.is-docked .toolbox-drag-handle .drag-grip { font-size: 25px; margin: 0; }
+.floating-toolbox.is-docked .dock-toolbar-button { display: none; }
+.floating-toolbox.is-docked .toolbox-body { display: flex; flex: 1; min-width: 0; align-items: center; flex-wrap: wrap; gap: 8px 18px; border-radius: 0; padding: 10px 16px; background: #f8fafc; }
+.floating-toolbox.is-docked .compact-tool-row { order: 0; flex-shrink: 0; }
+.floating-toolbox.is-docked .compact-snap-source { order: 4; flex-basis: 100%; margin: -2px 0 0; }
+.toolbar-description { position: relative; min-width: 230px; max-width: 330px; flex: 1 1 230px; margin: 0; }
+.toolbar-description > summary { list-style: none; cursor: pointer; font-size: 11px; font-weight: 600; color: #536b7d; }
+.toolbar-description > summary::-webkit-details-marker { display: none; }
+.toolbar-description > summary strong { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 5px; font-size: 18px; font-weight: 800; color: #007b74; line-height: 1.3; }
+.description-popover { position: absolute; z-index: 60; top: calc(100% + 12px); left: 0; width: max(280px, 100%); max-width: calc(100vw - 24px); padding: 12px; border: 1px solid #a6c2ce; border-radius: 8px; box-shadow: 0 8px 25px #10283c30; background: white; }
+.floating-toolbox .description-popover select { min-height: 140px; padding: 0; }
+.description-popover option { padding: 7px; }
+.floating-toolbox.is-docked .toolbox-height { order: 2; flex: 0 0 142px; display: block; margin: 0; font-weight: 600; color: #536b7d; font-size: 11px; }
+.floating-toolbox.is-docked .toolbox-height > div { width: 142px; gap: 5px; }
+.floating-toolbox .toolbox-height input { font-size: 18px; font-weight: 800; color: #18364b; background: white; }
+.floating-toolbox.is-docked .run-panel, .floating-toolbox.is-docked .area-panel, .floating-toolbox.is-docked .count-panel { order: 3; display: flex; align-items: center; flex-wrap: wrap; gap: 5px 10px; margin: 0; padding: 6px 8px; max-width: 490px; }
+.floating-toolbox.is-docked .run-panel > strong, .floating-toolbox.is-docked .area-panel > strong { display: none; }
+.floating-toolbox.is-docked .run-finish, .floating-toolbox.is-docked .area-finish, .floating-toolbox.is-docked .count-panel > .wide-control { width: auto; padding: 6px 10px; margin: 0; }
+.floating-toolbox.is-docked .run-actions { margin: 0; display: flex; }
+.floating-toolbox.is-docked .ready-tool-banner, .floating-toolbox.is-docked .measuring-banner { display: none; }
+.floating-toolbox.is-docked .tool-switch-notice, .floating-toolbox.is-docked .tool-calibration-help { order: 5; margin: 0; padding: 6px; }
+.floating-toolbox.is-floating .toolbar-description { margin: 12px 0; max-width: none; }
+.floating-toolbox.is-floating .description-popover { position: static; box-shadow: none; width: 100%; margin-top: 8px; }
+.floating-toolbox.is-floating .dock-toolbar-button { font-size: 19px; margin-left: auto; }
+.floating-toolbox .tool-tile[aria-pressed="true"] > .ui-icon { color: #00796f; }
+.duplicate-measurement-button, .duplicate-work-button { padding: 8px 10px; color: #00786f; border-color: #a4d5cd; background: #f0fbf8; font-size: 12px; font-weight: 700; }
+.duplicate-work-button { width: 100%; margin: 12px 0; }
+.duplicate-dialog fieldset { border: 0; margin: 0; padding: 0; }
+.duplicate-dialog .duplicate-description-choice { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
+.duplicate-description-choice input { width: auto; }
+.isolation-notice { padding: 8px; margin-bottom: 8px; background: #e8f8f3; border-radius: 6px; font-size: 12px; }
+.isolation-notice button { padding: 5px; margin-left: 5px; font-size: 11px; }
+.work-member-card summary[aria-label] { cursor: pointer; }
+@media(max-width: 900px) {
+  .floating-toolbox.is-docked .toolbox-body { gap: 9px; padding: 8px; }
+  .floating-toolbox.is-docked .toolbar-description { min-width: 180px; flex-basis: 180px; }
+  .floating-toolbox.is-docked .toolbar-description > summary strong { font-size: 16px; }
+  .floating-toolbox.is-docked .compact-snap-source { flex-basis: auto; }
+}
+/* Keep native resize dimensions from restricting the bar after it is docked. */
+.floating-toolbox.is-docked { width: 100% !important; height: auto !important; }
+
+/* Slim navy strip: fixed settings and a separate, reorderable seven-icon palette. */
+:root { --workspace-banner-bg: linear-gradient(115deg, #192b3d, #1a2e43 70%, #19293b); }
+.topbar { background: var(--workspace-banner-bg); }
+.top-navigation { min-width: 0; overflow-x: auto; scrollbar-width: thin; justify-content: flex-start; }
+.top-navigation button { flex-shrink: 0; }
+.measure-toolbar-shell { grid-column: 1 / -1; grid-row: 1; min-width: 0; z-index: 35; }
+.toolbar-separator { height: calc(var(--measure-bar-height, 66px) / 4); background: #fff; }
+.measure-toolbar-shell .measure-dock-zone { height: var(--measure-bar-height, 66px); min-height: 0; background: var(--workspace-banner-bg); border: 0; color: white; }
+.measure-toolbar-shell .measure-dock-zone.dock-hover { outline: 0; background: var(--workspace-banner-bg); }
+.measure-toolbar-rail { display: flex; align-items: center; justify-content: space-between; flex-wrap: nowrap; height: 100%; width: 100%; gap: clamp(16px, 2.5vw, 52px); padding: 0 22px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; scrollbar-color: #698297 #1a2e43; }
+.measure-toolbar-rail > .toolbar-fixed-control { flex-shrink: 0; margin: 0; color: #d3e2ed; font-size: 11px; font-weight: 600; }
+.measure-toolbar-rail > .toolbar-description { flex: 1 0 250px; max-width: none; min-width: 250px; }
+.measure-toolbar-rail .toolbar-description > summary { color: #d3e2ed; font-size: 11px; }
+.measure-toolbar-rail .toolbar-description > summary strong { color: #fff; font-size: 18px; line-height: 1.3; padding-top: 4px; }
+.measure-toolbar-rail .toolbar-description > summary strong span { font-size: 14px; color: #48dfd2; }
+.measure-toolbar-rail .description-popover { position: fixed; width: 320px; max-width: calc(100vw - 16px); max-height: min(420px, 65dvh); overflow-y: auto; margin: 0; color: #22394b; background: #fff; z-index: 65; }
+.measure-toolbar-rail .description-popover .toolbox-category { display: block; margin: 0; font-size: 12px; }
+.measure-toolbar-rail .description-popover select { display: block; width: 100%; min-height: 150px; margin: 7px 0; border: 1px solid #dce5ed; border-radius: 5px; color: #24394d; background: white; }
+.measure-toolbar-rail .description-popover input { display: block; width: 100%; min-height: 34px; padding: 7px 9px; border: 1px solid #cbd9e3; border-radius: 5px; font-size: 12px; }
+.measure-toolbar-rail .description-popover .custom-category-toggle { background: transparent; color: #007d73; border: 0; padding: 5px 0; font-size: 12px; }
+.measure-toolbar-rail .description-popover .toolbox-custom { margin: 8px 0 0; font-size: 12px; }
+.measure-toolbar-rail .description-popover .toolbox-custom[hidden] { display: none; }
+.measure-toolbar-rail > .toolbox-height { flex: 0 0 140px; display: block; width: 140px; }
+.measure-toolbar-rail > .toolbox-height > div { display: flex; align-items: center; gap: 7px; margin-top: 4px; }
+.measure-toolbar-rail > .toolbox-height input { min-width: 0; width: 110px; height: 29px; margin: 0; padding: 2px 7px; font-size: 18px; font-weight: 800; color: white; background: #ffffff0c; border: 1px solid #ffffff38; border-radius: 5px; }
+.measure-toolbar-rail > .toolbox-height > div > span { padding: 0; color: white; font-size: 12px; }
+.measure-toolbar-rail > .compact-snap-source { flex: 0 0 220px; width: 220px; display: grid; grid-template-columns: 1fr; gap: 3px; }
+.measure-toolbar-rail > .compact-snap-source select { min-height: 25px; padding: 3px 6px; width: 100%; margin: 0; border: 1px solid #ffffff3b; border-radius: 5px; background: #eef4f8; color: #173246; font-size: 11px; }
+.measure-toolbar-rail > .compact-snap-source span { color: #ccdce8; font-size: 9px; line-height: 1; }
+/* Fixed positioning keeps the floating palette clear of the rail's scroll clipping. */
+.floating-toolbox.icon-only-toolbox, .floating-toolbox.icon-only-toolbox.is-docked { display: flex; align-items: center; flex: 0 0 342px; width: 342px !important; height: 58px !important; min-height: 0; min-width: 0; max-width: calc(100vw - 16px); max-height: none; padding: 4px 6px; margin: 0; gap: 5px; overflow: visible; resize: none; border: 1px solid #ffffff30; border-radius: 7px; background: var(--workspace-banner-bg); }
+.floating-toolbox.icon-only-toolbox.is-docked { position: relative; left: auto; top: auto; box-shadow: none; }
+.floating-toolbox.icon-only-toolbox.is-floating { position: fixed; z-index: 50; box-shadow: 0 7px 20px #0b1c3a55, 0 0 0 1px #ffffff50; }
+.floating-toolbox.icon-only-toolbox .toolbox-drag-handle { position: static; flex: 0 0 16px; width: 16px; align-self: stretch; writing-mode: horizontal-tb; display: flex; align-items: center; justify-content: center; padding: 0; margin: 0; border: 0; background: transparent; border-radius: 4px; }
+.floating-toolbox.icon-only-toolbox .toolbox-drag-handle:hover { background: #ffffff12; }
+.floating-toolbox.icon-only-toolbox .toolbox-drag-handle .drag-grip { font-size: 21px; margin: 0; color: white; }
+.floating-toolbox.icon-only-toolbox .toolbox-body { flex: 1; min-width: 0; display: block; padding: 0; margin: 0; border-radius: 0; background: transparent; }
+.floating-toolbox.icon-only-toolbox .compact-tool-row { display: flex; flex-wrap: nowrap; justify-content: space-between; gap: 12px; margin: 0; }
+.floating-toolbox.icon-only-toolbox .compact-tool-row small { margin: 0 0 3px; font-size: 9px; line-height: 1.1; color: #e4eef5; }
+.floating-toolbox.icon-only-toolbox .tool-selector-grid, .floating-toolbox.icon-only-toolbox .compact-snap-buttons { display: flex; gap: 5px; margin: 0; }
+.floating-toolbox.icon-only-toolbox .tool-tile, .floating-toolbox.icon-only-toolbox .compact-snap-buttons button { width: 36px; height: 36px; min-height: 36px; padding: 7px; background: #f4f7fa; color: #30475b; border: 1px solid #d1dce5; border-radius: 5px; }
+.floating-toolbox.icon-only-toolbox .tool-tile .ui-icon, .floating-toolbox.icon-only-toolbox .compact-snap-buttons .ui-icon { color: inherit; width: 20px; height: 20px; }
+.floating-toolbox.icon-only-toolbox .tool-tile[aria-pressed="true"], .floating-toolbox.icon-only-toolbox .compact-snap-buttons button[aria-pressed="true"]:not(:disabled) { background: #d7f7f2; color: #00796f; border-color: #20d7c3; box-shadow: inset 0 0 0 1px #00a390; }
+.floating-toolbox.icon-only-toolbox .tool-tile[aria-disabled="true"] { opacity: .5; }
+.floating-toolbox.icon-only-toolbox .compact-snap-buttons button:disabled { opacity: .45; }
+.icon-dock-placeholder { flex: 0 0 342px; height: 58px; border: 2px dashed #48e7d2; border-radius: 7px; background: #2baf9d30; display: flex; justify-content: center; align-items: center; color: white; font-size: 12px; pointer-events: none; }
+.toolbar-session-status { position: absolute; top: calc(var(--measure-bar-height, 66px) * 1.25 + 8px); left: 310px; width: min(450px, calc(100% - 326px)); max-height: min(280px, 40dvh); overflow-y: auto; padding: 8px; background: #fff; border: 1px solid #a8d4c9; border-radius: 7px; box-shadow: 0 4px 15px #172d4020; font-size: 11px; }
+.toolbar-session-status .measuring-banner { display: none; }
+.toolbar-session-status .ready-tool-banner, .toolbar-session-status .tool-switch-notice, .toolbar-session-status .tool-calibration-help { margin: 0 0 6px; padding: 6px; }
+.toolbar-session-status .run-panel, .toolbar-session-status .area-panel, .toolbar-session-status .count-panel { margin: 0; padding: 8px; }
+.toolbar-session-status .run-panel > .length-note, .toolbar-session-status .area-panel > .length-note { display: none; }
+.toolbar-session-status .length-primary, .toolbar-session-status .area-primary { font-size: 22px; margin: 2px 0; }
+.toolbar-session-status .run-actions { display: flex; gap: 6px; margin-top: 6px; }
+.toolbar-session-status .run-actions button { flex: 1; padding: 6px; font-size: 11px; }
+.toolbar-session-status .run-finish, .toolbar-session-status .area-finish { padding: 7px 14px; }
+.rates-panel { padding: 16px 4px; }
+.rates-panel h2 { margin-top: 0; }
+.rates-panel > p { color: #62788c; font-size: 13px; line-height: 1.6; }
+@media(max-width: 800px) {
+  .measure-toolbar-rail { gap: 16px; padding: 0 10px; }
+  .toolbar-session-status { left: 12px; width: min(450px, calc(100% - 24px)); }
+}
+@media(max-width: 400px) {
+  .floating-toolbox.icon-only-toolbox .compact-tool-row { gap: 8px; }
+  .floating-toolbox.icon-only-toolbox .tool-selector-grid, .floating-toolbox.icon-only-toolbox .compact-snap-buttons { gap: 4px; }
+  .floating-toolbox.icon-only-toolbox .tool-tile, .floating-toolbox.icon-only-toolbox .compact-snap-buttons button { width: 32px; height: 32px; min-height: 32px; padding: 5px; }
+}
+
+/* Centred navigation and a compact description/measurement panel. */
+.topbar { display: grid; grid-template-columns: minmax(0, 1fr) max-content minmax(0, 1fr); align-items: center; column-gap: 16px; }
+.topbar > .brand-and-project { grid-column: 1; min-width: 0; justify-self: start; max-width: 100%; }
+.topbar > .top-navigation { grid-column: 2; justify-self: center; justify-content: center; width: max-content; max-width: 100%; margin: 0; height: 100%; }
+.topbar > .file-actions { grid-column: 3; justify-self: end; margin: 0; max-width: 100%; }
+.measure-toolbar-shell .measure-toolbar-rail { position: relative; display: block; padding: 0; overflow: visible; }
+.toolbar-fixed-settings { position: absolute; left: 50%; top: 0; transform: translateX(-50%); height: 100%; display: flex; align-items: center; justify-content: center; gap: 32px; width: max-content; max-width: calc(100% - 24px); }
+.toolbar-fixed-settings > .toolbar-fixed-control { margin: 0; flex-shrink: 0; color: #d3e2ed; font-size: 11px; font-weight: 600; }
+.toolbar-fixed-settings > .toolbox-height { display: block; width: 140px; }
+.toolbar-fixed-settings .toolbox-height > div { display: flex; align-items: center; gap: 7px; margin-top: 4px; }
+.toolbar-fixed-settings .toolbox-height input { width: 110px; min-width: 0; height: 29px; margin: 0; padding: 2px 7px; border: 1px solid #ffffff38; border-radius: 5px; background: #ffffff0c; color: white; font-size: 18px; font-weight: 800; }
+.toolbar-fixed-settings .toolbox-height > div > span { padding: 0; color: white; font-size: 12px; }
+.toolbar-fixed-settings > .compact-snap-source { width: 220px; display: grid; grid-template-columns: 1fr; gap: 3px; }
+.toolbar-fixed-settings .compact-snap-source select { width: 100%; min-height: 25px; margin: 0; padding: 3px 6px; border: 1px solid #ffffff3b; border-radius: 5px; color: #173246; background: #eef4f8; font-size: 11px; }
+.toolbar-fixed-settings .compact-snap-source span { color: #ccdce8; font-size: 9px; line-height: 1; }
+.floating-toolbox.icon-only-toolbox.description-toolbox, .floating-toolbox.icon-only-toolbox.description-toolbox.is-docked { display: flex; flex-direction: column; align-items: stretch; width: max-content !important; min-width: min(310px, calc(100vw - 16px)); max-width: min(500px, calc(100vw - 16px)); height: auto !important; padding: 6px 8px; gap: 5px; cursor: grab; touch-action: none; }
+.floating-toolbox.icon-only-toolbox.description-toolbox:active { cursor: grabbing; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.is-docked { position: absolute; top: 1px; left: 12px; right: auto; padding: 3px 8px; gap: 3px; height: 64px !important; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.is-docked[data-dock-slot="3"] { left: auto; right: 12px; }
+.floating-toolbox.icon-only-toolbox.description-toolbox .toolbox-body { width: 100%; flex: none; }
+.floating-toolbox.icon-only-toolbox.description-toolbox .toolbar-description { display: block; flex: none; align-self: flex-start; width: fit-content; min-width: 0; max-width: 100%; margin: 0; }
+.floating-toolbox.icon-only-toolbox.description-toolbox .toolbar-description > summary { width: fit-content; max-width: 100%; cursor: pointer; color: #d9e4ec; border-bottom: 2px solid #25d6cb; background: #ffffff05; border-radius: 3px 3px 0 0; padding: 1px 4px 3px; }
+.floating-toolbox.icon-only-toolbox.description-toolbox .toolbar-description > summary strong { display: flex; align-items: center; justify-content: flex-start; gap: 10px; padding: 0; font-size: 15px; font-weight: 600; line-height: 20px; color: #3ce1d7; overflow-wrap: anywhere; }
+.floating-toolbox.icon-only-toolbox.description-toolbox .toolbar-description > summary strong span { font-size: 12px; color: #3ce1d7; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.is-docked .toolbar-description > summary { padding: 0 3px 1px; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.is-docked .toolbar-description > summary strong { font-size: 14px; line-height: 18px; white-space: nowrap; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.is-docked .compact-tool-row small { display: none; }
+.floating-toolbox.icon-only-toolbox.description-toolbox .tool-tile, .floating-toolbox.icon-only-toolbox.description-toolbox .compact-snap-buttons button { cursor: pointer; touch-action: manipulation; }
+.floating-toolbox.icon-only-toolbox.description-toolbox .description-popover { position: fixed; z-index: 90; width: min(720px, calc(100vw - 16px)); min-width: 0; max-width: calc(100vw - 16px); max-height: none; padding: 10px; margin: 0; overflow: visible; background: var(--workspace-banner-bg); color: #d9e4ec; border: 1px solid #4e697d; border-radius: 8px; box-shadow: 0 8px 25px #07152666; cursor: default; touch-action: auto; }
+.description-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.floating-toolbox.icon-only-toolbox.description-toolbox .description-options button { display: block; width: 100%; padding: 8px 10px; min-height: 36px; border: 0; border-bottom: 3px solid transparent; border-radius: 3px; background: transparent; color: #d9e4ec; font-size: 12px; font-weight: 500; text-align: left; white-space: normal; line-height: 1.3; }
+.floating-toolbox.icon-only-toolbox.description-toolbox .description-options button:hover { background: #ffffff0c; color: white; }
+.floating-toolbox.icon-only-toolbox.description-toolbox .description-options button[aria-checked="true"] { background: #ffffff08; color: #3ce1d7; border-bottom-color: #25d6cb; font-size: 13px; }
+.floating-toolbox.icon-only-toolbox.description-toolbox .description-popover .custom-category-toggle { margin: 8px 0 0; padding: 5px; color: #72e9dd; font-size: 12px; background: transparent; border: 0; }
+.floating-toolbox.icon-only-toolbox.description-toolbox .description-popover .toolbox-custom { display: block; margin-top: 7px; color: #d9e4ec; }
+.floating-toolbox.icon-only-toolbox.description-toolbox .description-popover .toolbox-custom[hidden] { display: none; }
+.floating-toolbox.icon-only-toolbox.description-toolbox .description-popover input { width: 100%; display: block; height: 34px; padding: 7px 9px; margin: 5px 0 0; border: 1px solid #607c90; border-radius: 5px; background: #fff; color: #163047; }
+.measure-toolbar-shell:has(.toolbar-description[open]) { z-index: 80; }
+.icon-dock-placeholder { position: absolute; top: 1px; left: 12px; width: 342px; height: 64px; }
+.icon-dock-placeholder[data-preview-slot="3"] { left: auto; right: 12px; }
+.toolbar-session-status { top: calc(var(--measure-bar-height, 66px) + 8px); }
+@media(max-width: 1250px) {
+  .topbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto 43px; height: auto; min-height: 66px; flex: 0 0 auto; padding: 8px 14px 0; gap: 4px 12px; }
+  .topbar > .brand-and-project { grid-column: 1; grid-row: 1; }
+  .topbar > .file-actions { grid-column: 2; grid-row: 1; }
+  .topbar > .top-navigation { grid-column: 1 / -1; grid-row: 2; width: max-content; max-width: 100%; height: 43px; justify-content: center; justify-content: safe center; }
+}
+@media(max-width: 600px) {
+  .toolbar-fixed-settings { gap: 12px; max-width: calc(100% - 16px); }
+  .toolbar-fixed-settings > .toolbox-height { width: 110px; }
+  .toolbar-fixed-settings .toolbox-height input { width: 80px; font-size: 16px; }
+  .toolbar-fixed-settings > .compact-snap-source { width: 180px; }
+  .description-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .floating-toolbox.icon-only-toolbox.description-toolbox .description-options button { padding: 7px; font-size: 11px; }
+}
+.floating-toolbox.icon-only-toolbox.description-toolbox.is-docked, .icon-dock-placeholder { top: calc((var(--measure-bar-height, 66px) - 64px) / 2); }

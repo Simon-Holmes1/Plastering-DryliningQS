@@ -53,7 +53,7 @@ type WorkCategory = { id: string; name: string; color: string; mode: 'measure' |
 type CountMeasurement = { id: string; name?: string; groupId?: string; categoryId?: string; point: Point; locked: boolean }
 type MeasurementKind = 'length' | 'run' | 'area' | 'point'
 
-type UiIconName = 'file' | 'save' | 'import' | 'length' | 'run' | 'area' | 'point' | 'check' | 'work' | 'summary' | 'lock' | 'unlock' | 'mixed-lock'
+type UiIconName = 'file' | 'save' | 'import' | 'length' | 'run' | 'area' | 'point' | 'check' | 'work' | 'summary' | 'lock' | 'unlock' | 'mixed-lock' | 'snap' | 'endpoint' | 'midpoint'
 const uiIconPaths: Record<UiIconName, string> = {
   file: 'M6 3h8l4 4v14H6z M14 3v5h5 M9 12h6 M9 16h6',
   save: 'M5 3h12l3 3v15H4V3z M8 3v6h8V3 M8 21v-8h8v8',
@@ -65,6 +65,9 @@ const uiIconPaths: Record<UiIconName, string> = {
   check: 'M5 12l4 4L19 6',
   work: 'M4 5h2 M10 5h10 M4 12h2 M10 12h10 M4 19h2 M10 19h10',
   summary: 'M4 20V4 M4 20h17 M9 16v-4 M14 16V8 M19 16V5',
+  snap: 'M5 4v8a7 7 0 0 0 14 0V4h-4v8a3 3 0 0 1-6 0V4z M5 8h4 M15 8h4',
+  endpoint: 'M5 19L19 5 M3 17h4v4H3z M17 3h4v4h-4z',
+  midpoint: 'M3 19L21 5 M12 8l4 4-4 4-4-4z',
   lock: 'M7 10V7a5 5 0 0 1 10 0v3 M5 10h14v11H5z M12 14v3',
   unlock: 'M7 10V7a5 5 0 0 1 9-3 M5 10h14v11H5z M12 14v3',
   'mixed-lock': 'M7 10V7a5 5 0 0 1 10 0v3 M5 10h14v11H5z M9 16h6',
@@ -433,6 +436,41 @@ function nearestSnap(point: Point, indices: SnapIndex[], tolerance: number, endp
   return best
 }
 
+function heightInMm(text: string) { return text === '' ? '' : Number.isFinite(Number(text)) ? String(Math.round(Number(text)*1000000)/1000) : text }
+function heightFromMm(text: string) { return text === '' ? '' : Number.isFinite(Number(text)) ? String(Number(text)/1000) : text }
+
+type SelectedEditPoint = { id: string; kind: MeasurementKind; index: number; page: number }
+
+function orthogonalPoint(point: Point, anchor: Point): Point {
+  return Math.abs(point.x-anchor.x) >= Math.abs(point.y-anchor.y) ? { x:point.x, y:anchor.y } : { x:anchor.x, y:point.y }
+}
+
+function polygonLabelPoint(points: Point[]): Point {
+  if (!points.length) return {x:0,y:0}
+  const inside = (p: Point) => {
+    let result=false
+    for (let i=0,j=points.length-1;i<points.length;j=i++) {
+      const a=points[i],b=points[j]
+      if ((a.y>p.y)!==(b.y>p.y) && p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x) result=!result
+    }
+    return result
+  }
+  const origin=points[0];let weight=0,cx=0,cy=0
+  for(let i=0;i<points.length;i++) { const a=points[i],b=points[(i+1)%points.length],cross=(a.x-origin.x)*(b.y-origin.y)-(b.x-origin.x)*(a.y-origin.y);weight+=cross;cx+=(a.x+b.x-2*origin.x)*cross;cy+=(a.y+b.y-2*origin.y)*cross }
+  const centroid=Math.abs(weight)>1e-9 ? {x:origin.x+cx/(3*weight),y:origin.y+cy/(3*weight)} : origin
+  if (inside(centroid)) return centroid
+  const ys=[...new Set(points.map(p=>p.y))].sort((a,b)=>a-b)
+  let best=origin,bestWidth=-1
+  for(let n=1;n<ys.length;n++) {
+    const y=(ys[n-1]+ys[n])/2,xs:number[]=[]
+    for(let i=0;i<points.length;i++){const a=points[i],b=points[(i+1)%points.length];if((a.y>y)!==(b.y>y))xs.push(a.x+(y-a.y)*(b.x-a.x)/(b.y-a.y))}
+    xs.sort((a,b)=>a-b)
+    for(let i=1;i<xs.length;i+=2)if(xs[i]-xs[i-1]>bestWidth){bestWidth=xs[i]-xs[i-1];best={x:(xs[i]+xs[i-1])/2,y}}
+  }
+  return best
+}
+
+
 function SummaryDrawingPreview({ pdf, number, rotation, lengths, runs, areas, counts, colorFor, appearanceFor, preparePage }: {
   pdf: PdfDoc; number: number; rotation: number; lengths: LengthMeasurement[]; runs: RunMeasurement[];
   areas: AreaMeasurement[]; counts: Array<CountMeasurement & { previewColor?: string }>; colorFor: (groupId: string | undefined, fallback: string) => string;
@@ -512,11 +550,34 @@ function SummaryDrawingPreview({ pdf, number, rotation, lengths, runs, areas, co
 export default function App() {
   useEffect(() => { document.title = 'Holmes QS' }, [])
   const [jobPanelOpen, setJobPanelOpen] = useState(false)
-  const [toolboxOpen, setToolboxOpen] = useState(false)
+  const [toolboxOpen, setToolboxOpen] = useState(true)
   const [toolboxPosition, setToolboxPosition] = useState<Point>({ x: 310, y: 18 })
+  const [toolboxDocked,setToolboxDocked]=useState(true)
+  const [dockHover,setDockHover]=useState(false)
+  const [iconDockSlot,setIconDockSlot]=useState(0)
+  const [dockPreviewSlot,setDockPreviewSlot]=useState(0)
+  const [toolbarOrigin,setToolbarOrigin]=useState<Point>({x:0,y:66})
+  const [toolbarBarHeight,setToolbarBarHeight]=useState(66)
+  const toolbarHeaderRef=useRef<HTMLElement | null>(null)
+  const [descriptionPosition,setDescriptionPosition]=useState<Point>({x:12,y:150})
+  const fixedToolbarSettingsRef=useRef<HTMLDivElement | null>(null)
+  const descriptionMenuRef=useRef<HTMLDivElement | null>(null)
+  const descriptionSummaryRef=useRef<HTMLElement | null>(null)
+  const toolbarControlRefs=useRef<Array<HTMLElement | null>>([])
+  const dockBoundariesRef=useRef<number[] | null>(null)
+  const dockZoneRef=useRef<HTMLDivElement | null>(null)
+  const [descriptionOpen,setDescriptionOpen]=useState(false)
+  const [isolatedMeasurementId,setIsolatedMeasurementId]=useState<string | null>(null)
+  const [duplicateRequest,setDuplicateRequest]=useState<{ids:string[];page:number;title:string;categoryId:string} | null>(null)
+  const [duplicatePage,setDuplicatePage]=useState(1)
+  const [duplicateKeepDescription,setDuplicateKeepDescription]=useState(true)
+  const [duplicateCategoryId,setDuplicateCategoryId]=useState('')
+  const [duplicateError,setDuplicateError]=useState('')
+  const [duplicating,setDuplicating]=useState(false)
+  const duplicateBusyRef=useRef(false)
   const toolboxRef = useRef<HTMLDivElement | null>(null)
   const workspaceRef = useRef<HTMLElement | null>(null)
-  const toolboxDragRef = useRef<{ id: number; x: number; y: number; origin: Point } | null>(null)
+  const toolboxDragRef = useRef<{ id: number; x: number; y: number; origin: Point; moved: boolean } | null>(null)
   const [snapEnabled, setSnapEnabled] = useState(false)
   const [snapSource, setSnapSource] = useState<'both' | 'pdf' | 'measure'>('both')
   const [snapEndpoints, setSnapEndpoints] = useState(true)
@@ -529,7 +590,12 @@ export default function App() {
   const [overviewDrawing, setOverviewDrawing] = useState(false)
   const [groupHeightDrafts, setGroupHeightDrafts] = useState<Record<string, string>>({})
   const [workMenu, setWorkMenu] = useState<{ groupId: string; x: number; y: number; scopePage?: number } | null>(null)
-  const [measurementMenu, setMeasurementMenu] = useState<{ id: string; kind: MeasurementKind; x: number; y: number } | null>(null)
+  const [measurementMenu, setMeasurementMenu] = useState<{ id: string; kind: MeasurementKind; x: number; y: number; pointIndex?: number } | null>(null)
+  const shiftHeldRef = useRef(false)
+  const [selectedEditPoint, setSelectedEditPoint] = useState<SelectedEditPoint | null>(null)
+  const [customFieldOpen, setCustomFieldOpen] = useState(false)
+  const [pageDeletePrompt, setPageDeletePrompt] = useState<{number:number;source:number;page:number;name:string;x:number;y:number} | null>(null)
+  const countSessionIdsRef = useRef<string[]>([])
   const [toolCustomName, setToolCustomName] = useState('')
   const [toolSwitchNotice, setToolSwitchNotice] = useState('')
   const lastMeasureToolRef = useRef<MeasurementKind>('run')
@@ -634,7 +700,7 @@ export default function App() {
   const [countMode, setCountMode] = useState(false)
   const [hiddenGroupIds, setHiddenGroupIds] = useState<string[]>([])
   const [showUngrouped, setShowUngrouped] = useState(true)
-  const [sidebarTab, setSidebarTab] = useState<'measure' | 'groups' | 'summary' | 'materials'>('measure')
+  const [sidebarTab, setSidebarTab] = useState<'measure' | 'groups' | 'summary' | 'rates' | 'materials'>('measure')
   const [newCategoryName, setNewCategoryName] = useState('')
   const [newCategoryColor, setNewCategoryColor] = useState('#0891b2')
   const [newCategoryMode, setNewCategoryMode] = useState<'measure' | 'count'>('measure')
@@ -730,6 +796,9 @@ export default function App() {
     setMeasurementMenu(null)
     setWorkMenu(null)
     setToolCustomName('')
+    setIsolatedMeasurementId(null);setDuplicateRequest(null)
+    setSelectedEditPoint(null)
+    setPageDeletePrompt(null)
     setToolSwitchNotice('')
     setShowCalibrationWarning(false)
     setHeightPromptOpen(false)
@@ -986,6 +1055,7 @@ export default function App() {
   }
 
   function goToDrawingPage(number: number) {
+    setIsolatedMeasurementId(null)
     if (!pdf || fileBusyRef.current || number < 1 || number > drawingPages.length) return
     stopMeasurement()
     setPageNumber(number); setViewMode('fit-page'); setPan({ x: 0, y: 0 })
@@ -995,12 +1065,12 @@ export default function App() {
     setMeasurementMenu(null); setWorkMenu(null)
   }
 
-  function deleteDrawingPage(number: number) {
+  function deleteDrawingPage(number: number, confirmed = false) {
     if (fileBusyRef.current || !drawingPages[number - 1]) return
     if (drawingPages.length <= 1) { setStatus('Keep at least one drawing page. Import another page before removing this one.'); return }
     if (hasDraft) { setStatus('Finish or stop measuring before deleting a drawing page.'); return }
     const members = [...(lengthMeasurements[number] ?? []), ...(runMeasurements[number] ?? []), ...(areaMeasurements[number] ?? []), ...(countMeasurements[number] ?? [])]
-    if (!window.confirm(`Delete "${drawingPageName(number)}"? Its ${members.length} measurements and calibration will also be removed. Other pages will be kept.`)) return
+    if (!confirmed && !window.confirm(`Delete "${drawingPageName(number)}"? Its ${members.length} measurements and calibration will also be removed. Other pages will be kept.`)) return
     stopMeasurement()
     const pages = drawingPages.filter((_, index) => index !== number - 1)
     const nextPdf = drawingSet(drawingSources, pages)
@@ -1021,6 +1091,20 @@ export default function App() {
     setViewMode('fit-page'); setPan({ x: 0, y: 0 })
     setMeasurementMenu(null); setWorkMenu(null)
     setStatus('Drawing page deleted. Remaining pages keep their names, calibration and measurements.')
+  }
+
+  function requestPageDelete(number: number, target: HTMLElement) {
+    if (drawingPages.length<=1 || hasDraft || fileBusyRef.current) return
+    const page=drawingPages[number-1], rect=target.getBoundingClientRect()
+    if (!page) return
+    const width=window.innerWidth || 1200,height=window.innerHeight || 800
+    setPageDeletePrompt({number,source:page.source,page:page.page,name:page.name,x:Math.max(8,Math.min(rect.right+8,width-270)),y:Math.max(8,Math.min(rect.top,height-180))})
+  }
+  function confirmPageDelete() {
+    if (!pageDeletePrompt) return
+    const page=drawingPages[pageDeletePrompt.number-1]
+    if (page?.source===pageDeletePrompt.source && page.page===pageDeletePrompt.page) deleteDrawingPage(pageDeletePrompt.number,true)
+    setPageDeletePrompt(null)
   }
 
   function measurementToolHelp() {
@@ -1092,17 +1176,15 @@ export default function App() {
   function previousPage() {
     if (!pdf || pageNumber <= 1 || runMode || areaMode) return
 
-    setPageNumber((current) => current - 1)
-    setViewMode('fit-page')
-    setPan({ x: 0, y: 0 })
+    if(sidebarTab==='groups') {goToDrawingPage(pageNumber-1);return}
+    setPageNumber(current=>current-1);setViewMode('fit-page');setPan({x:0,y:0})
   }
 
   function nextPage() {
     if (!pdf || pageNumber >= pdf.numPages || runMode || areaMode) return
 
-    setPageNumber((current) => current + 1)
-    setViewMode('fit-page')
-    setPan({ x: 0, y: 0 })
+    if(sidebarTab==='groups') {goToDrawingPage(pageNumber+1);return}
+    setPageNumber(current=>current+1);setViewMode('fit-page');setPan({x:0,y:0})
   }
 
   function handleZoomSlider(value: string) {
@@ -1115,6 +1197,8 @@ export default function App() {
   }
 
   function startPan(event: React.PointerEvent<HTMLElement>) {
+    setSelectedEditPoint(null);setDescriptionOpen(false)
+    readShift(event)
     if (!pdf || event.button !== 0) return
 
     panStartRef.current = {
@@ -1177,6 +1261,7 @@ export default function App() {
   }
 
   function endPan(event: React.PointerEvent<HTMLElement>) {
+    readShift(event)
     const start = panStartRef.current
 
     if (!start.active || start.pointerId !== event.pointerId) return
@@ -1225,7 +1310,7 @@ export default function App() {
       viewportRef.current.convertToPdfPoint(viewportX, viewportY)
 
     const point = { x: pdfX, y: pdfY }
-    return snapForPoint(point) ?? point
+    return resolvedPlacementPoint(point).point
   }
 
   const measurementSnapIndex = useMemo(() => {
@@ -1249,14 +1334,38 @@ export default function App() {
     if (snapSource !== 'pdf') indices.push(measurementSnapIndex)
     return nearestSnap(point, indices, 10 / Math.max(scale, 0.01), snapEndpoints, snapMidpoints)
   }
+  function constraintAnchor(): Point | null {
+    const lengthDrag=lengthDragRef.current
+    if (lengthDrag.point && lengthDrag.measurementId) { const item=(lengthMeasurements[pageNumber] ?? []).find(item=>item.id===lengthDrag.measurementId);return item ? lengthDrag.point==='A' ? item.pointB : item.pointA : null }
+    const runDrag=runDragRef.current
+    if (runDrag) {const item=(runMeasurements[pageNumber] ?? []).find(item=>item.id===runDrag.runId);return item?.points[runDrag.pointIndex>0 ? runDrag.pointIndex-1 : 1] ?? null}
+    const areaDrag=areaDragRef.current
+    if (areaDrag) {const item=(areaMeasurements[pageNumber] ?? []).find(item=>item.id===areaDrag.areaId);return item?.points[areaDrag.pointIndex>0 ? areaDrag.pointIndex-1 : 1] ?? null}
+    if (calibrationDragRef.current.point) { const item=pendingCalibration ?? calibrations[pageNumber];return item ? calibrationDragRef.current.point==='A' ? item.pointB : item.pointA : null }
+    if (runMode) return runPoints.at(-1) ?? null
+    if (areaMode) return areaPoints.at(-1) ?? null
+    if (lengthMode) return lengthPoints[0] ?? null
+    if (calibrationMode) return calibrationPoints[0] ?? null
+    return null
+  }
+  function resolvedPlacementPoint(point: Point) {
+    const anchor=shiftHeldRef.current ? constraintAnchor() : null
+    const constrained=anchor ? orthogonalPoint(point,anchor) : point
+    let snap=snapForPoint(constrained)
+    if (anchor && snap && Math.hypot(snap.x-orthogonalPoint(snap,anchor).x,snap.y-orthogonalPoint(snap,anchor).y)>1e-7) snap=null
+    return {point:snap ?? constrained,snap}
+  }
+  function readShift(event: {shiftKey?:boolean}) { if (event.shiftKey!==undefined) shiftHeldRef.current=event.shiftKey }
+
   function previewSnap(event: React.PointerEvent<HTMLElement>) {
+    readShift(event)
     if (!snapEnabled || panStartRef.current.active || !(lengthMode || runMode || areaMode || countMode || calibrationMode || readyToolKind)) { setSnapPreview(null); return }
     if (!drawingRef.current || !viewportRef.current) return
     const rect = drawingRef.current.getBoundingClientRect()
     const x=event.clientX-rect.left, y=event.clientY-rect.top
     if (x<0 || y<0 || x>rect.width || y>rect.height) { setSnapPreview(null); return }
     const [pdfX,pdfY]=viewportRef.current.convertToPdfPoint(x,y)
-    setSnapPreview(snapForPoint({ x:pdfX, y:pdfY }))
+    setSnapPreview(resolvedPlacementPoint({ x:pdfX, y:pdfY }).snap)
   }
   useEffect(() => { setSnapPreview(null) }, [pdf, pageNumber, scale, rotation, snapEnabled, snapSource, snapEndpoints, snapMidpoints, lengthMode, runMode, areaMode, countMode, calibrationMode])
 
@@ -1269,29 +1378,104 @@ export default function App() {
     return { x: Math.max(8, Math.min(position.x, bounds.width-box.width-8)), y: Math.max(8, Math.min(position.y, bounds.height-Math.min(box.height, bounds.height-16)-8)) }
   }
   useEffect(() => {
-    if (!toolboxOpen || !workspaceRef.current) return
+    if (sidebarTab !== 'measure' || toolboxDocked || !workspaceRef.current) return
     const resize=() => setToolboxPosition((position) => { const next=clampToolbox(position); return next.x === position.x && next.y === position.y ? position : next })
     resize()
     const observer=new ResizeObserver(resize)
     observer.observe(workspaceRef.current)
     if (toolboxRef.current) observer.observe(toolboxRef.current)
     return () => observer.disconnect()
-  }, [toolboxOpen])
+  }, [toolboxOpen,sidebarTab,toolboxDocked])
+  useEffect(()=>{
+    if(sidebarTab!=='measure' || !workspaceRef.current) return
+    const update=()=>{const header=toolbarHeaderRef.current?.getBoundingClientRect();if(header?.height)setToolbarBarHeight(current=>Math.abs(current-header.height)<0.5 ? current : header.height);const rect=workspaceRef.current?.getBoundingClientRect();if(rect)setToolbarOrigin(current=>current.x===(rect.left ?? 0) && current.y===(rect.top ?? 0) ? current : {x:rect.left ?? 0,y:rect.top ?? 0})}
+    update();const observer=new ResizeObserver(update);observer.observe(workspaceRef.current);if(toolbarHeaderRef.current)observer.observe(toolbarHeaderRef.current)
+    window.addEventListener('resize',update)
+    return ()=>{observer.disconnect();window.removeEventListener('resize',update)}
+  },[sidebarTab])
+  function toolbarDockCandidate(clientX: number,clientY: number): number | null {
+    const bounds=dockZoneRef.current?.getBoundingClientRect()
+    if(!bounds || clientX<bounds.left || clientX>bounds.right || clientY<bounds.top || clientY>bounds.bottom) return null
+    const center=(bounds.left+bounds.right)/2,settings=fixedToolbarSettingsRef.current?.getBoundingClientRect()
+    const left=settings?.left ?? center-196,right=settings?.right ?? center+196,width=toolboxRef.current?.getBoundingClientRect().width ?? 342
+    if(clientX<left-8 && left-bounds.left>=width+24) return 0
+    if(clientX>right+8 && bounds.right-right>=width+24) return 3
+    return null
+  }
   function startToolboxDrag(event: React.PointerEvent<HTMLDivElement>) {
-    if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return
-    toolboxDragRef.current={ id:event.pointerId, x:event.clientX, y:event.clientY, origin:toolboxPosition }
-    event.currentTarget.setPointerCapture(event.pointerId)
-    event.preventDefault()
+    if(event.button!==0 || (event.target as Element).closest('button,summary,input,select,textarea,a,[contenteditable="true"],[data-no-drag]')) return
+    const workspace=workspaceRef.current?.getBoundingClientRect(),box=toolboxRef.current?.getBoundingClientRect()
+    const origin=toolboxDocked && workspace && box ? {x:box.left-workspace.left,y:box.top-workspace.top} : toolboxPosition
+    if(workspace)setToolbarOrigin({x:workspace.left ?? 0,y:workspace.top ?? 0})
+    setDockHover(false);setDescriptionOpen(false)
+    toolboxDragRef.current={id:event.pointerId,x:event.clientX,y:event.clientY,origin,moved:false}
+    event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault()
   }
   function moveToolboxDrag(event: React.PointerEvent<HTMLDivElement>) {
     const drag=toolboxDragRef.current
-    if (!drag || drag.id !== event.pointerId) return
-    setToolboxPosition(clampToolbox({ x:drag.origin.x+event.clientX-drag.x, y:drag.origin.y+event.clientY-drag.y }))
+    if(!drag || drag.id!==event.pointerId) return
+    if(!drag.moved && Math.hypot(event.clientX-drag.x,event.clientY-drag.y)<4) return
+    drag.moved=true;setToolboxDocked(false)
+    setToolboxPosition(clampToolbox({x:drag.origin.x+event.clientX-drag.x,y:drag.origin.y+event.clientY-drag.y}))
+    const slot=toolbarDockCandidate(event.clientX,event.clientY)
+    setDockHover(slot!==null);if(slot!==null)setDockPreviewSlot(slot)
   }
   function endToolboxDrag(event: React.PointerEvent<HTMLDivElement>) {
-    toolboxDragRef.current=null
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    const drag=toolboxDragRef.current
+    if(!drag || drag.id!==event.pointerId) return
+    const slot=drag.moved && event.type!=='pointercancel' ? toolbarDockCandidate(event.clientX,event.clientY) : null
+    if(slot!==null) {setIconDockSlot(slot);setToolboxDocked(true)}
+    setDockHover(false);toolboxDragRef.current=null
+    if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId)
   }
+  function moveIconToolbarWithKeys(event: React.KeyboardEvent<HTMLDivElement>) {
+    if(event.target!==event.currentTarget) return
+    if(event.key==='Enter') {event.preventDefault();event.stopPropagation();setToolboxDocked(true);setDockHover(false);return}
+    if(toolboxDocked && (event.key==='ArrowLeft' || event.key==='ArrowRight')) {event.preventDefault();setIconDockSlot(event.key==='ArrowLeft' ? 0 : 3);return}
+    const delta: Record<string,Point>={ArrowLeft:{x:-20,y:0},ArrowRight:{x:20,y:0},ArrowUp:{x:0,y:-20},ArrowDown:{x:0,y:20}}
+    if(delta[event.key]) {event.preventDefault();setToolboxDocked(false);setToolboxPosition(position=>clampToolbox({x:position.x+delta[event.key].x,y:position.y+delta[event.key].y}))}
+  }
+  // Dock only into a clear end of the bar; the centred settings never have to shift.
+  useEffect(()=>{
+    if(sidebarTab!=='measure' || !toolboxDocked || !dockZoneRef.current) return
+    const check=()=>{
+      const bar=dockZoneRef.current?.getBoundingClientRect(),settings=fixedToolbarSettingsRef.current?.getBoundingClientRect(),box=toolboxRef.current?.getBoundingClientRect()
+      if(!bar || !settings || !box) return
+      const space=iconDockSlot===3 ? bar.right-settings.right : settings.left-bar.left
+      if(space<box.width+24) {setToolboxDocked(false);setToolboxPosition({x:12,y:bar.height+12})}
+    }
+    check();const observer=new ResizeObserver(check);observer.observe(dockZoneRef.current);if(fixedToolbarSettingsRef.current)observer.observe(fixedToolbarSettingsRef.current);if(toolboxRef.current)observer.observe(toolboxRef.current)
+    return ()=>observer.disconnect()
+  },[sidebarTab,toolboxDocked,iconDockSlot])
+  function positionDescriptionMenu(target: HTMLElement) {
+    const rect=target.getBoundingClientRect(),width=window.innerWidth || 1200,height=window.innerHeight || 800
+    const menu=descriptionMenuRef.current?.getBoundingClientRect(),menuWidth=menu?.width || Math.min(720,width-16),menuHeight=menu?.height || 220
+    const below=rect.bottom+8,above=rect.top-menuHeight-8
+    setDescriptionPosition({x:Math.max(8,Math.min(rect.left,width-menuWidth-8)),y:Math.max(8,below+menuHeight<=height-8 ? below : above>=8 ? above : height-menuHeight-8)})
+  }
+  useEffect(()=>{
+    if(!descriptionOpen || !descriptionMenuRef.current) return
+    const update=()=>{if(descriptionSummaryRef.current)positionDescriptionMenu(descriptionSummaryRef.current)}
+    update();const observer=new ResizeObserver(update);observer.observe(descriptionMenuRef.current)
+    return ()=>observer.disconnect()
+  },[descriptionOpen,customFieldOpen,categories.length])
+  function descriptionMenuKeys(event: React.KeyboardEvent<HTMLDivElement>) {
+    if((event.target as Element).closest('input')) return
+    const buttons=Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')),index=buttons.indexOf(event.target as HTMLButtonElement)
+    if(['ArrowDown','ArrowRight','ArrowUp','ArrowLeft','Home','End'].includes(event.key)) {
+      event.preventDefault();const next=event.key==='Home' ? 0 : event.key==='End' ? buttons.length-1 : index<0 ? 0 : (index+(event.key==='ArrowUp'||event.key==='ArrowLeft' ? -1 : 1)+buttons.length)%buttons.length
+      buttons[next]?.focus()
+    }
+    if(event.key==='Escape') {event.preventDefault();event.stopPropagation();setDescriptionOpen(false);descriptionSummaryRef.current?.focus()}
+  }
+  useEffect(()=>{
+    if(!descriptionOpen) return
+    const outside=(event: PointerEvent)=>{if(!(event.target as Element | null)?.closest('.toolbar-description'))setDescriptionOpen(false)}
+    const close=()=>setDescriptionOpen(false)
+    const escape=(event: KeyboardEvent)=>{if(event.key==='Escape')close()}
+    window.addEventListener('pointerdown',outside);window.addEventListener('resize',close);window.addEventListener('keydown',escape)
+    return ()=>{window.removeEventListener('pointerdown',outside);window.removeEventListener('resize',close);window.removeEventListener('keydown',escape)}
+  },[descriptionOpen])
 
   function updateCalibrationPoint(which: 'A' | 'B', point: Point) {
     if (pendingCalibration) {
@@ -1369,6 +1553,7 @@ export default function App() {
   function moveCalibrationHandle(
     event: React.PointerEvent<SVGCircleElement>
   ) {
+    readShift(event)
     const drag = calibrationDragRef.current
     if (!drag.point || drag.pointerId !== event.pointerId) return
 
@@ -1538,6 +1723,7 @@ export default function App() {
   }
 
   function stopMeasurement() {
+    setSelectedEditPoint(null)
     if (runMode) {
       if (runPoints.length >= 2 && hasValidCalibration()) finishRun({ allowHeightDraft: true })
       else cancelRun()
@@ -1558,6 +1744,9 @@ export default function App() {
   }
 
   function navigateWorkspace(tab: typeof sidebarTab) {
+    toolboxDragRef.current=null;dockBoundariesRef.current=null;setDockHover(false)
+    setIsolatedMeasurementId(null);setDescriptionOpen(false)
+    if (tab==='measure') setToolboxOpen(true)
     stopMeasurement()
     setSidebarTab(tab)
     if (tab === 'groups' || tab === 'summary') {
@@ -1570,6 +1759,7 @@ export default function App() {
   function closeMeasureToolbox() { stopMeasurement(); setToolboxOpen(false) }
 
   function startToolMeasurement(kind: MeasurementKind) {
+    setSelectedEditPoint(null)
     if (!pdf || queuedStart || !hasValidCalibration() || calibrationMode || pendingCalibration || toolHeightInvalid) return
     if (currentToolKind() === kind) return
     if (!finishToolBeforeSwitch()) return
@@ -1731,6 +1921,7 @@ export default function App() {
   }
 
   function startCounting() {
+    countSessionIdsRef.current=[]
     if (!pdf || hasDraft) return
     setReadyToolKind(null)
     let groupId = activeCategory?.mode === 'count' ? activeGroup!.id
@@ -1754,9 +1945,10 @@ export default function App() {
     if ((!countMode && readyToolKind !== 'point') || !pdf || activeCategory?.mode !== 'count') return
     const point = clientToPdfPoint(clientX, clientY)
     if (!point) return
-    if (readyToolKind === 'point') { setCountMode(true); setReadyToolKind(null); revealActiveGroup() }
+    if (readyToolKind === 'point') { countSessionIdsRef.current=[]; setCountMode(true); setReadyToolKind(null); revealActiveGroup() }
     if ((countMeasurements[pageNumber] ?? []).some((item) => countCategoryId(item) === activeCategory.id && Math.hypot(item.point.x - point.x, item.point.y - point.y) < 0.000001)) return
     const id = `C${String(nextCountNumberRef.current++).padStart(3, '0')}`
+    countSessionIdsRef.current.push(id)
     setCountMeasurements((current) => ({ ...current,
       [pageNumber]: [...(current[pageNumber] ?? []), { id, point, locked: true, groupId: activeGroupId, categoryId: activeCategory.id }],
     }))
@@ -1784,11 +1976,14 @@ export default function App() {
     if (!count || count.locked) return
     event.preventDefault()
     event.stopPropagation()
+    setSelectedEditPoint({id:countId,kind:'point',index:0,page:pageNumber})
+    stageRef.current?.focus({preventScroll:true})
     countDragRef.current = { countId, pointerId: event.pointerId }
     event.currentTarget.setPointerCapture(event.pointerId)
   }
 
   function moveCountHandle(event: React.PointerEvent<SVGCircleElement>) {
+    readShift(event)
     const drag = countDragRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
     event.preventDefault()
@@ -1877,11 +2072,14 @@ export default function App() {
     if (!area || area.locked) return
     event.stopPropagation()
     event.preventDefault()
+    setSelectedEditPoint({id:areaId,kind:'area',index:pointIndex,page:pageNumber})
+    stageRef.current?.focus({preventScroll:true})
     areaDragRef.current = { areaId, pointIndex, pointerId: event.pointerId }
     event.currentTarget.setPointerCapture(event.pointerId)
   }
 
   function moveAreaHandle(event: React.PointerEvent<SVGCircleElement>) {
+    readShift(event)
     const drag = areaDragRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
     event.stopPropagation()
@@ -1933,15 +2131,15 @@ export default function App() {
     return (
       <div className="wall-height-field">
         <label>
-          Wall height (m, optional)
-          <input type="number" min="0.001" step="any" inputMode="decimal" value={text}
-            placeholder="e.g. 2.4" aria-label={`Wall height for ${id}`} aria-invalid={invalid}
-            onChange={(event) => setWallHeight(id, event.target.value, measurementPage)} />
+          Wall height (mm, optional)
+          <input type="number" min="0.001" step="any" inputMode="decimal" value={heightInMm(text)}
+            placeholder="e.g. 2400" aria-label={`Wall height for ${id}`} aria-invalid={invalid}
+            onChange={(event) => setWallHeight(id, heightFromMm(event.target.value), measurementPage)} />
         </label>
         {invalid ? <p className="calibration-warning">Enter a height greater than zero, or clear the field.</p>
           : heightM !== undefined ? <>
             <div className="wall-area-result">{lengthMm === null ? 'Calibration required' : `${((lengthMm / 1000) * heightM).toFixed(2)} m²`}</div>
-            <p className="length-note">{lengthMm === null ? '' : `${(lengthMm / 1000).toFixed(2)} m × ${heightM} m · `}One face, before deductions.</p>
+            <p className="length-note">{lengthMm === null ? '' : `${(lengthMm / 1000).toFixed(2)} m × ${heightInMm(String(heightM))} mm · `}One face, before deductions.</p>
           </> : <p className="length-note">Add height to calculate wall area. Leave blank for length only.</p>}
       </div>
     )
@@ -2022,9 +2220,80 @@ export default function App() {
     setStatus('Group removed. Its measurements have been kept as ungrouped measurements.')
   }
 
+  function savedMeasurement(id: string,number: number) {
+    const length=(lengthMeasurements[number] ?? []).find(item=>item.id===id)
+    if(length) return {kind:'length' as const,item:length}
+    const run=(runMeasurements[number] ?? []).find(item=>item.id===id)
+    if(run) return {kind:'run' as const,item:run}
+    const area=(areaMeasurements[number] ?? []).find(item=>item.id===id)
+    if(area) return {kind:'area' as const,item:area}
+    const point=(countMeasurements[number] ?? []).find(item=>item.id===id)
+    return point ? {kind:'point' as const,item:point} : null
+  }
+  function requestDuplicate(ids: string[],number=pageNumber) {
+    if (hasDraft || !ids.length || duplicateBusyRef.current || fileBusyRef.current) return
+    const members=ids.map(id=>savedMeasurement(id,number))
+    if(members.some(item=>!item)) return
+    const first=members[0]!, group=groups.find(group=>group.id===first.item.groupId)
+    const categoryId=first.kind==='point' ? countCategoryId(first.item as CountMeasurement) : group?.categoryId ?? ''
+    stopMeasurement();setSelectedEditPoint(null);setMeasurementMenu(null);setWorkMenu(null)
+    setDuplicatePage(number);setDuplicateKeepDescription(true);setDuplicateCategoryId(categoryId);setDuplicateError('')
+    setDuplicateRequest({ids:[...ids],page:number,title:ids.length===1 ? first.item.name || first.item.id : (group?.name || 'Measured work')+' ('+ids.length+' measurements)',categoryId})
+  }
+  async function confirmDuplicate() {
+    if(!duplicateRequest || !pdf || duplicateBusyRef.current || fileBusyRef.current) return
+    const request=duplicateRequest, destination=duplicatePage
+    duplicateBusyRef.current=true;setDuplicating(true);setDuplicateError('')
+    try {
+      if(!drawingPages[destination-1]) throw Error('Choose a destination drawing.')
+      const members=request.ids.map(id=>savedMeasurement(id,request.page))
+      if(members.some(item=>!item)) throw Error('The original measurement is no longer available.')
+      const hasGeometry=members.some(entry=>entry!.kind!=='point'), hasPoints=members.some(entry=>entry!.kind==='point')
+      if(hasGeometry && hasPoints) throw Error('Copy lengths/areas separately from point markers.')
+      const category=categories.find(item=>item.id===duplicateCategoryId)
+      if(!duplicateKeepDescription && (!category || category.mode!==(hasGeometry ? 'measure' : 'count'))) throw Error('Choose a compatible work description.')
+      const sourceCalibration=calibrations[request.page],targetCalibration=calibrations[destination]
+      if(hasGeometry && (!sourceCalibration?.locked || sourceCalibration.needsRecalibration || !targetCalibration?.locked || targetCalibration.needsRecalibration)) throw Error('Calibrate and lock both the original and destination pages before copying. This keeps the quantity correct.')
+      if(members.some(entry=>{const value=heightDrafts[entry!.item.id];return value!==undefined && value!=='' && (!Number.isFinite(Number(value)) || Number(value)<=0)})) throw Error('Correct the original wall height before duplicating.')
+      const ratio=hasGeometry ? sourceCalibration.mmPerPdfUnit/targetCalibration.mmPerPdfUnit : 1
+      const page=await pdf.getPage(destination),bounds=page.view
+      if(!bounds || bounds.length!==4) throw Error('The destination page could not be read. Please try again.')
+      const first=members[0]!,origin=first.kind==='length' ? first.item.pointA : first.kind==='point' ? first.item.point : first.item.points[0]
+      const transformed=members.map(entry=>{
+        const source=entry!,points=source.kind==='length' ? [source.item.pointA,source.item.pointB] : source.kind==='point' ? [source.item.point] : source.item.points
+        return {source,points:points.map(point=>({x:origin.x+(point.x-origin.x)*ratio,y:origin.y+(point.y-origin.y)*ratio}))}
+      })
+      // Move the copied selection onto the page without changing its size or quantities.
+      const points=transformed.flatMap(entry=>entry.points),minX=Math.min(...points.map(p=>p.x)),maxX=Math.max(...points.map(p=>p.x)),minY=Math.min(...points.map(p=>p.y)),maxY=Math.max(...points.map(p=>p.y))
+      if(maxX-minX>bounds[2]-bounds[0]+0.000001 || maxY-minY>bounds[3]-bounds[1]+0.000001) throw Error('The copied measurement is too large for that page at its calibrated scale. Choose another page or check the calibration.')
+      const dx=minX<bounds[0] ? bounds[0]-minX : maxX>bounds[2] ? bounds[2]-maxX : 0,dy=minY<bounds[1] ? bounds[1]-minY : maxY>bounds[3] ? bounds[3]-maxY : 0
+      let destinationGroup=duplicateKeepDescription ? undefined : groups.find(group=>group.categoryId===category!.id)
+      let newGroup: MeasurementGroup | undefined
+      if(!duplicateKeepDescription && !destinationGroup) {
+        newGroup={id:'G'+String(nextGroupNumberRef.current++).padStart(3,'0'),name:category!.name,categoryId:category!.id};destinationGroup=newGroup
+      }
+      const copied=transformed.map(({source,points})=>{
+        const placed=points.map(point=>({x:point.x+dx,y:point.y+dy})), groupId=duplicateKeepDescription ? source.item.groupId : destinationGroup!.id
+        const common={...source.item,groupId,locked:true}
+        if(source.kind==='length') return {kind:'length' as const,item:{...common,id:'L'+String(nextLengthNumberRef.current++).padStart(3,'0'),pointA:placed[0],pointB:placed[1]} as LengthMeasurement}
+        if(source.kind==='run') return {kind:'run' as const,item:{...common,id:'R'+String(nextRunNumberRef.current++).padStart(3,'0'),points:placed} as RunMeasurement}
+        if(source.kind==='area') return {kind:'area' as const,item:{...common,id:'A'+String(nextAreaNumberRef.current++).padStart(3,'0'),points:placed} as AreaMeasurement}
+        return {kind:'point' as const,item:{...common,id:'C'+String(nextCountNumberRef.current++).padStart(3,'0'),point:placed[0],categoryId:duplicateKeepDescription ? countCategoryId(source.item) : category!.id} as CountMeasurement}
+      })
+      if(newGroup) setGroups(current=>[...current,newGroup!])
+      setLengthMeasurements(current=>({...current,[destination]:[...(current[destination] ?? []),...copied.filter(item=>item.kind==='length').map(item=>item.item)]}))
+      setRunMeasurements(current=>({...current,[destination]:[...(current[destination] ?? []),...copied.filter(item=>item.kind==='run').map(item=>item.item)]}))
+      setAreaMeasurements(current=>({...current,[destination]:[...(current[destination] ?? []),...copied.filter(item=>item.kind==='area').map(item=>item.item)]}))
+      setCountMeasurements(current=>({...current,[destination]:[...(current[destination] ?? []),...copied.filter(item=>item.kind==='point').map(item=>item.item)]}))
+      setDuplicateRequest(null);setPageNumber(destination);setSidebarTab('groups');setSelectedWorkId(copied[0].item.groupId ?? '__all__');setViewGroupId(copied[0].item.groupId ?? '');setViewCategoryId('');setHiddenGroupIds([]);setShowUngrouped(true);setOverviewDrawing(false);setIsolatedMeasurementId(copied.length===1 ? copied[0].item.id : null);setViewMode('fit-page');setPan({x:0,y:0})
+      setStatus(copied.length+' measurement'+(copied.length===1 ? '' : 's')+' duplicated to '+drawingPageName(destination)+'. Copies are locked and can be edited independently.')
+    } catch(error) {setDuplicateError(error instanceof Error ? error.message : 'Could not duplicate this measurement.')}
+    finally {duplicateBusyRef.current=false;setDuplicating(false)}
+  }
+
   function measurementDetails(id: string, name = '', groupId = '') {
     return (
-      <div className="measurement-details">
+      <div className="measurement-details"><button className="duplicate-measurement-button" disabled={hasDraft} onClick={()=>requestDuplicate([id])}>Duplicate Measurement</button>
         <label>
           Name
           <input value={name} maxLength={100} placeholder="Optional measurement name"
@@ -2113,11 +2382,14 @@ export default function App() {
     if (!run || run.locked) return
     event.stopPropagation()
     event.preventDefault()
+    setSelectedEditPoint({id:runId,kind:'run',index:pointIndex,page:pageNumber})
+    stageRef.current?.focus({preventScroll:true})
     runDragRef.current = { runId, pointIndex, pointerId: event.pointerId }
     event.currentTarget.setPointerCapture(event.pointerId)
   }
 
   function moveRunHandle(event: React.PointerEvent<SVGCircleElement>) {
+    readShift(event)
     const drag = runDragRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
     event.stopPropagation()
@@ -2278,6 +2550,7 @@ export default function App() {
     which: 'A' | 'B',
     measurementId: string | null
   ) {
+    if (event.button !== 0) return
     event.stopPropagation()
     event.preventDefault()
 
@@ -2304,6 +2577,7 @@ export default function App() {
       }
     }
 
+    if (measurementId) {setSelectedEditPoint({id:measurementId,kind:'length',index:which==='A' ? 0 : 1,page:pageNumber});stageRef.current?.focus({preventScroll:true})}
     lengthDragRef.current = {
       point: which,
       measurementId,
@@ -2316,6 +2590,7 @@ export default function App() {
   function moveLengthHandle(
     event: React.PointerEvent<SVGCircleElement>
   ) {
+    readShift(event)
     const drag = lengthDragRef.current
 
     if (!drag.point || drag.pointerId !== event.pointerId) return
@@ -2844,6 +3119,7 @@ export default function App() {
   }
 
   function showOnlyMeasuredWork(id: string) {
+    setIsolatedMeasurementId(null)
     setOverviewDrawing(false)
     if (hasDraft || !groups.some((group) => group.id === id)) return
     setViewGroupId(id)
@@ -2859,6 +3135,7 @@ export default function App() {
   }
 
   function showAllMeasurements() {
+    setIsolatedMeasurementId(null)
     if (hasDraft) return
     selectViewCategory('')
     setOverviewDrawing(true)
@@ -2880,10 +3157,10 @@ export default function App() {
   }
   const viewItems = allMeasurements.filter((item) => matchesViewCategory(item.groupId, item.categoryId, item.kind === 'wall', item.heightM)).map(withQuantities)
   const selectedWorkItems = allMeasurements.filter((item) => item.groupId === selectedWorkId && item.page === pageNumber).map(withQuantities)
-  const ungroupedItems = allMeasurements.filter((item) => !item.groupId).map(withQuantities)
+  const ungroupedItems = allMeasurements.filter((item) => !item.groupId && item.page===pageNumber).map(withQuantities)
   const ungroupedGeometry = ungroupedItems.filter((item) => item.kind !== 'count')
   const workOverviewRows = [
-    ...groupSummaries.map((group) => ({ id: group.id, name: group.name || group.id,
+    ...currentPageGroupSummaries.map((group) => ({ id: group.id, name: group.name || group.id,
       mode: categories.find((category) => category.id === group.categoryId)?.mode ?? 'measure',
       totalMm: group.totalMm, totalAreaM2: group.totalAreaM2, count: group.count, colors: [categoryColor(group.id, '#64748b')], sourceNote: '' })),
     ...(ungroupedItems.length ? [{ id: '__ungrouped__', name: 'Ungrouped Measurements', mode: 'mixed', sourceNote: '', colors: [...new Set(ungroupedItems.map((item) => item.kind === 'count' ? categories.find((category) => category.id === item.categoryId)?.color ?? '#dc2626' : item.kind === 'area' ? '#c2410c' : item.id.startsWith('R') ? '#0f766e' : '#2563eb'))],
@@ -2891,7 +3168,7 @@ export default function App() {
       totalAreaM2: ungroupedGeometry.some((item) => item.kind === 'area' || item.heightM !== undefined ? item.areaM2 === null : false) ? null
         : ungroupedGeometry.reduce((sum, item) => sum + (item.areaM2 ?? 0), 0),
       count: ungroupedItems.filter((item) => item.kind === 'count').length }] : []),
-    ...measuredCategorySummaries.filter((category) => category.mode === 'derived').map((category) => ({
+    ...summarizeCategories(currentPageGroupSummaries,pageNumber).filter((category) => category.mode === 'derived' && category.sourceGroups.some(group=>group.members.some(item=>item.kind==='area' || item.heightM!==undefined))).map((category) => ({
       id: category.id, name: category.name, mode: 'derived', totalMm: 0, totalAreaM2: category.totalAreaM2, count: 0,
       colors: [...new Set(category.sourceGroups.filter((group) => group.members.some((item) => item.kind === 'area' || item.heightM !== undefined)).map((group) => categoryColor(group.id, category.color)))],
       sourceNote: 'N.B. Calculated from ' + category.sourceGroups.filter((group) => group.members.some((item) => item.kind === 'area' || item.heightM !== undefined)).map((group) => (group.name || group.id) + ' (' + (categories.find((item) => item.id === group.categoryId)?.name ?? 'Uncategorised') + ')').join(', ') + '. Uses those measured areas; no additional drawing measurement. Groups opted out of skim are excluded.'
@@ -2938,7 +3215,7 @@ export default function App() {
   }
 
   const calibrationAttention = !!pdf && !currentCalibration && !calibrationMode && !pendingCalibration
-  const renderedCounts = currentCounts.filter((item) => isMeasurementVisible(item.groupId, countCategoryId(item))).map((item) => {
+  const renderedCounts = currentCounts.filter((item) => (!isolatedMeasurementId || item.id===isolatedMeasurementId) && isMeasurementVisible(item.groupId, countCategoryId(item))).map((item) => {
     const [x, y] = viewportRef.current?.convertToViewportPoint(item.point.x, item.point.y) ?? [0, 0]
     return { ...item, x, y, color: categoryColor(item.groupId, categories.find((category) => category.id === countCategoryId(item))?.color ?? '#dc2626') }
   })
@@ -2946,7 +3223,7 @@ export default function App() {
   const draftAreaProblem = polygonProblem(areaPoints)
   const draftAreaM2 = lengthCalibrationValid && !draftAreaProblem
     ? polygonArea(areaPoints) * currentCalibration.mmPerPdfUnit ** 2 / 1000000 : null
-  const renderedAreas = [...currentAreas.filter((area) => isMeasurementVisible(area.groupId)), ...(areaMode ? [{ id: 'Draft area', points: areaPoints, locked: true, groupId: activeGroupId || undefined }] : [])].map((area) => ({
+  const renderedAreas = [...currentAreas.filter((area) => (!isolatedMeasurementId || area.id===isolatedMeasurementId) && isMeasurementVisible(area.groupId)), ...(areaMode ? [{ id: 'Draft area', points: areaPoints, locked: true, groupId: activeGroupId || undefined }] : [])].map((area) => ({
     ...area,
     color: categoryColor(area.groupId, '#c2410c'),
     handles: area.points.map((point) => {
@@ -2958,7 +3235,7 @@ export default function App() {
   const draftSegments = runSegments(runPoints)
   const draftTotalMm = draftSegments.reduce((sum, mm) => sum + mm, 0)
   const renderedRuns = [
-    ...currentRuns.filter((run) => isMeasurementVisible(run.groupId, undefined, true, run.heightM)),
+    ...currentRuns.filter((run) => (!isolatedMeasurementId || run.id===isolatedMeasurementId) && isMeasurementVisible(run.groupId, undefined, true, run.heightM)),
     ...(runMode ? [{ id: 'Draft', points: runPoints, locked: true, groupId: activeGroupId || undefined }] : []),
   ].map((run) => ({
     ...run,
@@ -3003,7 +3280,7 @@ export default function App() {
 
     return {
       ...measurement,
-      visible: isMeasurementVisible(measurement.groupId, undefined, true, measurement.heightM),
+      visible: (!isolatedMeasurementId || measurement.id===isolatedMeasurementId) && isMeasurementVisible(measurement.groupId, undefined, true, measurement.heightM),
       color: categoryColor(measurement.groupId, '#2563eb'),
       line,
       pointAHandle,
@@ -3115,10 +3392,63 @@ export default function App() {
     : measurementMenu.kind === 'area' ? currentAreas.find((item) => item.id === measurementMenu.id)
     : currentCounts.find((item) => item.id === measurementMenu.id) : undefined
 
-  function measurementMenuAction(action: 'edit' | 'lock' | 'delete') {
+  function isSelectedPoint(id: string,index: number) { return selectedEditPoint?.page===pageNumber && selectedEditPoint.id===id && selectedEditPoint.index===index }
+  function deleteSelectedPoint(selection=selectedEditPoint) {
+    if (!selection || selection.page!==pageNumber || hasDraft) return
+    const {id,kind,index}=selection
+    const item=kind==='run' ? currentRuns.find(i=>i.id===id) : kind==='area' ? currentAreas.find(i=>i.id===id) : kind==='length' ? currentLengthMeasurements.find(i=>i.id===id) : currentCounts.find(i=>i.id===id)
+    if (!item || item.locked) return
+    if (kind==='length') {setStatus('A single length needs both endpoints. Choose Delete Entire Run/Measure instead.');return}
+    if (kind==='point') deleteCount(id)
+    else {
+      if (!hasValidCalibration() || !('points' in item) || index<0 || index>=item.points.length) return
+      const points=item.points.filter((_,i)=>i!==index)
+      const problem=kind==='area' ? polygonProblem(points) : points.length<2 ? 'A run needs at least two points.' : points.some((p,i)=>i>0 && Math.hypot(p.x-points[i-1].x,p.y-points[i-1].y)<0.001) ? 'These points would create a zero-length segment.' : null
+      if (problem) {setStatus(problem+' Delete the entire measurement if needed.');return}
+      if (kind==='area') setAreaMeasurements(current=>({...current,[pageNumber]:(current[pageNumber] ?? []).map(i=>i.id===id ? {...i,points} : i)}))
+      else setRunMeasurements(current=>({...current,[pageNumber]:(current[pageNumber] ?? []).map(i=>i.id===id ? {...i,points} : i)}))
+    }
+    runDragRef.current=null;areaDragRef.current=null;countDragRef.current=null
+    setSelectedEditPoint(null);setMeasurementMenu(null);setStatus('Selected point deleted. Quantities updated.')
+  }
+  function openPointMenu(event: React.MouseEvent<SVGElement>,id: string,kind: MeasurementKind,index: number) {
+    event.preventDefault();event.stopPropagation()
+    if (hasDraft) return
+    setSelectedEditPoint({id,kind,index,page:pageNumber});setWorkMenu(null)
+    const bounds=workspaceRef.current?.getBoundingClientRect()
+    setMeasurementMenu({id,kind,pointIndex:index,x:Math.max(8,Math.min(event.clientX-(bounds?.left ?? 0),(bounds?.width ?? 1000)-228)),y:Math.max(8,Math.min(event.clientY-(bounds?.top ?? 0),(bounds?.height ?? 700)-270))})
+  }
+  useEffect(()=>{
+    const down=(event: KeyboardEvent)=>{if(event.key==='Shift') shiftHeldRef.current=true}
+    const up=(event: KeyboardEvent)=>{if(event.key==='Shift') shiftHeldRef.current=false}
+    const blur=()=>{shiftHeldRef.current=false}
+    window.addEventListener('keydown',down);window.addEventListener('keyup',up);window.addEventListener('blur',blur)
+    return ()=>{window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);window.removeEventListener('blur',blur)}
+  },[])
+  useEffect(()=>{
+    const remove=(event: KeyboardEvent)=>{
+      const target=event.target as HTMLElement | null
+      if(event.key!=='Delete' || event.repeat || !selectedEditPoint || target?.closest('input,textarea,select,button,[contenteditable="true"]')) return
+      event.preventDefault();deleteSelectedPoint()
+    }
+    window.addEventListener('keydown',remove);return ()=>window.removeEventListener('keydown',remove)
+  },[selectedEditPoint,pageNumber,hasDraft,currentRuns,currentAreas,currentCounts,currentLengthMeasurements,lengthCalibrationValid])
+  useEffect(()=>{setSelectedEditPoint(null);setPageDeletePrompt(null)},[pdf,pageNumber])
+  useEffect(()=>{
+    if(!pageDeletePrompt) return
+    const close=()=>setPageDeletePrompt(null)
+    const outside=(event: PointerEvent)=>{if(!(event.target as Element | null)?.closest('[data-page-delete-prompt]')) close()}
+    const escape=(event: KeyboardEvent)=>{if(event.key==='Escape') close()}
+    window.addEventListener('pointerdown',outside);window.addEventListener('keydown',escape);window.addEventListener('resize',close);window.addEventListener('scroll',close,true)
+    return ()=>{window.removeEventListener('pointerdown',outside);window.removeEventListener('keydown',escape);window.removeEventListener('resize',close);window.removeEventListener('scroll',close,true)}
+  },[pageDeletePrompt])
+
+  function measurementMenuAction(action: 'edit' | 'lock' | 'delete' | 'delete-point') {
     if (!measurementMenu || !contextItem) return
     if (hasDraft) { setStatus('Finish or cancel the current measurement before editing a saved one.'); return }
     const { id, kind } = measurementMenu
+    if (action==='delete-point') {deleteSelectedPoint({id,kind,index:measurementMenu.pointIndex ?? 0,page:pageNumber});return}
+    setSelectedEditPoint(null)
     if (action === 'edit' && kind !== 'point' && !hasValidCalibration()) { setStatus('Calibrate and lock this page before editing measurement points.'); return }
     setReadyToolKind(null)
     setOverviewDrawing(false)
@@ -3157,8 +3487,8 @@ export default function App() {
   const zoomPercent = Math.max(25, Math.min(1500, Math.round(scale * 100)))
 
   return (
-    <div className="app-shell" aria-busy={isFileBusy}>
-      <header className="topbar" inert={isFileBusy || !!measurementChooser || heightPromptOpen}>
+    <div className="app-shell" style={{'--measure-bar-height':toolbarBarHeight+'px'} as React.CSSProperties} aria-busy={isFileBusy}>
+      <header ref={toolbarHeaderRef} className="topbar" inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest}>
         <div className="brand-and-project">
           <div className="takeoff-brand">
             <svg className="brand-mark" viewBox="0 0 34 38" aria-hidden="true"><path fill="#21d4ce" d="M17 1 32 9 17 18 2 10z" /><path fill="#00a8a4" d="m2 13 12 7v14L2 27z" /><path fill="#19d1c7" d="m19 20 13-8v15l-13 9z" /><path fill="#6ce8df" d="m8 17 7 4-7 12z" /></svg>
@@ -3174,9 +3504,9 @@ export default function App() {
 
         <nav className="top-navigation" aria-label="Workspace sections">
           <button aria-pressed={sidebarTab === 'measure'} onClick={() => navigateWorkspace('measure')}><UiIcon name="file" />Drawings</button>
-          <button aria-pressed={toolboxOpen} onClick={() => { setSidebarTab('measure'); setSelectedWorkId(null); setToolboxOpen(true) }}><UiIcon name="length" />Measure</button>
           <button aria-pressed={sidebarTab === 'groups'} onClick={() => navigateWorkspace('groups')}><UiIcon name="work" />Measured Work</button>
-          <button aria-pressed={sidebarTab === 'summary'} onClick={() => navigateWorkspace('summary')}><UiIcon name="summary" />Summary</button>
+          <button aria-pressed={sidebarTab === 'summary'} onClick={() => navigateWorkspace('summary')}><UiIcon name="summary" />Plot Summary</button>
+          <button aria-pressed={sidebarTab === 'rates'} onClick={() => navigateWorkspace('rates')}><UiIcon name="summary" />Subcontractor Rates</button>
           <button aria-pressed={sidebarTab === 'materials'} onClick={() => navigateWorkspace('materials')}><UiIcon name="work" />Materials</button>
         </nav>
         <div className="file-actions">
@@ -3238,50 +3568,59 @@ export default function App() {
 </section>
       </header>
 
-      <main ref={workspaceRef} className={`workspace ${sidebarTab === 'summary' ? 'is-summary' : ''} ${selectedWork || showingAllWork ? 'has-work-details' : ''}`} inert={isFileBusy || !!measurementChooser || heightPromptOpen}>
-          <div hidden={!toolboxOpen} ref={toolboxRef} className="measure-toolbox floating-toolbox" role="region" aria-label="Movable measurement toolbox" style={{ left: toolboxPosition.x, top: toolboxPosition.y, maxWidth: `calc(100% - ${toolboxPosition.x + 8}px)`, maxHeight: `calc(100% - ${toolboxPosition.y + 8}px)` }} onWheel={(event) => event.stopPropagation()}>
-          <div className="toolbox-heading toolbox-drag-handle" tabIndex={0} aria-label="Move measurement toolbox with arrow keys" onPointerDown={startToolboxDrag} onPointerMove={moveToolboxDrag} onPointerUp={endToolboxDrag} onPointerCancel={endToolboxDrag} onKeyDown={(event) => {
-            const delta: Record<string, Point> = { ArrowLeft:{x:-20,y:0}, ArrowRight:{x:20,y:0}, ArrowUp:{x:0,y:-20}, ArrowDown:{x:0,y:20} }
-            if (event.target === event.currentTarget && delta[event.key]) { event.preventDefault(); setToolboxPosition((p) => clampToolbox({ x:p.x+delta[event.key].x, y:p.y+delta[event.key].y })) }
-          }}><span className="drag-grip" aria-hidden="true">⠿</span><h2>Measure</h2><button aria-label="Close measurement toolbox" onClick={closeMeasureToolbox}>×</button></div>
-          <div className="toolbox-body">
-          <div className="tool-selector-grid" aria-label="Measurement tools">
-            <button className="tool-tile" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : undefined} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={lengthMode || readyToolKind === 'length'} aria-disabled={calibrationMode || !!pendingCalibration || !lengthCalibrationValid}
-              onClick={() => activateMeasurementTool('length')}>
-              <UiIcon name="length" /><span>{'Single Length'}</span>
-            </button>
-            <button className="tool-tile" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : undefined} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={runMode || readyToolKind === 'run'} aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
-              onClick={() => activateMeasurementTool('run')}><UiIcon name="run" /><span>Multiple Length</span></button>
-            <button className="tool-tile" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : undefined} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={areaMode || readyToolKind === 'area'} aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
-              onClick={() => activateMeasurementTool('area')}><UiIcon name="area" /><span>Area</span></button>
-            <button className="tool-tile" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : undefined} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={countMode || readyToolKind === 'point'} aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
-              onClick={() => activateMeasurementTool('point')}><UiIcon name="point" /><span>Point Marker</span></button>
+      <main ref={workspaceRef} className={`workspace ${sidebarTab==='measure' ? 'has-measure-toolbar' : ''} ${sidebarTab === 'summary' ? 'is-summary' : ''} ${selectedWork || showingAllWork ? 'has-work-details' : ''}`} inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest}>
+          <div hidden={sidebarTab!=='measure'} className="measure-toolbar-shell">
+            <div ref={dockZoneRef} className={`measure-dock-zone ${dockHover ? 'dock-hover' : ''}`} aria-label="Measurement toolbar">
+              <div className="measure-toolbar-rail" onScroll={event=>{if(event.target===event.currentTarget)setDescriptionOpen(false)}}>
+                <div hidden={sidebarTab!=='measure'} ref={toolboxRef} className={`measure-toolbox floating-toolbox icon-only-toolbox description-toolbox ${toolboxDocked ? 'is-docked' : 'is-floating'}`} role="region" aria-label="Movable measurement toolbox" tabIndex={0} title="Drag any empty space to move this panel" onPointerDown={startToolboxDrag} onPointerMove={moveToolboxDrag} onPointerUp={endToolboxDrag} onPointerCancel={endToolboxDrag} onKeyDown={moveIconToolbarWithKeys} data-dock-slot={iconDockSlot} style={toolboxDocked ? {order:iconDockSlot*2} : {left:toolbarOrigin.x+toolboxPosition.x,top:toolbarOrigin.y+toolboxPosition.y,maxWidth:'calc(100vw - 16px)'}} onWheel={event=>event.stopPropagation()}>
+          <details className="toolbar-description" data-no-drag open={descriptionOpen} onToggle={event=>setDescriptionOpen(event.currentTarget.open)}><summary ref={descriptionSummaryRef} aria-label="Choose Work Description" title="Work Description" onClick={event=>positionDescriptionMenu(event.currentTarget)}><strong>{categories.find(category=>category.id===(chooserCategoryId || activeCategory?.id))?.name || 'Choose work description'} <span aria-hidden="true">▾</span></strong></summary><div className="description-popover" data-no-drag ref={descriptionMenuRef} style={{left:descriptionPosition.x,top:descriptionPosition.y}} onKeyDown={descriptionMenuKeys}>
+          <div className="description-options" role="menu" aria-label="Work Description options">
+            {categories.filter(category=>category.mode!=='derived').map(category=><button type="button" role="menuitemradio" aria-checked={category.id===(chooserCategoryId || activeCategory?.id || 'tack-ceiling')} key={category.id} onClick={()=>{changeToolCategory(category.id);setDescriptionOpen(false)}}>{category.name || category.id}</button>)}
           </div>
-
-          {toolCalibrationNotice && <p className="tool-calibration-help" role="status">{toolCalibrationNotice}</p>}
-          <label className="toolbox-category">Work category<select value={chooserCategoryId || activeCategory?.id || 'tack-ceiling'} onChange={(event) => changeToolCategory(event.target.value)}>
-            {categories.filter((category) => category.mode !== 'derived').map((category) => <option key={category.id} value={category.id}>{category.name || category.id}</option>)}
-          </select></label>
-          <label className="toolbox-custom">Custom/New Category
+          <button className="custom-category-toggle" aria-expanded={customFieldOpen} onClick={()=>setCustomFieldOpen(value=>!value)}>Custom/New Category</button>
+          <label hidden={!customFieldOpen} className="toolbox-custom">Custom/New Category
             <input aria-label="Custom measurement name" value={toolCustomName} maxLength={100} placeholder="Work not listed? Type a name" onChange={(event) => setToolCustomName(event.target.value)} onBlur={applyToolCustomName} onKeyDown={(event) => {
               if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); applyToolCustomName() }
             }} />
           </label>
-          {toolSwitchNotice && <p className="tool-switch-notice" role="status">{toolSwitchNotice}</p>}
-          <label className="toolbox-height">Wall height (optional)<div><input type="number" min="0.001" step="0.01" inputMode="decimal" aria-label="Toolbox wall height" value={toolWallHeight} disabled={areaMode || countMode} onChange={(event) => {
-            const value=event.target.value; setToolWallHeight(value)
-            if (value === '' || (Number.isFinite(Number(value)) && Number(value)>0)) setRunHeightM(value === '' ? undefined : Number(value))
-          }} /><span>m</span></div></label>
-          {toolHeightInvalid && <p className="calibration-warning">Enter a height greater than zero, or leave it blank.</p>}
-          <div className="snap-controls">
-            <label className="snap-toggle"><input type="checkbox" checked={snapEnabled} onChange={(event) => setSnapEnabled(event.target.checked)} />Snap to lines<span>{snapEnabled ? 'On' : 'Off'}</span></label>
-            {snapEnabled && <div className="snap-options">
-              <label>Snap to<select value={snapSource} onChange={(event) => setSnapSource(event.target.value as 'both' | 'pdf' | 'measure')}><option value="both">PDF + measurements</option><option value="pdf">PDF lines</option><option value="measure">Measurement lines</option></select></label>
-              <div className="snap-point-options"><label><input type="checkbox" checked={snapEndpoints} onChange={(event) => setSnapEndpoints(event.target.checked)} />Start / end</label><label><input type="checkbox" checked={snapMidpoints} onChange={(event) => setSnapMidpoints(event.target.checked)} />Midpoints</label></div>
-              <p className="length-note">{snapSource === 'measure' ? 'Snaps to visible measurements on this page.' : pdfSnapInfo}</p>
-              {!snapEndpoints && !snapMidpoints && <p className="length-note">Choose a point type to enable snapping.</p>}
-            </div>}
+          </div></details>
+                  <div className="toolbox-body">
+          <div className="compact-tool-row"><div className="compact-measure-group"><small>Measure</small><div className="tool-selector-grid" aria-label="Measurement tools">
+            <button className="tool-tile" aria-label="Single Length" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : 'Single Length'} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={lengthMode || readyToolKind === 'length'} aria-disabled={calibrationMode || !!pendingCalibration || !lengthCalibrationValid}
+              onClick={() => activateMeasurementTool('length')}>
+              <UiIcon name="length" /><span>{'Single Length'}</span>
+            </button>
+            <button className="tool-tile" aria-label="Multiple Length" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : 'Multiple Length'} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={runMode || readyToolKind === 'run'} aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
+              onClick={() => activateMeasurementTool('run')}><UiIcon name="run" /><span>Multiple Length</span></button>
+            <button className="tool-tile" aria-label="Area" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : 'Area'} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={areaMode || readyToolKind === 'area'} aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
+              onClick={() => activateMeasurementTool('area')}><UiIcon name="area" /><span>Area</span></button>
+            <button className="tool-tile" aria-label="Point Marker" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : 'Point Marker'} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={countMode || readyToolKind === 'point'} aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
+              onClick={() => activateMeasurementTool('point')}><UiIcon name="point" /><span>Point Marker</span></button>
           </div>
+
+          </div><div className="compact-snap-group"><small>Snap types</small><div className="compact-snap-buttons">
+            <button title="Snap to lines on/off" aria-label="Snap to lines" aria-pressed={snapEnabled} onClick={()=>setSnapEnabled(value=>!value)}><UiIcon name="snap" /></button>
+            <button title="Snap to start/end points" aria-label="Start / end" aria-pressed={snapEndpoints} disabled={!snapEnabled} onClick={()=>setSnapEndpoints(value=>!value)}><UiIcon name="endpoint" /></button>
+            <button title="Snap to midpoints" aria-label="Midpoints" aria-pressed={snapMidpoints} disabled={!snapEnabled} onClick={()=>setSnapMidpoints(value=>!value)}><UiIcon name="midpoint" /></button>
+          </div></div></div>
+                  </div>
+                </div>
+                {!toolboxDocked && dockHover && <div className="icon-dock-placeholder" style={{order:dockPreviewSlot*2}} data-preview-slot={dockPreviewSlot} aria-label="Drop measurement icons here">Drop icons here</div>}
+          <div className="toolbar-fixed-settings" ref={fixedToolbarSettingsRef}>
+          <label className="toolbox-height toolbar-fixed-control" ref={element=>{toolbarControlRefs.current[1]=element}} style={{order:3}}>Wall Height<div><input type="number" min="0.001" step="0.01" inputMode="decimal" aria-label="Toolbox wall height" value={heightInMm(toolWallHeight)} disabled={areaMode || countMode} onChange={(event) => {
+            const value=heightFromMm(event.target.value); setToolWallHeight(value)
+            if (value === '' || (Number.isFinite(Number(value)) && Number(value)>0)) setRunHeightM(value === '' ? undefined : Number(value))
+          }} /><span>mm</span></div></label>
+          <label className="compact-snap-source toolbar-fixed-control" ref={element=>{toolbarControlRefs.current[2]=element}} style={{order:5}}>Snap to<select aria-label="Snap source" disabled={!snapEnabled} value={snapSource} onChange={event=>setSnapSource(event.target.value as 'both'|'pdf'|'measure')}><option value="both">PDF + measurements</option><option value="pdf">PDF lines</option><option value="measure">Measurement lines</option></select><span>Hold Shift for straight lines</span></label>
+          </div>
+              </div>
+            </div>
+            <div className="toolbar-session-status" role="region" aria-label="Measurement progress" hidden={!currentToolKind() && !toolCalibrationNotice && !toolSwitchNotice && !toolHeightInvalid && !(snapEnabled && (snapSource!=='measure' && pdfSnapInfo!=='PDF lines ready.' || !snapEndpoints && !snapMidpoints))}>
+          {snapEnabled && snapSource!=='measure' && pdfSnapInfo!=='PDF lines ready.' && <p className="length-note">{pdfSnapInfo}</p>}
+          {snapEnabled && !snapEndpoints && !snapMidpoints && <p className="length-note">Choose a snap point type.</p>}
+          {toolCalibrationNotice && <p className="tool-calibration-help" role="status">{toolCalibrationNotice}</p>}
+          {toolSwitchNotice && <p className="tool-switch-notice" role="status">{toolSwitchNotice}</p>}
+          {toolHeightInvalid && <p className="calibration-warning">Enter a height greater than zero, or leave it blank.</p>}
           {readyToolKind && <div className="ready-tool-banner" role="status"><strong>Ready for the next {readyToolKind === 'point' ? 'point marker' : readyToolKind === 'length' ? 'length' : readyToolKind}.</strong><div>{activeGroup?.name || activeCategory?.name} · click a new start point.</div></div>}
           {(lengthMode || runMode || areaMode || countMode) && <div className="measuring-banner" role="status">
             <strong>{activeCategory?.name || 'Uncategorised'}</strong>
@@ -3290,7 +3629,7 @@ export default function App() {
 
 
 
-          {lengthMode && <button className="wide-control" onClick={cancelLengthMeasurement}>Cancel Length</button>}
+          {lengthMode && <div className="run-actions"><button disabled={!lengthPoints.length} onClick={()=>setLengthPoints([])}>Undo Last Point</button><button onClick={cancelLengthMeasurement}>Cancel Length</button></div>}
           {runMode && (
             <div className="run-panel" aria-label="Current run">
               <strong>Run in progress</strong>
@@ -3298,7 +3637,7 @@ export default function App() {
                 {(draftTotalMm / 1000).toFixed(2)} m
               </div>
               <div>{draftSegments.length} segment{draftSegments.length === 1 ? '' : 's'}</div>
-              {runHeightM !== undefined && <div className="wall-area-result">{(draftTotalMm / 1000 * runHeightM).toFixed(2)} m² · height {runHeightM} m</div>}
+              {runHeightM !== undefined && <div className="wall-area-result">{(draftTotalMm / 1000 * runHeightM).toFixed(2)} m² · height {heightInMm(String(runHeightM))} mm</div>}
               <p className="length-note">
                 {runPoints.length === 0 ? 'Click your start point on the drawing.' : 'Click the next wall corner, then keep going. Drag to pan; use the wheel to zoom.'}
               </p>
@@ -3332,11 +3671,9 @@ export default function App() {
           {countMode && <div className="count-panel">
             <strong>{activeCategory?.name || 'Point marks'}</strong>
             <p>Click once at each location. Each cross counts as one. Press Enter or Done Marking to finish.</p>
-            <button className="wide-control" onClick={finishCounting}>Done Marking</button>
+            <button className="wide-control" onClick={finishCounting}>Done Marking</button><div className="run-actions"><button disabled={!countSessionIdsRef.current.length} onClick={()=>{const id=countSessionIdsRef.current.pop();if(id) setCountMeasurements(current=>({...current,[pageNumber]:(current[pageNumber] ?? []).filter(item=>item.id!==id)}))}}>Undo Last Marker</button><button onClick={stopMeasurement}>Cancel Marking</button></div>
           </div>}
-          </div>
-
-
+            </div>
           </div>
         <aside className="sidebar">
           <div className="sidebar-fixed">
@@ -3344,7 +3681,7 @@ export default function App() {
             {(['measure', 'groups', 'summary'] as const).map((tab) => <button key={tab}
               aria-pressed={sidebarTab === tab} onClick={() => { navigateWorkspace(tab); if (tab === 'measure') setToolboxOpen(true) }}>
               <UiIcon name={tab === 'measure' ? 'length' : tab === 'groups' ? 'work' : 'summary'} />
-              <span>{tab === 'measure' ? 'New Measure' : tab === 'groups' ? 'Measured Work' : 'Summary'}</span>
+              <span>{tab === 'measure' ? 'New Measure' : tab === 'groups' ? 'Measured Work' : 'Plot Summary'}</span>
             </button>)}
           </nav>
           <section ref={calibrationDockRef} className={`calibration-dock ${!pdf ? 'calibration-empty' : lengthCalibrationValid ? 'calibration-ready' : 'calibration-not-ready'}`} aria-label="Page calibration">
@@ -3491,7 +3828,7 @@ export default function App() {
             </div>
             <p className="page-scope-note">Showing work on <strong>{drawingPageName(pageNumber)}</strong> only.</p>
             <p className="length-note">Choose a work item to see its quantities and measurements on the right.</p>
-            <button className="show-all-work-button" disabled={hasDraft} aria-pressed={showingAllWork} onClick={openAllMeasuredWork}>Show All Measured Work</button>
+            <button className="show-all-work-button" disabled={hasDraft} aria-pressed={showingAllWork} onClick={openAllMeasuredWork}>Show All Work on This Drawing</button>
             <div className="work-buttons">
               {currentPageGroupSummaries.map((group) => {
                 const lockState = workLockState(group.id,pageNumber)
@@ -3509,6 +3846,7 @@ export default function App() {
 
           </div>
 
+          <div hidden={sidebarTab !== 'rates'} className="rates-panel"><h2>Subcontractor Rates</h2><p>Subcontractor rates will be added here.</p></div>
           <div hidden={sidebarTab !== 'materials'} className="materials-panel"><h2>Materials</h2><p>Materials calculations coming next.</p><p className="length-note">This will use your Measured Work to calculate material quantities.</p></div>
           <div hidden={sidebarTab !== 'summary'} className="summary-panel">
             <div className="summary-job-heading">{[job.site, job.plot ? 'Plot ' + job.plot : '', job.houseType, job.revision ? (/^rev\b/i.test(job.revision) ? job.revision : 'Rev ' + job.revision) : ''].filter(Boolean).join(' / ') || 'Job details not entered'}</div>
@@ -3545,6 +3883,105 @@ export default function App() {
               </form>
             </details>
           </div>
+
+          <div hidden={sidebarTab !== 'measure'} className="drawing-controls">
+          <div className="toolbox-heading"><UiIcon name="file" /><h2>Drawings</h2></div>
+          <label className={`import-pages-button ${!pdf || isFileBusy ? 'file-disabled' : ''}`}><UiIcon name="import" />Import Additional Pages
+            <input type="file" accept="application/pdf" multiple disabled={!pdf || isFileBusy} onChange={(event) => { const files=Array.from(event.target.files ?? []); event.target.value=''; if (files.length) void importDrawingPages(files) }} />
+          </label>
+          {pdf && <div className="drawing-page-manager">
+            <label>Drawing page<select aria-label="Select drawing page" value={pageNumber} onChange={(event) => goToDrawingPage(Number(event.target.value))}>{drawingPages.map((page,index) => <option key={index} value={index+1}>{index+1}. {page.name}</option>)}</select></label>
+            <details><summary>Rename or remove pages</summary>
+              {drawingPages.map((page,index) => <div className={`drawing-page-row ${pageNumber === index+1 ? 'is-current' : ''}`} key={index}>
+                <button className="page-number-button" onClick={() => goToDrawingPage(index+1)} title={`Go to ${page.name}`}>{index+1}</button>
+                <input aria-label={`Name for drawing page ${index+1}`} maxLength={80} defaultValue={page.name} key={page.source + ':' + page.page + ':' + page.name} onBlur={(event) => { const value=event.target.value.trim(); if (value) renameDrawingPage(index+1,value); else event.target.value=page.name }} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }} />
+                <button className="delete-page-button" aria-label={`Delete drawing page ${page.name}`} disabled={drawingPages.length <= 1 || hasDraft} title={drawingPages.length <= 1 ? 'Keep at least one drawing page' : 'Remove this page and its measurements'} onClick={(event) => requestPageDelete(index+1,event.currentTarget)}>×</button>
+              </div>)}
+            </details>
+          </div>}
+
+          <div className="tool-row">
+            <button
+              disabled={!pdf || pageNumber <= 1 || runMode || areaMode}
+              onClick={previousPage}
+              title="Previous page"
+            >
+              ←
+            </button>
+
+            <span>
+              Page {pageNumber}
+              {pdf ? ` / ${pdf.numPages}` : ''}
+            </span>
+
+            <button
+              disabled={!pdf || pageNumber >= (pdf?.numPages ?? 1) || runMode || areaMode}
+              onClick={nextPage}
+              title="Next page"
+            >
+              →
+            </button>
+          </div>
+
+          <button
+            className="wide-control"
+            disabled={!pdf}
+            onClick={fitPage}
+          >
+            Fit Page
+          </button>
+
+          <div className="rotate-row">
+            <button
+              disabled={!pdf}
+              onClick={rotateLeft}
+              title="Rotate 90° left and refit page"
+            >
+              ↶ 90°
+            </button>
+
+            <button
+              disabled={!pdf}
+              onClick={rotateRight}
+              title="Rotate 90° right and refit page"
+            >
+              90° ↷
+            </button>
+          </div>
+
+          <div className="zoom-control">
+            <div className="zoom-heading">
+              <span>Zoom</span>
+              <strong>{Math.round(scale * 100)}%</strong>
+            </div>
+
+            <input
+              className="zoom-slider"
+              type="range"
+              min="25"
+              max="1500"
+              step="5"
+              value={zoomPercent}
+              disabled={!pdf}
+              onChange={(event) => handleZoomSlider(event.target.value)}
+            />
+
+            <div className="zoom-labels">
+              <span>25%</span>
+              <span>1500%</span>
+            </div>
+          </div>
+
+          <div className="view-status">
+            {pdf
+              ? `${viewMode === 'fit-page' ? 'Fit page' : 'Manual zoom'} · ${rotation}°`
+              : 'No drawing loaded'}
+          </div>
+
+          <hr />
+
+          </div>
+
 
           <div hidden={sidebarTab !== 'measure'} className="measurement-history">          {currentRuns.length > 0 && (
             <details className={`run-panel measurement-section ${lengthCalibrationValid ? '' : 'invalid'}`}>
@@ -3723,105 +4160,6 @@ export default function App() {
           </details>}
 </div>
 
-          <div hidden={sidebarTab !== 'measure'} className="drawing-controls">
-          <div className="toolbox-heading"><UiIcon name="file" /><h2>Drawings</h2></div>
-          <label className={`import-pages-button ${!pdf || isFileBusy ? 'file-disabled' : ''}`}><UiIcon name="import" />Import Additional Pages
-            <input type="file" accept="application/pdf" multiple disabled={!pdf || isFileBusy} onChange={(event) => { const files=Array.from(event.target.files ?? []); event.target.value=''; if (files.length) void importDrawingPages(files) }} />
-          </label>
-          {pdf && <div className="drawing-page-manager">
-            <label>Drawing page<select aria-label="Select drawing page" value={pageNumber} onChange={(event) => goToDrawingPage(Number(event.target.value))}>{drawingPages.map((page,index) => <option key={index} value={index+1}>{index+1}. {page.name}</option>)}</select></label>
-            <details><summary>Rename or remove pages</summary>
-              {drawingPages.map((page,index) => <div className={`drawing-page-row ${pageNumber === index+1 ? 'is-current' : ''}`} key={index}>
-                <button className="page-number-button" onClick={() => goToDrawingPage(index+1)} title={`Go to ${page.name}`}>{index+1}</button>
-                <input aria-label={`Name for drawing page ${index+1}`} maxLength={80} defaultValue={page.name} key={page.source + ':' + page.page + ':' + page.name} onBlur={(event) => { const value=event.target.value.trim(); if (value) renameDrawingPage(index+1,value); else event.target.value=page.name }} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }} />
-                <button className="delete-page-button" aria-label={`Delete drawing page ${page.name}`} disabled={drawingPages.length <= 1 || hasDraft} title={drawingPages.length <= 1 ? 'Keep at least one drawing page' : 'Remove this page and its measurements'} onClick={() => deleteDrawingPage(index+1)}>×</button>
-              </div>)}
-            </details>
-          </div>}
-
-          <div className="tool-row">
-            <button
-              disabled={!pdf || pageNumber <= 1 || runMode || areaMode}
-              onClick={previousPage}
-              title="Previous page"
-            >
-              ←
-            </button>
-
-            <span>
-              Page {pageNumber}
-              {pdf ? ` / ${pdf.numPages}` : ''}
-            </span>
-
-            <button
-              disabled={!pdf || pageNumber >= (pdf?.numPages ?? 1) || runMode || areaMode}
-              onClick={nextPage}
-              title="Next page"
-            >
-              →
-            </button>
-          </div>
-
-          <button
-            className="wide-control"
-            disabled={!pdf}
-            onClick={fitPage}
-          >
-            Fit Page
-          </button>
-
-          <div className="rotate-row">
-            <button
-              disabled={!pdf}
-              onClick={rotateLeft}
-              title="Rotate 90° left and refit page"
-            >
-              ↶ 90°
-            </button>
-
-            <button
-              disabled={!pdf}
-              onClick={rotateRight}
-              title="Rotate 90° right and refit page"
-            >
-              90° ↷
-            </button>
-          </div>
-
-          <div className="zoom-control">
-            <div className="zoom-heading">
-              <span>Zoom</span>
-              <strong>{Math.round(scale * 100)}%</strong>
-            </div>
-
-            <input
-              className="zoom-slider"
-              type="range"
-              min="25"
-              max="1500"
-              step="5"
-              value={zoomPercent}
-              disabled={!pdf}
-              onChange={(event) => handleZoomSlider(event.target.value)}
-            />
-
-            <div className="zoom-labels">
-              <span>25%</span>
-              <span>1500%</span>
-            </div>
-          </div>
-
-          <div className="view-status">
-            {pdf
-              ? `${viewMode === 'fit-page' ? 'Fit page' : 'Manual zoom'} · ${rotation}°`
-              : 'No drawing loaded'}
-          </div>
-
-          <hr />
-
-          </div>
-
-
           <p className="status" role="status">{status}</p>
           </div>
         </aside>
@@ -3876,7 +4214,7 @@ export default function App() {
               <canvas ref={canvasRef} />
 
               <svg
-                className={`measurement-overlay${overviewDrawing ? ' overview-drawing' : ''}`}
+                className={`measurement-overlay${overviewDrawing ? ' overview-drawing' : ''}${sidebarTab==='groups' ? ' work-drawing' : ''}`}
                 width={viewportSize.width}
                 height={viewportSize.height}
                 style={{
@@ -3888,19 +4226,20 @@ export default function App() {
                     {area.handles.length > 1 && (area.id === 'Draft area'
                       ? <polyline points={area.handles.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke={area.color} strokeWidth={measurementAppearance(area.groupId).width} strokeDasharray="7 4" />
                       : <polygon points={area.handles.map((p) => `${p.x},${p.y}`).join(' ')} fill={`${area.color}22`} stroke={area.color} strokeWidth={measurementAppearance(area.groupId).width} />)}
-                    {area.id !== 'Draft area' && area.handles.length > 0 && <text
-                      x={area.handles[0].x + 12} y={area.handles[0].y - 12} className="run-label area-label" style={{ fill: area.color }}>
-                      {area.id} · {area.areaM2 === null ? 'invalid' : `${area.areaM2.toFixed(2)} m²`}
-                    </text>}
+                    {area.id !== 'Draft area' && area.handles.length > 0 && (() => {
+                      const center=polygonLabelPoint(area.handles), label=area.areaM2 === null ? 'Calibration required' : area.areaM2.toFixed(2)+' m²',width=label.length*9+22
+                      return <g className="area-value-label" transform={`translate(${center.x},${center.y})`} pointerEvents="none"><title>{area.id}</title><rect x={-width/2} y={-16} width={width} height="32" rx="5" fill="white" fillOpacity="0.95" stroke={area.color} strokeWidth="1" /><text textAnchor="middle" dominantBaseline="central" className="area-quantity-text">{label}</text></g>
+                    })()}
                     {area.handles.map((point, i) => <circle key={i} cx={point.x} cy={point.y} r={area.locked ? 5 : 8}
                       fill={area.color} stroke="white" strokeWidth="2"
                       style={{ pointerEvents: !area.locked && lengthCalibrationValid && !hasDraft ? 'all' : 'none', cursor: 'move' }}
+                      className={isSelectedPoint(area.id,i) ? 'selected-edit-point' : undefined} onContextMenu={(event)=>openPointMenu(event,area.id,'area',i)}
                       onPointerDown={(event) => startAreaHandleDrag(event, area.id, i)}
                       onPointerMove={moveAreaHandle} onPointerUp={endAreaHandleDrag} onPointerCancel={endAreaHandleDrag} />)}
                   </g>
                 ))}
 
-                {calibrationLine && !overviewDrawing && (
+                {calibrationLine && !overviewDrawing && sidebarTab!=='groups' && (
                   <line
                     x1={calibrationLine.x1}
                     y1={calibrationLine.y1}
@@ -3911,7 +4250,7 @@ export default function App() {
                   />
                 )}
 
-                {pointAHandle && (
+                {pointAHandle && sidebarTab!=='groups' && (
                   <>
                     <circle
                       cx={pointAHandle.x}
@@ -3947,7 +4286,7 @@ export default function App() {
                   </>
                 )}
 
-                {pointBHandle && (
+                {pointBHandle && sidebarTab!=='groups' && (
                   <>
                     <circle
                       cx={pointBHandle.x}
@@ -4022,8 +4361,8 @@ export default function App() {
                             fill={measurement.color}
                           >
                             {measurement.lengthMm !== null
-                              ? `${measurement.id} · ${(measurement.lengthMm / 1000).toFixed(2)} m`
-                              : `${measurement.id} · invalid`}
+                              ? `${sidebarTab==='groups' ? '' : measurement.id+' · '}${(measurement.lengthMm / 1000).toFixed(2)} m`
+                              : sidebarTab==='groups' ? 'Check calibration' : `${measurement.id} · invalid`}
                           </text>
                         </g>
                       </>
@@ -4045,6 +4384,7 @@ export default function App() {
                             ? 'move'
                             : 'not-allowed',
                         }}
+                        className={isSelectedPoint(measurement.id,0) ? 'selected-edit-point' : undefined} onContextMenu={(event)=>openPointMenu(event,measurement.id,'length',0)}
                         onPointerDown={(event) =>
                           startLengthHandleDrag(
                             event,
@@ -4074,6 +4414,7 @@ export default function App() {
                             ? 'move'
                             : 'not-allowed',
                         }}
+                        className={isSelectedPoint(measurement.id,1) ? 'selected-edit-point' : undefined} onContextMenu={(event)=>openPointMenu(event,measurement.id,'length',1)}
                         onPointerDown={(event) =>
                           startLengthHandleDrag(
                             event,
@@ -4099,7 +4440,7 @@ export default function App() {
                             stroke={run.color} strokeWidth={measurementAppearance(run.groupId).width} strokeDasharray={run.id === 'Draft' ? '7 4' : undefined} />
                           <text x={(start.x + end.x) / 2} y={(start.y + end.y) / 2 - 9}
                             className="run-label" textAnchor="middle" style={{ fill: run.color }}>
-                            {run.id}.{i + 1} · {lengthCalibrationValid ? `${(run.segments[i] / 1000).toFixed(2)} m` : 'invalid'}
+                            {sidebarTab==='groups' ? '' : run.id+'.'+(i+1)+' · '}{lengthCalibrationValid ? `${(run.segments[i] / 1000).toFixed(2)} m` : 'invalid'}
                           </text>
                         </g>
                       )
@@ -4111,7 +4452,8 @@ export default function App() {
                           pointerEvents: !run.locked && lengthCalibrationValid && !hasDraft ? 'all' : 'none',
                           cursor: 'move',
                         }}
-                        onPointerDown={(event) => startRunHandleDrag(event, run.id, i)}
+                        className={isSelectedPoint(run.id,i) ? 'selected-edit-point' : undefined} onContextMenu={(event)=>openPointMenu(event,run.id,'run',i)}
+                      onPointerDown={(event) => startRunHandleDrag(event, run.id, i)}
                         onPointerMove={moveRunHandle} onPointerUp={endRunHandleDrag} onPointerCancel={endRunHandleDrag} />
                     ))}
                   </g>
@@ -4120,9 +4462,9 @@ export default function App() {
                 {renderedCounts.map((count) => <g key={count.id} opacity={measurementAppearance(count.groupId).opacity}>
                   <path d={`M ${count.x - 8} ${count.y - 8} L ${count.x + 8} ${count.y + 8} M ${count.x + 8} ${count.y - 8} L ${count.x - 8} ${count.y + 8}`}
                     stroke={count.color} strokeWidth={measurementAppearance(count.groupId).width} />
-                  <text x={count.x + 12} y={count.y - 10} className="run-label" style={{ fill: count.color }}>{count.id}</text>
+                  <text x={count.x + 12} y={count.y - 10} className="run-label" style={{ fill: count.color }}>{sidebarTab==='groups' ? '' : count.id}</text>
                   <circle cx={count.x} cy={count.y} r="12" fill="transparent" style={{ pointerEvents: !count.locked && !hasDraft ? 'all' : 'none', cursor: 'move' }}
-                    onPointerDown={(event) => startCountHandleDrag(event, count.id)} onPointerMove={moveCountHandle} onPointerUp={endCountHandleDrag} onPointerCancel={endCountHandleDrag} />
+                    className={isSelectedPoint(count.id,0) ? 'selected-edit-point' : undefined} onContextMenu={(event)=>openPointMenu(event,count.id,'point',0)} onPointerDown={(event) => startCountHandleDrag(event, count.id)} onPointerMove={moveCountHandle} onPointerUp={endCountHandleDrag} onPointerCancel={endCountHandleDrag} />
                 </g>)}
 
                 {temporaryLengthAHandle && (
@@ -4198,7 +4540,7 @@ export default function App() {
         {showingAllWork && <aside className="work-details-panel" aria-label="All Measured Work quantities" onKeyDown={(event) => {
           if (event.key === 'Escape') { event.stopPropagation(); setSelectedWorkId(null) }
         }}>
-          <div className="work-details-header"><h2>All Measured Work — All Drawings</h2>
+          <div className="work-details-header"><h2>All Measured Work — {drawingPageName(pageNumber)}</h2>
             <button aria-label="Close measured work overview" onClick={() => setSelectedWorkId(null)}>×</button>
           </div>
           <div className="work-details-body work-overview">
@@ -4214,7 +4556,7 @@ export default function App() {
               {work.sourceNote && <p className="skim-source-note">{work.sourceNote}</p>}
             </div>)}
             {!workOverviewRows.length && <p className="length-note">No measurements yet.</p>}
-            <div className="workspace-tally"><span>Measured elements</span><strong>{allMeasurements.length}</strong><p>Across {pdf?.numPages ?? 0} drawing pages</p></div>
+            <div className="workspace-tally"><span>Measured elements</span><strong>{allMeasurements.filter(item=>item.page===pageNumber).length}</strong><p>{drawingPageName(pageNumber)} only</p></div>
           </div>
         </aside>}
         {selectedWork && <aside className="work-details-panel" aria-label="Measured Work details" onKeyDown={(event) => {
@@ -4241,7 +4583,7 @@ export default function App() {
               const heights = [...new Set(walls.map((item) => item.heightM))]
               const value = groupHeightDrafts[selectedWork.id + ':' + pageNumber] ?? (heights.length === 1 && heights[0] !== undefined ? String(heights[0]) : '')
               const invalid = value !== '' && (!Number.isFinite(Number(value)) || Number(value) <= 0)
-              return <div className="work-height-editor"><label>Wall height on this drawing (m)<input type="number" min="0.001" step="any" aria-label="Work wall height" aria-invalid={invalid} value={value} placeholder={heights.length > 1 ? 'Mixed heights' : 'Add wall height'} onChange={(event) => setWorkWallHeight(selectedWork.id, event.target.value, pageNumber)} /></label><p className="length-note">Applies to this work’s lengths/runs on this drawing only. You can also edit individual heights below.</p>{invalid && <p className="calibration-warning">Enter a height greater than zero, or clear it.</p>}</div>
+              return <div className="work-height-editor"><label>Wall height on this drawing (mm)<input type="number" min="0.001" step="any" aria-label="Work wall height" aria-invalid={invalid} value={heightInMm(value)} placeholder={heights.length > 1 ? 'Mixed heights' : 'Add wall height'} onChange={(event) => setWorkWallHeight(selectedWork.id, heightFromMm(event.target.value), pageNumber)} /></label><p className="length-note">Applies to this work’s lengths/runs on this drawing only. You can also edit individual heights below.</p>{invalid && <p className="calibration-warning">Enter a height greater than zero, or clear it.</p>}</div>
             })()}
             <div className="work-visibility-actions">
               <button disabled={hasDraft} aria-pressed={viewGroupId === selectedWork.id} onClick={() => showOnlyMeasuredWork(selectedWork.id)}>Show Only This Measure on Drawing</button>
@@ -4253,13 +4595,13 @@ export default function App() {
               <label>Opacity <output>{Math.round(measurementAppearance(selectedWork.id).opacity*100)}%</output><input aria-label="Measurement opacity" type="range" min="15" max="100" value={measurementAppearance(selectedWork.id).opacity*100} onChange={(event) => updateWorkAppearance(selectedWork.id, { opacity:Number(event.target.value)/100 })} /></label>
               <button onClick={() => setGroups((current) => current.map((group) => group.id === selectedWork.id ? { ...group, appearance:undefined } : group))}>Reset appearance</button>
             </fieldset>
-            <h3>Individual measurements</h3>
+            <button className="duplicate-work-button" disabled={hasDraft} onClick={()=>requestDuplicate(selectedWorkItems.map(item=>item.id))}>Duplicate This Work</button><h3>Individual measurements</h3>{isolatedMeasurementId && <div className="isolation-notice">Showing {isolatedMeasurementId} only <button onClick={()=>{setIsolatedMeasurementId(null);setOverviewDrawing(false)}}>Show this work item</button></div>}
             <div className="work-member-list">
               {selectedWorkItems.map((item) => <details className="work-member-card" key={item.id}>
-                <summary><strong>{item.name || item.id}</strong><span>{drawingPageName(item.page)} · {item.kind === 'count' ? '1 no.' : item.kind === 'area'
+                <summary aria-label={'Show only '+(item.name || item.id)+' on drawing'} onClick={()=>{setIsolatedMeasurementId(item.id);setOverviewDrawing(false)}}><strong>{item.name || item.id}</strong><span>{drawingPageName(item.page)} · {item.kind === 'count' ? '1 no.' : item.kind === 'area'
                   ? item.areaM2 === null ? 'Check calibration' : `${item.areaM2.toFixed(2)} m²`
                   : item.lengthMm === null ? 'Check calibration' : `${(item.lengthMm / 1000).toFixed(2)} m`}</span></summary>
-                <p className="length-note">{item.id}{item.heightM !== undefined ? ` · height ${item.heightM} m` : ''}</p>
+                <p className="length-note">{item.id}{item.heightM !== undefined ? ` · height ${heightInMm(String(item.heightM))} mm` : ''}</p>
                 {item.kind === 'wall' && item.heightM !== undefined && <strong>{item.areaM2 === null ? 'Check calibration / height' : `${item.areaM2.toFixed(2)} m²`}</strong>}
                 <button className="wide-control" disabled={hasDraft} onClick={() => { setPageNumber(item.page); setViewMode('fit-page'); setPan({ x: 0, y: 0 }); setStageResizeTick((tick) => tick + 1) }}>Go to {drawingPageName(item.page)}</button>
                 {item.page === pageNumber ? <>
@@ -4291,16 +4633,31 @@ export default function App() {
           <button role="menuitem" className="context-menu-delete" onClick={() => workMenuAction('delete')}>Delete selected measurements</button>
           <button role="menuitem" onClick={() => setWorkMenu(null)}>Close</button>
         </div>}
+        {pageDeletePrompt && <div data-page-delete-prompt className="page-delete-prompt" role="alertdialog" aria-label="Delete drawing page" style={{left:pageDeletePrompt.x,top:pageDeletePrompt.y}}>
+          <strong>Delete {pageDeletePrompt.name}?</strong><p>This removes this page and its measurements.</p><div><button className="delete-page-confirm" autoFocus onClick={confirmPageDelete}>Delete Page</button><button onClick={()=>setPageDeletePrompt(null)}>Cancel</button></div>
+        </div>}
         {measurementMenu && contextItem && <div className="measurement-context-menu" data-measurement-menu role="menu" aria-label="Measurement actions" style={{left:measurementMenu.x,top:measurementMenu.y}} onContextMenu={(event) => event.preventDefault()}>
           <div className="context-menu-title">{contextItem.name || contextItem.id}<span>{contextItem.locked ? 'Locked' : 'Unlocked'}</span></div>
+          <button role="menuitem" disabled={hasDraft} onClick={()=>requestDuplicate([measurementMenu.id])}>Duplicate Measurement</button>
           {hasDraft && <p>Finish the current measurement to edit this one.</p>}
           <button role="menuitem" autoFocus disabled={hasDraft || (measurementMenu.kind !== 'point' && !lengthCalibrationValid)} onClick={() => measurementMenuAction('edit')}>Edit points</button>
           <button role="menuitem" disabled={hasDraft} onClick={() => measurementMenuAction('lock')}>{contextItem.locked ? 'Unlock' : 'Lock'}</button>
-          <button role="menuitem" className="context-menu-delete" disabled={hasDraft} onClick={() => measurementMenuAction('delete')}>Delete</button>
+          {measurementMenu.pointIndex!==undefined && <button role="menuitem" disabled={hasDraft || contextItem.locked || measurementMenu.kind==='length'} title={measurementMenu.kind==='length' ? 'A single length needs both endpoints' : 'Remove only this point'} onClick={()=>measurementMenuAction('delete-point')}>Delete Selected Point</button>}
+          <button role="menuitem" className="context-menu-delete" disabled={hasDraft} onClick={() => measurementMenuAction('delete')}>Delete Entire Run/Measure</button>
           <button role="menuitem" onClick={() => setMeasurementMenu(null)}>Close</button>
         </div>}
       </main>
-      {showCalibrationWarning && !measurementChooser && !heightPromptOpen && <div className="calibration-notice-position" onKeyDown={(event) => {
+      {duplicateRequest && <div className="measurement-dialog-backdrop" onKeyDown={event=>{if(event.key==='Escape' && !duplicateBusyRef.current){event.stopPropagation();setDuplicateRequest(null)}}}>
+        <form className="measurement-dialog duplicate-dialog" role="dialog" aria-modal="true" aria-labelledby="duplicate-title" aria-busy={duplicating} onSubmit={event=>{event.preventDefault();void confirmDuplicate()}}>
+          <h2 id="duplicate-title">Duplicate Measurement</h2><p><strong>{duplicateRequest.title}</strong> · from {drawingPageName(duplicateRequest.page)}</p>
+          <fieldset disabled={duplicating}><label>Copy to drawing<select autoFocus aria-label="Duplicate destination drawing" value={duplicatePage} onChange={event=>{setDuplicatePage(Number(event.target.value));setDuplicateError('')}}>{drawingPages.map((page,index)=><option key={index} value={index+1}>{page.name}{index+1===duplicateRequest.page ? ' (same page)' : ''}</option>)}</select></label>
+          <label className="duplicate-description-choice"><input type="radio" name="copy-description" checked={duplicateKeepDescription} onChange={()=>setDuplicateKeepDescription(true)} />Keep Work Description — {categories.find(category=>category.id===duplicateRequest.categoryId)?.name || 'Ungrouped'}</label>
+          <label className="duplicate-description-choice"><input type="radio" name="copy-description" checked={!duplicateKeepDescription} onChange={()=>setDuplicateKeepDescription(false)} />Change Work Description</label>
+          {!duplicateKeepDescription && <label>Work Description<select aria-label="Duplicate work description" value={duplicateCategoryId} onChange={event=>setDuplicateCategoryId(event.target.value)}><option value="">Choose description</option>{categories.filter(category=>category.mode===(duplicateRequest.ids[0]?.startsWith('C') ? 'count' : 'measure')).map(category=><option key={category.id} value={category.id}>{category.name}</option>)}</select></label>}
+          </fieldset><p className="length-note">Copies have their own IDs and are independently editable. Lengths, areas and heights are preserved using the destination page’s calibration. You can adjust their position afterwards.</p>
+          {duplicateError && <p className="calibration-warning" role="alert">{duplicateError}</p>}<div className="dialog-actions"><button type="button" disabled={duplicating} onClick={()=>setDuplicateRequest(null)}>Cancel</button><button className="run-finish" type="submit" disabled={duplicating}>{duplicating ? 'Copying…' : 'Duplicate'}</button></div>
+        </form></div>}
+      {showCalibrationWarning && !duplicateRequest && !measurementChooser && !heightPromptOpen && <div className="calibration-notice-position" onKeyDown={(event) => {
         if (event.key === 'Escape') { event.stopPropagation(); setShowCalibrationWarning(false) }
       }}>
         <section className="calibration-notice calibration-warning-dialog" role="status" aria-live="polite"
@@ -4341,9 +4698,9 @@ export default function App() {
           onSubmit={(event) => { event.preventDefault(); confirmRunHeight() }}>
           <h2 id="wall-height-prompt-title">Add a wall height?</h2>
           <p>{categories.find((category) => category.id === chooserCategoryId)?.name}. Enter a height to calculate m² as you measure, or skip for length only.</p>
-          <label>Wall height (metres)
-            <input autoFocus type="number" min="0.001" step="any" inputMode="decimal" aria-label="Starting wall height" value={startingWallHeight}
-              placeholder="e.g. 2.4" onChange={(event) => setStartingWallHeight(event.target.value)} />
+          <label>Wall height (mm)
+            <input autoFocus type="number" min="0.001" step="any" inputMode="decimal" aria-label="Starting wall height" value={heightInMm(startingWallHeight)}
+              placeholder="e.g. 2.4" onChange={(event) => setStartingWallHeight(heightFromMm(event.target.value))} />
           </label>
           {startingWallHeight !== '' && (!Number.isFinite(Number(startingWallHeight)) || Number(startingWallHeight) <= 0) && <p className="calibration-warning">Enter a height greater than zero, or choose Skip Height.</p>}
           <div className="dialog-actions">
