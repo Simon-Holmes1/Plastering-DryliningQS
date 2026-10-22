@@ -2448,3 +2448,6 @@ canvas { box-shadow: 0 3px 24px #1b39421c; }
 /* Calibration visibility is independent of the clean measured-work overview. */
 .measurement-overlay.overview-drawing .calibration-overlay circle { visibility: visible; }
 .measurement-overlay.overview-drawing .calibration-overlay text { display: block; }
+.drawing-render-message { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); z-index: 25; width: max-content; max-width: calc(100% - 32px); padding: 12px 15px; border: 1px solid #527586; border-radius: 7px; color: #e4eef5; background: var(--workspace-banner-bg); box-shadow: 0 5px 18px #10283c30; font-size: 12px; }
+.drawing-render-message p { max-width: 420px; overflow-wrap: anywhere; color: #d4e2ec; }
+.drawing-render-message button { padding: 6px 10px; color: #63e9d8; background: #ffffff08; border: 1px solid #4d687d; border-radius: 5px; }

@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import * as pdfjsLib from 'pdfjs-dist'
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
+  'pdfjs-dist/legacy/build/pdf.worker.min.mjs',
   import.meta.url
 ).toString()
+
+// Bound bitmap memory without changing the PDF coordinate system or measurement scale.
+function pdfCanvasScale(width: number,height: number,density = window.devicePixelRatio || 1) {
+  const touch=window.matchMedia?.('(pointer: coarse)').matches || (typeof navigator!=='undefined' && navigator.maxTouchPoints>0)
+  const maxPixels=touch ? 4000000 : 16000000,maxSide=touch ? 4096 : 8192
+  return Math.min(Math.max(1,density),Math.sqrt(maxPixels/Math.max(1,width*height)),maxSide/Math.max(1,width,height))
+}
 
 type PdfDoc = Awaited<ReturnType<typeof pdfjsLib.getDocument>['promise']>
 type ViewMode = 'fit-page' | 'manual'
@@ -555,7 +562,7 @@ function SummaryDrawingPreview({ pdf, number, rotation, lengths, runs, areas, co
         const view = page.getViewport({ scale: resolution.width / base.width, rotation })
         const context = canvas.current.getContext('2d')
         if (!context) throw new Error('Drawing preview is unavailable.')
-        const outputScale = Math.min(resolution.pixelRatio, Math.sqrt(16000000 / (view.width * view.height)), 8192 / Math.max(view.width, view.height))
+        const outputScale = pdfCanvasScale(view.width,view.height,resolution.pixelRatio)
         canvas.current.width = Math.ceil(view.width * outputScale); canvas.current.height = Math.ceil(view.height * outputScale)
         task = page.render({ canvas: canvas.current, canvasContext: context, viewport: view,
           transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0] })
@@ -588,6 +595,9 @@ export default function App() {
   useEffect(() => { document.title = 'Holmes QS' }, [])
   const [jobPanelOpen, setJobPanelOpen] = useState(false)
   const [toolboxOpen, setToolboxOpen] = useState(true)
+  const [drawingRenderError,setDrawingRenderError]=useState('')
+  const [drawingRendering,setDrawingRendering]=useState(false)
+  const [drawingRenderRetry,setDrawingRenderRetry]=useState(0)
   const [toolboxPosition, setToolboxPosition] = useState<Point>({ x: 0, y: 0 })
   const [toolboxDocked,setToolboxDocked]=useState(true)
   const [toolbarOrigin,setToolbarOrigin]=useState<Point>({x:0,y:66})
@@ -833,6 +843,7 @@ export default function App() {
   }
 
   function resetDrafts() {
+    setDrawingRenderError('');setDrawingRendering(false)
     setSelectedWorkId(null)
     setReadyToolKind(null)
     setOverviewDrawing(false)
@@ -2977,6 +2988,8 @@ export default function App() {
     let disposed = false
 
     async function renderPage() {
+      setDrawingRenderError('');setDrawingRendering(true)
+      try {
       const page = await document.getPage(pageNumber)
 
       if (disposed) return
@@ -3013,11 +3026,14 @@ export default function App() {
 
       const canvas = canvasRef.current
       if (!canvas) return
+      const previous=renderTaskRef.current
+      if(previous){try{previous.cancel();await previous.promise}catch{/* Cancellation is expected during zoom/page changes. */}}
+      if(disposed)return
 
       const context = canvas.getContext('2d')
-      if (!context) return
+      if (!context) throw new Error('The browser could not allocate a drawing canvas.')
 
-      const outputScale = window.devicePixelRatio || 1
+      const outputScale = pdfCanvasScale(viewport.width,viewport.height)
 
       canvas.width = Math.floor(viewport.width * outputScale)
       canvas.height = Math.floor(viewport.height * outputScale)
@@ -3055,12 +3071,18 @@ export default function App() {
         await renderTask.promise
       } catch (error: any) {
         if (error?.name !== 'RenderingCancelledException') {
-          console.error(error)
+          throw error
         }
       }
+      } catch (failure: any) {
+        if(!disposed && failure?.name!=='RenderingCancelledException') {
+          console.error(failure)
+          setDrawingRenderError('The PDF imported, but this browser could not display the drawing. '+String(failure?.message || 'Rendering failed.').slice(0,180))
+        }
+      } finally {if(!disposed)setDrawingRendering(false)}
     }
 
-    renderPage()
+    void renderPage()
 
     return () => {
       disposed = true
@@ -3071,7 +3093,7 @@ export default function App() {
         // Ignore cancellation errors during cleanup.
       }
     }
-  }, [pdf, pageNumber, scale, rotation, sidebarTab])
+  }, [pdf, pageNumber, scale, rotation, sidebarTab, drawingRenderRetry])
 
   const currentCalibration = calibrations[pageNumber]
 
@@ -4245,6 +4267,10 @@ export default function App() {
               />
             </label>
           )}
+
+          {pdf && (drawingRendering || drawingRenderError) && <div className="drawing-render-message" role={drawingRenderError ? 'alert' : 'status'} onPointerDown={event=>event.stopPropagation()}>
+            {drawingRenderError ? <><strong>Drawing could not be displayed</strong><p>{drawingRenderError}</p><button type="button" onClick={()=>setDrawingRenderRetry(value=>value+1)}>Retry drawing</button></> : 'Loading drawing…'}
+          </div>}
 
           {pdf && (
             <div
