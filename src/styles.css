@@ -2230,3 +2230,221 @@ canvas { box-shadow: 0 3px 24px #1b39421c; }
   .floating-toolbox.icon-only-toolbox.description-toolbox .description-options button { padding: 7px; font-size: 11px; }
 }
 .floating-toolbox.icon-only-toolbox.description-toolbox.is-docked, .icon-dock-placeholder { top: calc((var(--measure-bar-height, 66px) - 64px) / 2); }
+
+/* One centred, self-contained floating measurement panel. */
+.measure-panel-layer { position: absolute; inset: 0; z-index: 35; pointer-events: none; }
+.measure-panel-layer:has(.toolbar-description[open]) { z-index: 80; }
+.measure-panel-layer .compact-floating-panel { pointer-events: auto; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel, .floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel.is-docked { position: fixed; right: auto; bottom: auto; display: flex; flex-direction: column; align-items: stretch; height: auto !important; width: max-content !important; min-width: min(310px, calc(100vw - 16px)); max-width: min(500px, calc(100vw - 16px)); padding: 9px 10px; gap: 8px; overflow: visible; border: 1px solid #ffffff30; border-radius: 8px; box-shadow: 0 7px 20px #0b1c3a44; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel.is-docked { border-top: 0; border-radius: 0 0 8px 8px; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel .toolbar-description { align-self: center; text-align: center; width: fit-content; max-width: 100%; margin: 0; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel .toolbar-description > summary { margin: 0 auto; padding: 1px 5px 4px; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel .toolbar-description > summary strong { justify-content: center; text-align: center; font-size: 15px; line-height: 20px; white-space: normal; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel .compact-tool-row small { display: block; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel .panel-wall-height { display: flex; flex-direction: column; align-items: center; align-self: center; width: fit-content; max-width: 100%; gap: 4px; margin: 0; color: #d3e2ed; font-size: 11px; text-align: center; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel .panel-wall-height > div { display: flex; align-items: center; justify-content: center; width: fit-content; gap: 6px; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel .panel-wall-height input { width: 104px; height: 29px; min-height: 29px; padding: 2px 5px; margin: 0; border: 0; border-bottom: 2px solid #25d6cb; border-radius: 2px 2px 0 0; background: #ffffff08; color: #3ce1d7; font-size: 15px; font-weight: 600; text-align: center; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel .panel-wall-height > div > span { color: #3ce1d7; padding: 0; font-size: 12px; }
+.snap-source-icons { display: flex; justify-content: center; gap: 7px; }
+.floating-toolbox.compact-floating-panel .snap-source-icons button { width: 36px; height: 32px; padding: 5px; border: 1px solid #cbdbe6; border-radius: 5px; background: #f4f7fa; color: #30475b; }
+.floating-toolbox.compact-floating-panel .snap-source-icons button .ui-icon { width: 21px; height: 21px; }
+.floating-toolbox.compact-floating-panel .snap-source-icons button[aria-pressed="true"] { background: #d7f7f2; color: #00796f; border-color: #20d7c3; box-shadow: inset 0 0 0 1px #00a390; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel .description-popover { width: min(1080px, calc(100vw - 16px)); text-align: left; }
+.description-sections { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.description-section { min-width: 0; border-right: 1px solid #ffffff15; padding-right: 8px; }
+.description-section:last-child { border-right: 0; padding-right: 0; }
+.description-section h3 { margin: 1px 0 10px; color: #fff; font-size: 19px; font-weight: 700; }
+.floating-toolbox.compact-floating-panel .description-section button, .floating-toolbox.compact-floating-panel .additional-description-options button { display: block; width: 100%; min-height: 29px; margin: 2px 0; padding: 5px 6px; border: 0; border-bottom: 2px solid transparent; border-radius: 3px; background: transparent; color: #d9e4ec; font-size: 12px; font-weight: 500; text-align: left; line-height: 1.3; white-space: normal; }
+.floating-toolbox.compact-floating-panel .description-section button:hover, .floating-toolbox.compact-floating-panel .additional-description-options button:hover { background: #ffffff0c; color: white; }
+.floating-toolbox.compact-floating-panel .description-section button[aria-checked="true"], .floating-toolbox.compact-floating-panel .additional-description-options button[aria-checked="true"] { background: #ffffff08; color: #3ce1d7; border-bottom-color: #25d6cb; }
+.automatic-description { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 29px; padding: 5px 6px; color: #d9e4ec; font-size: 12px; }
+.automatic-description small { color: #8de7d5; font-size: 9px; }
+.automatic-skim-note { margin: 7px 6px; color: #bbcfdd; font-size: 10px; line-height: 1.5; }
+.additional-descriptions { border-top: 1px solid #ffffff20; padding-top: 7px; margin-top: 7px; color: #d3e2ed; font-size: 11px; }
+.additional-descriptions > summary { cursor: pointer; }
+.additional-description-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; }
+.measure-panel-layer .toolbar-session-status { pointer-events: auto; width: min(450px, calc(100vw - 24px)); max-height: min(280px, 40dvh); }
+.panel-context-menu { position: fixed; z-index: 100; width: 164px; padding: 5px; background: #1b3043; color: #d9e4ec; border: 1px solid #607c90; border-radius: 6px; box-shadow: 0 6px 20px #10283c55; }
+.panel-context-menu button { display: block; width: 100%; padding: 8px 10px; text-align: left; color: #d9e4ec; background: transparent; border: 0; border-radius: 3px; font-size: 12px; }
+.panel-context-menu button:hover { color: #3ce1d7; background: #ffffff0c; }
+@media(max-width: 900px) {
+  .description-sections { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .description-section { border: 0; padding: 0; }
+}
+@media(max-width: 500px), (max-height: 700px) {
+  .description-sections { gap: 7px; }
+  .description-section h3 { font-size: 15px; margin-bottom: 5px; }
+  .floating-toolbox.compact-floating-panel .description-section button { font-size: 10px; min-height: 24px; padding: 4px 3px; margin: 0; }
+  .automatic-description { min-height: 24px; padding: 4px 3px; font-size: 10px; }
+  .automatic-skim-note { font-size: 9px; line-height: 1.3; margin: 4px 0; }
+}
+
+/* Compact heading menu with connected hover flyouts. */
+.floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel .description-popover { width: 176px; max-width: calc(100vw - 16px); padding: 8px; }
+.description-heading-list { display: flex; flex-direction: column; gap: 2px; }
+.floating-toolbox.compact-floating-panel .description-heading-button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 34px; padding: 6px 9px; border: 0; border-bottom: 2px solid transparent; border-radius: 4px; background: transparent; color: #d9e4ec; font-size: 17px; font-weight: 600; text-align: left; }
+.floating-toolbox.compact-floating-panel .description-heading-button[aria-expanded="true"], .floating-toolbox.compact-floating-panel .description-heading-button:hover { color: #3ce1d7; border-bottom-color: #25d6cb; background: #ffffff09; }
+.floating-toolbox.compact-floating-panel .description-heading-button.other-heading { margin-top: 5px; min-height: 28px; font-size: 12px; font-weight: 500; border-top: 1px solid #ffffff20; }
+.floating-toolbox.compact-floating-panel .create-new-description { width: 100%; margin-top: 8px; padding: 7px 10px; border: 1px solid #38c9bb; border-radius: 5px; background: #0c7b7350; color: #7cf1e1; font-size: 12px; font-weight: 700; }
+.floating-toolbox.compact-floating-panel .create-new-description:hover { background: #0c7b7390; color: white; }
+.description-submenu { position: absolute; left: calc(100% - 1px); width: min(280px, calc(100vw - 200px)); min-width: 140px; padding: 9px; color: #d9e4ec; background: var(--workspace-banner-bg); border: 1px solid #4e697d; border-radius: 6px; box-shadow: 0 7px 24px #07152655; }
+.description-submenu h3 { margin: 1px 6px 7px; color: white; font-size: 16px; }
+.floating-toolbox.compact-floating-panel .description-submenu button { display: block; width: 100%; min-height: 28px; padding: 5px 7px; border: 0; border-bottom: 2px solid transparent; border-radius: 3px; color: #d9e4ec; background: transparent; font-size: 12px; font-weight: 500; text-align: left; white-space: normal; line-height: 1.3; }
+.floating-toolbox.compact-floating-panel .description-submenu button:hover, .floating-toolbox.compact-floating-panel .description-submenu button[aria-checked="true"] { color: #3ce1d7; background: #ffffff09; border-bottom-color: #25d6cb; }
+.new-description-dialog { color: #e6eff5; background: var(--workspace-banner-bg); border: 1px solid #567184; }
+.new-description-dialog h2 { color: white; }
+.new-description-dialog label { color: #d4e3ed; }
+.new-description-dialog input, .new-description-dialog select { color: #193247; background: #fff; }
+.new-description-dialog .length-note { color: #bacfdd; }
+.new-description-dialog .dialog-actions button { border-color: #607d90; color: #dceaf3; background: #ffffff0b; }
+.new-description-dialog .dialog-actions .run-finish { background: #087e76; color: white; border-color: #32cdbb; }
+/* Messages share the panel's palette; hiding them keeps active measurement controls available. */
+.measure-panel-layer .toolbar-session-status { color: #d9e4ec; background: var(--workspace-banner-bg); border-color: #567487; box-shadow: 0 6px 20px #091c3544; }
+.measurement-messages-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 5px; color: #d9e4ec; }
+.measurement-messages-heading strong { font-size: 11px; font-weight: 600; }
+.measure-panel-layer .measurement-messages-heading button, .floating-toolbox.compact-floating-panel .show-measurement-messages { padding: 4px 7px; color: #63e9d8; border: 1px solid #4c7b87; border-radius: 4px; background: #ffffff08; font-size: 10px; }
+.floating-toolbox.compact-floating-panel .show-measurement-messages { width: fit-content; align-self: center; margin-top: 2px; }
+.measure-panel-layer .toolbar-session-status p, .measure-panel-layer .toolbar-session-status .length-note { color: #bfd1df; }
+.measure-panel-layer .toolbar-session-status .ready-tool-banner, .measure-panel-layer .toolbar-session-status .tool-switch-notice, .measure-panel-layer .toolbar-session-status .tool-calibration-help { color: #d9e4ec; background: #ffffff05; border-color: #466d80; }
+.measure-panel-layer .toolbar-session-status .run-panel, .measure-panel-layer .toolbar-session-status .area-panel, .measure-panel-layer .toolbar-session-status .count-panel { color: #e1edf5; background: #ffffff04; border-color: #4e7183; }
+.measure-panel-layer .toolbar-session-status .length-primary, .measure-panel-layer .toolbar-session-status .area-primary, .measure-panel-layer .toolbar-session-status .wall-area-result { color: #4ce5cf; }
+.measure-panel-layer .toolbar-session-status .run-actions button, .measure-panel-layer .toolbar-session-status .wide-control { color: #d9e4ec; background: #ffffff08; border-color: #527586; }
+.measure-panel-layer .toolbar-session-status .calibration-warning { color: #ffe2c2; background: #77473288; border-color: #c58c71; }
+/* One navy left sidebar theme across every workspace page. */
+.sidebar { --ink: #e4eef5; --muted: #b0c6d5; --line: #425b70; --teal: #3ce1d7; color: #e4eef5; background: var(--workspace-banner-bg); border-right-color: #496275; scrollbar-color: #627e93 #1a2e43; }
+.sidebar .sidebar-fixed, .sidebar .sidebar-scroll { color: #e4eef5; background: transparent; border-color: #496275; }
+.sidebar h2, .sidebar h3, .sidebar strong, .sidebar label, .sidebar summary { color: #e4eef5; }
+.sidebar .length-note, .sidebar .status, .sidebar .page-scope-note, .sidebar .summary-job-heading, .sidebar .skim-source-note, .sidebar .view-status, .sidebar .rates-panel > p, .sidebar .materials-panel > p { color: #b9cedd; }
+.sidebar .drawing-controls, .sidebar .summary-category, .sidebar .category-summary, .sidebar .run-panel, .sidebar .length-panel, .sidebar .area-panel, .sidebar .count-panel, .sidebar .measurement-card, .sidebar .summary-values, .sidebar .category-editor { color: #deebf4; background: #ffffff04; border-color: #465f73; box-shadow: none; }
+.sidebar button, .sidebar .import-pages-button { color: #d9e4ec; background: #ffffff05; border-color: #4d687d; }
+.sidebar button:not(:disabled):hover, .sidebar .import-pages-button:not(.file-disabled):hover { color: #3ce1d7; background: #ffffff0b; border-color: #33bfae; }
+.sidebar button[aria-pressed="true"], .sidebar .work-item-button[aria-pressed="true"] { color: #3ce1d7; background: #ffffff08; border-color: #35bda9; box-shadow: inset 3px 0 0 #25d6cb; }
+.sidebar .work-item-button strong { color: inherit; }
+.sidebar .work-item-button span, .sidebar .zoom-labels, .sidebar .drawing-page-row, .sidebar .category-summary p { color: #bad0df; }
+.sidebar input:not([type="checkbox"]):not([type="color"]):not([type="range"]), .sidebar select { color: #173247; background: #f5f9fc; border-color: #6c8799; }
+.sidebar input::placeholder { color: #748b9b; }
+.sidebar .drawing-page-row.is-current { background: #ffffff0a; border-color: #35bda9; }
+.sidebar .length-primary, .sidebar .length-secondary, .sidebar .area-primary, .sidebar .wall-area-result, .sidebar .summary-values strong, .sidebar .summary-values span { color: #61e8d5; }
+.sidebar .save-status { color: #d9e4ec; background: #203e4c; border-color: #4a7e82; }
+.sidebar .save-status p, .sidebar .save-status span { color: #c3d7e2; }
+.sidebar .save-status.unsaved { background: #4b432c; border-color: #8f8050; }
+.sidebar .save-status.unsaved strong { color: #fff0c1; }
+.sidebar .calibration-empty { color: #d9e4ec; background: #ffffff05; border-color: #496478; }
+.sidebar .calibration-empty strong { color: #e4eef5; }
+.sidebar .calibration-not-ready { color: #ffe3d9; background: #572f35; border-color: #bb766a; }
+.sidebar .calibration-not-ready strong, .sidebar .calibration-not-ready label, .sidebar .calibration-not-ready summary, .sidebar .calibration-not-ready p { color: #ffe3d9; }
+.sidebar .calibration-not-ready .calibration-first-note { color: #ffe3d9; background: #ffffff08; border-color: #dc9b8b; }
+.sidebar .calibrate-attention { color: white; background: #ae4938; border-color: #e2a18c; }
+.sidebar .calibrate-attention:not(:disabled):hover { color: white; background: #be5944; border-color: #f2beaa; }
+.sidebar .calibration-ready { color: white; background: #16805f; border-color: #29ad84; }
+.sidebar .calibration-ready strong, .sidebar .calibration-ready summary, .sidebar .calibration-ready label, .sidebar .calibration-ready p, .sidebar .calibration-ready .length-note { color: white; }
+.sidebar .calibration-ready button { color: white; background: #ffffff12; border-color: #ffffff66; }
+.sidebar .calibration-panel { background: #ffffff08; border-color: #69828b; }
+.sidebar .calibration-warning { color: #ffe1c8; background: #6c4136; border-color: #ba846d; }
+.sidebar .summary-panel .summary-values { color: #d9e4ec; }
+@media(max-width: 500px) {
+  .floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel .description-popover { width: 130px; }
+  .floating-toolbox.compact-floating-panel .description-heading-button { font-size: 14px; min-height: 32px; padding: 5px; }
+  .description-submenu { width: max(140px, calc(100vw - 154px)); padding: 6px; }
+  .floating-toolbox.compact-floating-panel .description-submenu button { font-size: 11px; }
+}
+
+/* Compact live measurement controls below the floating palette. */
+.measure-panel-layer .toolbar-session-status.compact-measurement-progress { width: max-content; max-width: calc(100vw - 24px); padding: 5px 6px; overflow: visible; border-radius: 7px; }
+.compact-measurement-progress .compact-progress-strip { display: flex; align-items: center; gap: 5px; }
+.compact-progress-figure { min-width: 76px; padding: 0 6px; color: #63e9d8; font-size: 17px; line-height: 30px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.measure-panel-layer .compact-progress-action { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 30px; width: 30px; height: 30px; padding: 0; border: 1px solid #527586; border-radius: 5px; background: #ffffff08; color: #e1edf5; font-size: 22px; line-height: 1; cursor: pointer; }
+.measure-panel-layer .compact-progress-action.progress-finish { background: #14735b; border-color: #38be8d; color: #fff; }
+.measure-panel-layer .compact-progress-action.progress-cancel { background: #8a383e; border-color: #d77279; color: #fff; }
+.measure-panel-layer .compact-progress-action:hover:not(:disabled) { filter: brightness(1.2); }
+.measure-panel-layer .compact-progress-action:focus-visible { outline: 2px solid #63e9d8; outline-offset: 2px; }
+.measure-panel-layer .compact-progress-action:disabled { opacity: .38; cursor: default; }
+/* Joined, centred palette controls and horizontal work headings. */
+.floating-toolbox.compact-floating-panel .panel-description-header { display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px; align-items: start; gap: 3px; width: 100%; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel .panel-description-header .toolbar-description { grid-column: 2; justify-self: center; min-width: 0; }
+.floating-toolbox.compact-floating-panel .panel-messages-toggle { grid-column: 3; display: flex; align-items: center; justify-content: center; width: 28px; height: 26px; padding: 4px; border: 0; border-radius: 4px; background: transparent; color: #d9e4ec; }
+.floating-toolbox.compact-floating-panel .panel-messages-toggle:hover { color: #3ce1d7; background: #ffffff12; }
+.floating-toolbox.compact-floating-panel .panel-messages-toggle[aria-pressed="true"] { color: #3ce1d7; }
+.floating-toolbox.compact-floating-panel .panel-messages-toggle .ui-icon { width: 20px; height: 20px; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel .panel-wall-height { font-family: inherit; font-size: 13px; font-weight: 700; color: #e4eef5; }
+.measure-panel-layer .compact-floating-panel .toolbar-session-status,
+.measure-panel-layer .compact-floating-panel .toolbar-session-status.compact-measurement-progress { position: static; align-self: stretch; width: auto; max-width: 100%; max-height: 35dvh; margin: 0; padding: 6px 0 0; border: 0; border-top: 1px solid #ffffff20; border-radius: 0; background: transparent; box-shadow: none; overflow-y: auto; }
+.measure-panel-layer .compact-floating-panel .compact-progress-strip { justify-content: center; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel .description-popover { width: min(560px, calc(100vw - 16px)); padding: 8px; }
+.description-heading-list { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; }
+.floating-toolbox.compact-floating-panel .description-heading-button { justify-content: center; min-width: 0; padding: 6px 3px; gap: 0; font-size: 17px; font-weight: 600; text-align: center; }
+.floating-toolbox.compact-floating-panel .create-new-description { display: block; width: fit-content; margin: 6px auto 0; padding: 5px 14px; color: #d9e4ec; font-size: 17px; font-weight: 600; }
+.floating-toolbox.compact-floating-panel .create-new-description:hover { color: #d9e4ec; }
+.description-submenu { left: -1px; width: calc(100% + 2px); min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 8px; max-height: calc(100dvh - 110px); overflow-y: auto; }
+.description-submenu h3, .description-submenu .automatic-skim-note { grid-column: 1 / -1; }
+@media (max-width: 500px) {
+  .floating-toolbox.compact-floating-panel .description-heading-button { font-size: 12px; padding: 5px 1px; }
+  .floating-toolbox.compact-floating-panel .create-new-description { font-size: 12px; }
+}
+/* Navy drawing controls and page surrounds; PDF paper stays crisp white. */
+.sidebar .zoom-control { background: #ffffff04; border-color: #4d687d; color: #fff; }
+.sidebar .zoom-control label, .sidebar .zoom-control strong, .sidebar .zoom-labels { color: #fff; }
+.sidebar .drawing-page-row { background: #ffffff04; border: 1px solid #25d6cb; border-radius: 5px; padding: 5px; margin-top: 5px; }
+.sidebar .drawing-page-row input, .sidebar .drawing-page-row.is-current input { background: #1b3043; color: #e4eef5; border-color: #25d6cb; }
+.sidebar .drawing-page-manager select { background: #1b3043; color: #e4eef5; border-color: #25d6cb; }
+.summary-page-card { background: var(--workspace-banner-bg); border-color: #25d6cb; }
+.summary-page-heading { border-color: #48667a; color: #e4eef5; }
+.summary-page-heading h3 { color: #63e9d8; }
+.summary-page-heading p { color: #b9cedd; }
+.summary-page-heading button { background: #ffffff08; color: #e4eef5; border-color: #4d687d; }
+/* Right quantities and detail panels use the same palette as the sidebar. */
+.work-details-panel, .summary-page-quantities { --ink: #e4eef5; --muted: #b0c6d5; --line: #425b70; --teal: #3ce1d7; color: #e4eef5; background: var(--workspace-banner-bg); border-color: #496275; scrollbar-color: #627e93 #1a2e43; }
+.work-details-header, .work-overview-row, .summary-page-quantity { border-color: #425b70; }
+.work-details-panel h2, .work-details-panel h3, .work-details-panel strong, .work-details-panel label, .work-details-panel summary, .work-details-panel legend, .summary-page-quantities h4, .summary-page-quantities h5, .summary-page-values strong { color: #e4eef5; }
+.work-details-panel .length-note, .work-details-panel .skim-source-note, .work-details-eyebrow, .work-details-panel .work-category-name, .work-member-card summary span, .summary-page-quantities .length-note, .summary-page-quantities .skim-source-note, .summary-page-values { color: #b9cedd; }
+.work-details-panel .work-quantity-summary strong, .work-overview-quantities span, .summary-page-values strong { color: #63e9d8; }
+.work-details-panel .work-member-card, .work-details-panel .work-height-editor, .work-details-panel .work-appearance, .work-details-panel .work-item-settings, .work-details-panel .isolation-notice { background: #ffffff04; border-color: #4d687d; color: #e4eef5; }
+.work-details-panel button { background: #ffffff05; color: #d9e4ec; border-color: #4d687d; }
+.work-details-panel button:not(:disabled):hover, .summary-page-heading button:hover { background: #ffffff0b; color: #3ce1d7; border-color: #33bfae; }
+.work-details-panel button[aria-pressed="true"] { color: #3ce1d7; border-color: #35bda9; background: #ffffff08; }
+.work-details-panel input:not([type="checkbox"]):not([type="color"]):not([type="range"]), .work-details-panel select { color: #173247; background: #f5f9fc; border-color: #6c8799; }
+.work-details-panel .calibration-warning, .summary-page-quantities .calibration-warning { background: #77473288; color: #ffe2c2; border-color: #c58c71; }
+.work-details-panel .work-quantity-summary { color: #63e9d8; background: #ffffff04; border-color: #4d687d; }
+.work-details-panel .work-appearance output { color: #bad0df; }
+/* Sidebar home for the movable palette. */
+.sidebar .measure-panel-layer { position: static; inset: auto; pointer-events: none; }
+.sidebar .measure-panel-layer .compact-floating-panel { pointer-events: auto; }
+.sidebar .is-sidebar-docked .floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel.is-docked { position: static; transform: none; width: 100% !important; min-width: 0; max-width: 100%; margin: 0 0 14px; padding: 9px 7px; border: 1px solid #4d687d; border-radius: 8px; box-shadow: none; background: var(--workspace-banner-bg); }
+.sidebar .is-sidebar-docked .compact-tool-row { justify-content: center; gap: 8px; }
+.sidebar .is-sidebar-docked .tool-selector-grid, .sidebar .is-sidebar-docked .compact-snap-buttons { gap: 3px; }
+.sidebar .is-sidebar-docked .tool-tile, .sidebar .is-sidebar-docked .compact-snap-buttons button, .sidebar .is-sidebar-docked .snap-source-icons button { width: 27px; height: 29px; min-height: 29px; padding: 3px; }
+.compact-snap-group .snap-source-icons { justify-content: center; gap: 5px; margin-top: 5px; }
+.floating-toolbox.compact-floating-panel .compact-snap-group .snap-source-icons button { width: 36px; height: 32px; }
+.sidebar .is-sidebar-docked .compact-snap-group .snap-source-icons { gap: 3px; }
+.sidebar .is-sidebar-docked .compact-snap-group .snap-source-icons button { width: 27px; height: 29px; }
+.description-submenu { display: block; }
+.description-option-row { display: flex; align-items: center; gap: 5px; }
+.description-option-row > button, .description-option-row > .automatic-description { flex: 1; min-width: 0; }
+.description-order-actions { display: flex; gap: 3px; }
+.floating-toolbox.compact-floating-panel .description-submenu .description-order-actions button { width: 28px; min-width: 28px; text-align: center; border: 1px solid #4d687d; }
+.floating-toolbox.compact-floating-panel .description-submenu .reorder-descriptions { display: inline-block; float: right; width: auto; padding: 3px 7px; color: #63e9d8; border: 1px solid #4d687d; font-size: 11px; }
+@keyframes wall-height-reminder { 0%,100% { box-shadow: 0 0 0 1px #25d6cb66; } 50% { box-shadow: 0 0 0 3px #25d6cbcc, 0 0 10px #25d6cb77; } }
+.floating-toolbox.compact-floating-panel .height-reminder input { animation: wall-height-reminder 1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .floating-toolbox.compact-floating-panel .height-reminder input { animation: none; outline: 2px solid #25d6cb; } }
+.calibration-icon-actions { display: flex; justify-content: center; gap: 7px; margin: 8px 0; }
+.sidebar .calibration-icon-actions button { display: flex; align-items: center; justify-content: center; width: 32px; height: 30px; padding: 5px; border-radius: 5px; }
+.sidebar .calibration-icon-actions .clear-calibration-icon { color: white; background: #8a383e; border-color: #d77279; }
+.calibration-dock-tools { font-family: inherit; font-size: 12px; font-weight: 500; }
+/* Finish navy styling of nested cards, fields and settings on both sides. */
+.sidebar .category-settings, .sidebar .measurement-section, .sidebar .work-item-settings, .sidebar .category-settings details, .sidebar .category-settings fieldset, .sidebar .summary-values, .sidebar .work-item-button, .sidebar .measurement-history details, .work-details-panel .measurement-details, .work-details-panel .wall-height-field { color: #e4eef5; background: var(--workspace-banner-bg); border-color: #4d687d; }
+.sidebar input:not([type="checkbox"]):not([type="color"]):not([type="range"]), .sidebar select, .work-details-panel input:not([type="checkbox"]):not([type="color"]):not([type="range"]), .work-details-panel select { background: #1b3043; color: #e4eef5; border-color: #527586; }
+.sidebar input::placeholder, .work-details-panel input::placeholder { color: #a5bdce; }
+.sidebar .category-settings button, .sidebar .work-padlock { background: #ffffff08; color: #d9e4ec; border-color: #4d687d; }
+.sidebar .work-padlock.is-locked { color: #63e9d8; background: #ffffff08; }
+.sidebar .category-settings summary, .sidebar .measurement-section > summary { color: #e4eef5; }
+.sidebar .sidebar-tabs, .sidebar .category-view-panel, .sidebar .group-panel, .sidebar .group-card, .sidebar .category-list, .sidebar .summary-card, .sidebar .plot-summary, .work-details-panel .group-card { background: var(--workspace-banner-bg); color: #e4eef5; border-color: #4d687d; }
+/* Final contrast and compact sizing fixes. */
+.sidebar .skim-source-note, .work-details-panel .skim-source-note, .summary-page-quantities .skim-source-note { background: var(--workspace-banner-bg); color: #fff; border: 1px solid #4d687d; }
+.sidebar .summary-panel .summary-values { color: #61e8d5; }
+.sidebar .calibration-dock { max-height: none; overflow: visible; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel .panel-wall-height { flex: none; flex-basis: auto; order: initial; gap: 2px; line-height: 1.2; }
+.floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel .panel-wall-height > div { margin: 0; }
+.sidebar .is-sidebar-docked .floating-toolbox.icon-only-toolbox.description-toolbox.compact-floating-panel.is-docked { gap: 5px; padding: 7px; }
+/* Calibration visibility is independent of the clean measured-work overview. */
+.measurement-overlay.overview-drawing .calibration-overlay circle { visibility: visible; }
+.measurement-overlay.overview-drawing .calibration-overlay text { display: block; }

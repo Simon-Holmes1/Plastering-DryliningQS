@@ -49,12 +49,15 @@ type RunMeasurement = {
 }
 
 type MeasurementGroup = { id: string; name: string; categoryId?: string; includeSkim?: boolean; appearance?: { color?: string; width?: number; opacity?: number } }
-type WorkCategory = { id: string; name: string; color: string; mode: 'measure' | 'count' | 'derived'; skimTarget?: 'walls' | 'ceilings' }
+type WorkHeading = 'Tack' | 'Dab' | 'Skim' | 'Insulation' | 'Metal'
+type WorkCategory = { menuOrder?: number; heading?: WorkHeading; id: string; name: string; color: string; mode: 'measure' | 'count' | 'derived'; skimTarget?: 'walls' | 'ceilings' }
 type CountMeasurement = { id: string; name?: string; groupId?: string; categoryId?: string; point: Point; locked: boolean }
 type MeasurementKind = 'length' | 'run' | 'area' | 'point'
 
-type UiIconName = 'file' | 'save' | 'import' | 'length' | 'run' | 'area' | 'point' | 'check' | 'work' | 'summary' | 'lock' | 'unlock' | 'mixed-lock' | 'snap' | 'endpoint' | 'midpoint'
+type UiIconName = 'file' | 'save' | 'import' | 'length' | 'run' | 'area' | 'point' | 'check' | 'work' | 'summary' | 'lock' | 'unlock' | 'mixed-lock' | 'snap' | 'endpoint' | 'midpoint' | 'snap-pdf' | 'snap-measure' | 'snap-both' | 'eye' | 'eye-off'
 const uiIconPaths: Record<UiIconName, string> = {
+  eye: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12 M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0',
+  'eye-off': 'M2 2l20 20 M4 7c-1 1-2 3-2 5 0 0 4 7 10 7 2 0 4-1 5-2 M8 5c1 0 3-1 4-1 6 0 10 8 10 8l-3 4 M10 10a3 3 0 0 0 4 4',
   file: 'M6 3h8l4 4v14H6z M14 3v5h5 M9 12h6 M9 16h6',
   save: 'M5 3h12l3 3v15H4V3z M8 3v6h8V3 M8 21v-8h8v8',
   import: 'M12 15V3 M7 8l5-5 5 5 M4 14v6h16v-6',
@@ -65,6 +68,9 @@ const uiIconPaths: Record<UiIconName, string> = {
   check: 'M5 12l4 4L19 6',
   work: 'M4 5h2 M10 5h10 M4 12h2 M10 12h10 M4 19h2 M10 19h10',
   summary: 'M4 20V4 M4 20h17 M9 16v-4 M14 16V8 M19 16V5',
+  'snap-pdf': 'M5 2h9l5 5v15H5z M14 2v6h5 M8 12h3v4H8v3 M14 12h2v7h-2 M8 16h3',
+  'snap-measure': 'M3 19L21 5 M3 16v5h5 M16 3h5v5 M11 9l4 4',
+  'snap-both': 'M3 2h8l4 4v8H3z M10 2v5h5 M7 21L21 7 M6 18v4h4 M18 6h4v4',
   snap: 'M5 4v8a7 7 0 0 0 14 0V4h-4v8a3 3 0 0 1-6 0V4z M5 8h4 M15 8h4',
   endpoint: 'M5 19L19 5 M3 17h4v4H3z M17 3h4v4h-4z',
   midpoint: 'M3 19L21 5 M12 8l4 4-4 4-4-4z',
@@ -88,7 +94,36 @@ const initialCategories: WorkCategory[] = [
   { id: 'svp-boxing', name: 'SVP Boxing', color: '#dc2626', mode: 'count' },
   { id: 'skimmed-walls', name: 'Skimmed Walls', color: '#9333ea', mode: 'derived' },
   { id: 'skimmed-ceiling', name: 'Skimmed Ceiling', color: '#0369a1', mode: 'derived' },
+  {"id":"tack-treds","name":"Tack Treds","color":"#0d9488","mode":"measure","skimTarget":"ceilings"},
+  {"id":"insulation-ceiling-100","name":"Insulation Ceilings / 100mm","color":"#a16207","mode":"measure"},
+  {"id":"insulation-ceiling-200","name":"Insulation Ceilings / 200mm","color":"#a16207","mode":"measure"},
+  {"id":"insulation-wall-50","name":"Insulation Walls / 50mm","color":"#15803d","mode":"measure"},
+  {"id":"insulation-wall-65","name":"Insulation Walls / 65mm","color":"#15803d","mode":"measure"},
+  {"id":"insulation-celotex-25","name":"Celotex / 25mm","color":"#65a30d","mode":"measure"},
+  {"id":"insulation-celotex-50","name":"Celotex / 50mm","color":"#65a30d","mode":"measure"},
+  {"id":"insulation-celotex-90","name":"Celotex / 90mm","color":"#65a30d","mode":"measure"},
+  {"id":"insulation-celotex-100","name":"Celotex / 100mm","color":"#65a30d","mode":"measure"},
+  {"id":"insulation-celotex-120","name":"Celotex / 120mm","color":"#65a30d","mode":"measure"},
+  {"id":"insulation-celotex-150","name":"Celotex / 150mm","color":"#65a30d","mode":"measure"},
+  {"id":"metal-mf-ceiling","name":"Metal MF Ceiling","color":"#475569","mode":"measure"},
+  {"id":"metal-stud-50-400","name":"Metal 50/400mm Stud Wall","color":"#4f46e5","mode":"measure"},
+  {"id":"metal-stud-50-450","name":"Metal 50/450mm Stud Wall","color":"#4f46e5","mode":"measure"},
+  {"id":"metal-stud-50-600","name":"Metal 50/600mm Stud Wall","color":"#4f46e5","mode":"measure"},
+  {"id":"metal-stud-70-400","name":"Metal 70/400mm Stud Wall","color":"#7c3aed","mode":"measure"},
+  {"id":"metal-stud-70-450","name":"Metal 70/450mm Stud Wall","color":"#7c3aed","mode":"measure"},
+  {"id":"metal-stud-70-600","name":"Metal 70/600mm Stud Wall","color":"#7c3aed","mode":"measure"},
+  {"id":"metal-deflection-head","name":"Metal Deflection Head","color":"#64748b","mode":"measure"},
 ]
+
+const descriptionSections: Array<{title:string;options:Array<[string,string]>}> = [{"title":"Tack","options":[["tack-ceiling","Ceilings"],["tack-timber-wall","Timber Wall"],["tack-metal-wall","Metal Wall"],["tack-treds","Treds"]]},{"title":"Dab","options":[["dabbed-external-wall","External Walls"],["dabbed-internal-wall","Internal Walls"]]},{"title":"Skim","options":[["skimmed-ceiling","Ceilings"],["skimmed-walls","Walls"]]},{"title":"Insulation","options":[["insulation-ceiling-100","Ceilings / 100mm"],["insulation-ceiling-200","Ceilings / 200mm"],["insulation-wall-50","Walls / 50mm"],["insulation-wall-65","Walls / 65mm"],["insulation-celotex-25","Celotex / 25mm"],["insulation-celotex-50","Celotex / 50mm"],["insulation-celotex-90","Celotex / 90mm"],["insulation-celotex-100","Celotex / 100mm"],["insulation-celotex-120","Celotex / 120mm"],["insulation-celotex-150","Celotex / 150mm"]]},{"title":"Metal","options":[["metal-mf-ceiling","MF Ceiling"],["metal-stud-50-400","50/400mm Stud Wall"],["metal-stud-50-450","50/450mm Stud Wall"],["metal-stud-50-600","50/600mm Stud Wall"],["metal-stud-70-400","70/400mm Stud Wall"],["metal-stud-70-450","70/450mm Stud Wall"],["metal-stud-70-600","70/600mm Stud Wall"],["metal-deflection-head","Deflection Head"]]}]
+const legacyCategoryIds = new Set(["tack-ceiling","tack-timber-wall","tack-metal-wall","dabbed-external-wall","dabbed-internal-wall","metal-studwork","insulated-ceiling","insulated-wall","svp-boxing","skimmed-walls","skimmed-ceiling"])
+function workDescriptionLabel(id: string,categories: WorkCategory[]) {
+  const category=categories.find(item=>item.id===id), original=initialCategories.find(item=>item.id===id)
+  if(!category) return 'Choose work description'
+  if(category.name!==original?.name) return category.heading ? category.heading+' · '+category.name : category.name || id
+  const section=descriptionSections.find(section=>section.options.some(([key])=>key===id))
+  return section ? section.title+' · '+section.options.find(([key])=>key===id)![1] : category.name
+}
 
 type AreaMeasurement = {
   id: string
@@ -253,13 +288,15 @@ function readTakeoff(value: unknown): TakeoffFile {
     if (!object(category) || typeof category.id !== 'string' || !category.id.length || categoryIds.has(category.id)
       || typeof category.name !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(category.color)
       || !['measure', 'count', 'derived'].includes(category.mode)
+      || (category.menuOrder!==undefined && (!Number.isInteger(category.menuOrder) || category.menuOrder<0))
+      || (category.heading!==undefined && !['Tack','Dab','Skim','Insulation','Metal'].includes(category.heading))
       || (category.skimTarget !== undefined && (category.mode !== 'measure' || !['walls', 'ceilings'].includes(category.skimTarget)))) invalid()
     categoryIds.add(category.id)
   }
   // Built-in category IDs keep counting and automatic skim rules stable across saves.
   for (const required of initialCategories) {
     const category = categories.find((item) => item.id === required.id)
-    if (!category || category.mode !== required.mode || category.skimTarget !== required.skimTarget) invalid()
+    if ((!category && legacyCategoryIds.has(required.id)) || (category && (category.mode !== required.mode || category.skimTarget !== required.skimTarget))) invalid()
   }
   const groups: MeasurementGroup[] = value.version === 1 ? [] : value.groups
   const nextGroupNumber = value.version === 1 ? 1 : value.nextGroupNumber
@@ -335,7 +372,7 @@ function readTakeoff(value: unknown): TakeoffFile {
   if (view.showUngrouped !== undefined && typeof view.showUngrouped !== 'boolean') invalid()
   if (view.categoryId !== undefined && (typeof view.categoryId !== 'string' || (view.categoryId !== '' && !categoryIds.has(view.categoryId)))) invalid()
   if (view.groupId !== undefined && (typeof view.groupId !== 'string' || (view.groupId !== '' && !groupIds.has(view.groupId)))) invalid()
-  return { ...value, version: 6, drawing: { ...value.drawing, additionalPdfs: value.version === 6 ? value.drawing.additionalPdfs : [], pages: value.version === 6 ? value.drawing.pages : undefined }, groups, nextGroupNumber, areas, nextAreaNumber, categories, counts, nextCountNumber } as TakeoffFile
+  return { ...value, version: 6, drawing: { ...value.drawing, additionalPdfs: value.version === 6 ? value.drawing.additionalPdfs : [], pages: value.version === 6 ? value.drawing.pages : undefined }, groups, nextGroupNumber, areas, nextAreaNumber, categories: [...categories,...initialCategories.filter(category=>!categoryIds.has(category.id)).map(category=>({...category}))], counts, nextCountNumber } as TakeoffFile
 }
 
 type SnapSegment = { a: Point; b: Point }
@@ -551,22 +588,29 @@ export default function App() {
   useEffect(() => { document.title = 'Holmes QS' }, [])
   const [jobPanelOpen, setJobPanelOpen] = useState(false)
   const [toolboxOpen, setToolboxOpen] = useState(true)
-  const [toolboxPosition, setToolboxPosition] = useState<Point>({ x: 310, y: 18 })
+  const [toolboxPosition, setToolboxPosition] = useState<Point>({ x: 0, y: 0 })
   const [toolboxDocked,setToolboxDocked]=useState(true)
-  const [dockHover,setDockHover]=useState(false)
-  const [iconDockSlot,setIconDockSlot]=useState(0)
-  const [dockPreviewSlot,setDockPreviewSlot]=useState(0)
   const [toolbarOrigin,setToolbarOrigin]=useState<Point>({x:0,y:66})
   const [toolbarBarHeight,setToolbarBarHeight]=useState(66)
   const toolbarHeaderRef=useRef<HTMLElement | null>(null)
-  const [descriptionPosition,setDescriptionPosition]=useState<Point>({x:12,y:150})
-  const fixedToolbarSettingsRef=useRef<HTMLDivElement | null>(null)
+  const [descriptionPosition,setDescriptionPosition]=useState<Point>({x:8,y:150})
+  const [panelSize,setPanelSize]=useState({width:342,height:160})
+  const [panelMenu,setPanelMenu]=useState<Point | null>(null)
   const descriptionMenuRef=useRef<HTMLDivElement | null>(null)
   const descriptionSummaryRef=useRef<HTMLElement | null>(null)
-  const toolbarControlRefs=useRef<Array<HTMLElement | null>>([])
-  const dockBoundariesRef=useRef<number[] | null>(null)
-  const dockZoneRef=useRef<HTMLDivElement | null>(null)
   const [descriptionOpen,setDescriptionOpen]=useState(false)
+  const [reorderDescriptions,setReorderDescriptions]=useState(false)
+  const [calibrationVisible,setCalibrationVisible]=useState(true)
+  const [hoverHeading,setHoverHeading]=useState<WorkHeading | 'Other' | null>(null)
+  const descriptionSubmenuRef=useRef<HTMLDivElement | null>(null)
+  const [submenuTop,setSubmenuTop]=useState(0)
+  const [newDescriptionOpen,setNewDescriptionOpen]=useState(false)
+  const [newDescriptionName,setNewDescriptionName]=useState('')
+  const [newDescriptionHeading,setNewDescriptionHeading]=useState<WorkHeading>('Tack')
+  const [newDescriptionMode,setNewDescriptionMode]=useState<'measure'|'count'>('measure')
+  const [newDescriptionSkim,setNewDescriptionSkim]=useState<'none'|'ceilings'|'walls'>('none')
+  const [newDescriptionError,setNewDescriptionError]=useState('')
+  const [messagesHidden,setMessagesHidden]=useState(true)
   const [isolatedMeasurementId,setIsolatedMeasurementId]=useState<string | null>(null)
   const [duplicateRequest,setDuplicateRequest]=useState<{ids:string[];page:number;title:string;categoryId:string} | null>(null)
   const [duplicatePage,setDuplicatePage]=useState(1)
@@ -796,6 +840,7 @@ export default function App() {
     setMeasurementMenu(null)
     setWorkMenu(null)
     setToolCustomName('')
+    setNewDescriptionOpen(false);setHoverHeading(null);setMessagesHidden(true);setDescriptionOpen(false);setReorderDescriptions(false);setSnapEnabled(false);setToolboxDocked(true);setPanelMenu(null);setCalibrationVisible(true)
     setIsolatedMeasurementId(null);setDuplicateRequest(null)
     setSelectedEditPoint(null)
     setPageDeletePrompt(null)
@@ -1036,6 +1081,7 @@ export default function App() {
       const cachedPages = pdfSnapCache.current.doc === pdf ? pdfSnapCache.current.pages : new Map<number, SnapIndex>()
       pdfSnapCache.current = { doc: nextPdf, pages: new Map(cachedPages) }
       setDrawingSources(sources); setDrawingPages(pages); setPdf(nextPdf)
+      setDescriptionOpen(false);setHoverHeading(null);setReorderDescriptions(false);setMessagesHidden(true);setSnapEnabled(false);setToolboxDocked(true);setPanelMenu(null)
       setPageNumber(drawingPages.length + 1); setViewMode('fit-page'); setPan({ x: 0, y: 0 })
       setStatus(`Added ${pages.length - drawingPages.length} drawing pages. Existing measurements and calibration have been kept.`)
       additions.length = 0
@@ -1375,7 +1421,7 @@ export default function App() {
     const bounds=workspaceRef.current?.getBoundingClientRect()
     const box=toolboxRef.current?.getBoundingClientRect()
     if (!bounds || !box) return position
-    return { x: Math.max(8, Math.min(position.x, bounds.width-box.width-8)), y: Math.max(8, Math.min(position.y, bounds.height-Math.min(box.height, bounds.height-16)-8)) }
+    return { x: Math.max(8, Math.min(position.x, bounds.width-box.width-8)), y: Math.max(0, Math.min(position.y, bounds.height-Math.min(box.height, bounds.height-16)-8)) }
   }
   useEffect(() => {
     if (sidebarTab !== 'measure' || toolboxDocked || !workspaceRef.current) return
@@ -1393,21 +1439,36 @@ export default function App() {
     window.addEventListener('resize',update)
     return ()=>{observer.disconnect();window.removeEventListener('resize',update)}
   },[sidebarTab])
-  function toolbarDockCandidate(clientX: number,clientY: number): number | null {
-    const bounds=dockZoneRef.current?.getBoundingClientRect()
-    if(!bounds || clientX<bounds.left || clientX>bounds.right || clientY<bounds.top || clientY>bounds.bottom) return null
-    const center=(bounds.left+bounds.right)/2,settings=fixedToolbarSettingsRef.current?.getBoundingClientRect()
-    const left=settings?.left ?? center-196,right=settings?.right ?? center+196,width=toolboxRef.current?.getBoundingClientRect().width ?? 342
-    if(clientX<left-8 && left-bounds.left>=width+24) return 0
-    if(clientX>right+8 && bounds.right-right>=width+24) return 3
-    return null
+  useEffect(()=>{
+    if(sidebarTab!=='measure' || !toolboxRef.current) return
+    const update=()=>{const rect=toolboxRef.current?.getBoundingClientRect();if(rect?.width && rect.height)setPanelSize(current=>current.width===rect.width && current.height===rect.height ? current : {width:rect.width,height:rect.height})}
+    update();const observer=new ResizeObserver(update);observer.observe(toolboxRef.current)
+    return ()=>observer.disconnect()
+  },[sidebarTab])
+  function dockMeasurementPanel() {
+    setToolboxDocked(true);setPanelMenu(null);setDescriptionOpen(false);setHoverHeading(null);setReorderDescriptions(false);setMessagesHidden(true);setSnapEnabled(false);toolboxDragRef.current=null
+    const workspace=workspaceRef.current?.getBoundingClientRect(),box=toolboxRef.current?.getBoundingClientRect()
+    setToolboxPosition({x:Math.max(0,((workspace?.width ?? window.innerWidth ?? 1200)-(box?.width ?? 342))/2),y:0})
   }
+  function openPanelMenu(event: React.MouseEvent<HTMLDivElement>) {
+    if((event.target as Element).closest('input,textarea,[contenteditable="true"]')) return
+    event.preventDefault();event.stopPropagation();setDescriptionOpen(false);setMeasurementMenu(null);setWorkMenu(null)
+    setPanelMenu({x:Math.max(8,Math.min(event.clientX,(window.innerWidth || 1200)-180)),y:Math.max(8,Math.min(event.clientY,(window.innerHeight || 800)-96))})
+  }
+  useEffect(()=>{
+    if(!panelMenu) return
+    const close=()=>setPanelMenu(null)
+    const outside=(event: PointerEvent)=>{if(!(event.target as Element | null)?.closest('[data-panel-menu]'))close()}
+    const escape=(event: KeyboardEvent)=>{if(event.key==='Escape')close()}
+    window.addEventListener('pointerdown',outside);window.addEventListener('resize',close);window.addEventListener('keydown',escape)
+    return ()=>{window.removeEventListener('pointerdown',outside);window.removeEventListener('resize',close);window.removeEventListener('keydown',escape)}
+  },[panelMenu])
   function startToolboxDrag(event: React.PointerEvent<HTMLDivElement>) {
     if(event.button!==0 || (event.target as Element).closest('button,summary,input,select,textarea,a,[contenteditable="true"],[data-no-drag]')) return
     const workspace=workspaceRef.current?.getBoundingClientRect(),box=toolboxRef.current?.getBoundingClientRect()
     const origin=toolboxDocked && workspace && box ? {x:box.left-workspace.left,y:box.top-workspace.top} : toolboxPosition
     if(workspace)setToolbarOrigin({x:workspace.left ?? 0,y:workspace.top ?? 0})
-    setDockHover(false);setDescriptionOpen(false)
+    setPanelMenu(null);setDescriptionOpen(false)
     toolboxDragRef.current={id:event.pointerId,x:event.clientX,y:event.clientY,origin,moved:false}
     event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault()
   }
@@ -1417,41 +1478,29 @@ export default function App() {
     if(!drag.moved && Math.hypot(event.clientX-drag.x,event.clientY-drag.y)<4) return
     drag.moved=true;setToolboxDocked(false)
     setToolboxPosition(clampToolbox({x:drag.origin.x+event.clientX-drag.x,y:drag.origin.y+event.clientY-drag.y}))
-    const slot=toolbarDockCandidate(event.clientX,event.clientY)
-    setDockHover(slot!==null);if(slot!==null)setDockPreviewSlot(slot)
   }
   function endToolboxDrag(event: React.PointerEvent<HTMLDivElement>) {
     const drag=toolboxDragRef.current
     if(!drag || drag.id!==event.pointerId) return
-    const slot=drag.moved && event.type!=='pointercancel' ? toolbarDockCandidate(event.clientX,event.clientY) : null
-    if(slot!==null) {setIconDockSlot(slot);setToolboxDocked(true)}
-    setDockHover(false);toolboxDragRef.current=null
+    toolboxDragRef.current=null
     if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId)
   }
   function moveIconToolbarWithKeys(event: React.KeyboardEvent<HTMLDivElement>) {
     if(event.target!==event.currentTarget) return
-    if(event.key==='Enter') {event.preventDefault();event.stopPropagation();setToolboxDocked(true);setDockHover(false);return}
-    if(toolboxDocked && (event.key==='ArrowLeft' || event.key==='ArrowRight')) {event.preventDefault();setIconDockSlot(event.key==='ArrowLeft' ? 0 : 3);return}
+    if(event.key==='Enter') {event.preventDefault();event.stopPropagation();dockMeasurementPanel();return}
     const delta: Record<string,Point>={ArrowLeft:{x:-20,y:0},ArrowRight:{x:20,y:0},ArrowUp:{x:0,y:-20},ArrowDown:{x:0,y:20}}
-    if(delta[event.key]) {event.preventDefault();setToolboxDocked(false);setToolboxPosition(position=>clampToolbox({x:position.x+delta[event.key].x,y:position.y+delta[event.key].y}))}
-  }
-  // Dock only into a clear end of the bar; the centred settings never have to shift.
-  useEffect(()=>{
-    if(sidebarTab!=='measure' || !toolboxDocked || !dockZoneRef.current) return
-    const check=()=>{
-      const bar=dockZoneRef.current?.getBoundingClientRect(),settings=fixedToolbarSettingsRef.current?.getBoundingClientRect(),box=toolboxRef.current?.getBoundingClientRect()
-      if(!bar || !settings || !box) return
-      const space=iconDockSlot===3 ? bar.right-settings.right : settings.left-bar.left
-      if(space<box.width+24) {setToolboxDocked(false);setToolboxPosition({x:12,y:bar.height+12})}
+    if(delta[event.key]) {
+      event.preventDefault();const workspace=workspaceRef.current?.getBoundingClientRect(),box=toolboxRef.current?.getBoundingClientRect()
+      const origin=toolboxDocked && workspace && box ? {x:box.left-workspace.left,y:box.top-workspace.top} : toolboxPosition
+      setToolboxDocked(false);setToolboxPosition(clampToolbox({x:origin.x+delta[event.key].x,y:origin.y+delta[event.key].y}))
     }
-    check();const observer=new ResizeObserver(check);observer.observe(dockZoneRef.current);if(fixedToolbarSettingsRef.current)observer.observe(fixedToolbarSettingsRef.current);if(toolboxRef.current)observer.observe(toolboxRef.current)
-    return ()=>observer.disconnect()
-  },[sidebarTab,toolboxDocked,iconDockSlot])
+  }
   function positionDescriptionMenu(target: HTMLElement) {
     const rect=target.getBoundingClientRect(),width=window.innerWidth || 1200,height=window.innerHeight || 800
-    const menu=descriptionMenuRef.current?.getBoundingClientRect(),menuWidth=menu?.width || Math.min(720,width-16),menuHeight=menu?.height || 220
-    const below=rect.bottom+8,above=rect.top-menuHeight-8
-    setDescriptionPosition({x:Math.max(8,Math.min(rect.left,width-menuWidth-8)),y:Math.max(8,below+menuHeight<=height-8 ? below : above>=8 ? above : height-menuHeight-8)})
+    const panel=toolboxRef.current?.getBoundingClientRect() ?? rect
+    const menuWidth=Math.min(560,width-16),menuHeight=90,reserveHeight=300
+    const above=panel.top-menuHeight,below=panel.top+panel.height
+    setDescriptionPosition({x:Math.max(8,Math.min(panel.left+panel.width/2-menuWidth/2,width-menuWidth-8)),y:Math.max(8,above-reserveHeight>=8 ? above : below+menuHeight+reserveHeight<=height-8 ? below : panel.top>height-below ? above : Math.min(below,height-menuHeight-8))})
   }
   useEffect(()=>{
     if(!descriptionOpen || !descriptionMenuRef.current) return
@@ -1459,9 +1508,32 @@ export default function App() {
     update();const observer=new ResizeObserver(update);observer.observe(descriptionMenuRef.current)
     return ()=>observer.disconnect()
   },[descriptionOpen,customFieldOpen,categories.length])
+  function descriptionOptions(heading: WorkHeading | 'Other') {
+    if(heading==='Other') return categories.filter(category=>category.mode!=='derived' && !category.heading && !descriptionSections.some(section=>section.options.some(([id])=>id===category.id)) && (!legacyCategoryIds.has(category.id) || category.mode==='count' || groups.some(group=>group.categoryId===category.id))).map(category=>({category,label:category.name}))
+    const section=descriptionSections.find(section=>section.title===heading)!
+    return [...section.options.map(([id,label])=>({category:categories.find(category=>category.id===id)!,label})),...categories.filter(category=>category.heading===heading && !descriptionSections.some(section=>section.options.some(([id])=>id===category.id))).map(category=>({category,label:category.name}))].map((item,index)=>({...item,index})).sort((a,b)=>(a.category.menuOrder ?? a.index)-(b.category.menuOrder ?? b.index))
+  }
+  function moveDescription(heading: WorkHeading,id: string,delta: number) {
+    const ids=descriptionOptions(heading).map(item=>item.category.id),index=ids.indexOf(id),target=index+delta
+    if(index<0 || target<0 || target>=ids.length)return
+    ;[ids[index],ids[target]]=[ids[target],ids[index]]
+    setCategories(current=>current.map(category=>ids.includes(category.id) ? {...category,menuOrder:ids.indexOf(category.id)} : category))
+  }
+  useEffect(()=>{
+    if(!descriptionOpen) setHoverHeading(null)
+  },[descriptionOpen])
+  useEffect(()=>{
+    if(!descriptionOpen || !hoverHeading) return
+    const update=()=>{const height=descriptionSubmenuRef.current?.getBoundingClientRect().height ?? 0,base=descriptionMenuRef.current?.getBoundingClientRect().height ?? 90,panelTop=toolboxRef.current?.getBoundingClientRect().top ?? 0;const above=descriptionPosition.y<panelTop;setSubmenuTop(above ? Math.max(-height+1,8-descriptionPosition.y) : Math.min(base-1,(window.innerHeight || 800)-descriptionPosition.y-height-8))}
+    update();const observer=new ResizeObserver(update);if(descriptionSubmenuRef.current)observer.observe(descriptionSubmenuRef.current)
+    return ()=>observer.disconnect()
+  },[descriptionOpen,hoverHeading,descriptionPosition.y,categories.length])
   function descriptionMenuKeys(event: React.KeyboardEvent<HTMLDivElement>) {
     if((event.target as Element).closest('input')) return
-    const buttons=Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')),index=buttons.indexOf(event.target as HTMLButtonElement)
+    const isHeading=(event.target as Element).closest('[data-description-heading]')
+    const buttons=Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>(isHeading ? '[data-description-heading]' : '[role="menuitemradio"]')),index=buttons.indexOf(event.target as HTMLButtonElement)
+    if(isHeading && event.key==='ArrowDown') {event.preventDefault();descriptionSubmenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitemradio"]')?.focus();return}
+    if(!isHeading && event.key==='ArrowLeft') {event.preventDefault();descriptionMenuRef.current?.querySelector<HTMLButtonElement>('[data-description-heading="'+hoverHeading+'"]')?.focus();return}
     if(['ArrowDown','ArrowRight','ArrowUp','ArrowLeft','Home','End'].includes(event.key)) {
       event.preventDefault();const next=event.key==='Home' ? 0 : event.key==='End' ? buttons.length-1 : index<0 ? 0 : (index+(event.key==='ArrowUp'||event.key==='ArrowLeft' ? -1 : 1)+buttons.length)%buttons.length
       buttons[next]?.focus()
@@ -1674,19 +1746,19 @@ export default function App() {
     return lengthMode ? 'length' : runMode ? 'run' : areaMode ? 'area' : countMode ? 'point' : readyToolKind
   }
 
-  function toolDestination(kind: MeasurementKind, categoryId: string, customName = toolCustomName) {
+  function toolDestination(kind: MeasurementKind, categoryId: string, customName = toolCustomName, availableCategories = categories) {
     const mode = kind === 'point' ? 'count' : 'measure'
     const name = customName.trim()
-    let category = name ? categories.find((item) => item.mode === mode && item.name.trim().toLowerCase() === name.toLowerCase())
-      : categories.find((item) => item.id === categoryId && item.mode === mode)
+    let category = name ? availableCategories.find((item) => item.mode === mode && item.name.trim().toLowerCase() === name.toLowerCase())
+      : availableCategories.find((item) => item.id === categoryId && item.mode === mode)
     if (!category && name) {
       let number = 1
-      while (categories.some((item) => item.id === 'custom-' + number)) number++
-      category = { id: 'custom-' + number, name, color: categories.find((item) => item.id === categoryId)?.color ?? '#0891b2', mode }
+      while (availableCategories.some((item) => item.id === 'custom-' + number)) number++
+      category = { id: 'custom-' + number, name, color: availableCategories.find((item) => item.id === categoryId)?.color ?? '#0891b2', mode }
       const newCategory = category
       setCategories((current) => [...current, newCategory])
     }
-    category ??= categories.find((item) => item.mode === mode)
+    category ??= availableCategories.find((item) => item.mode === mode)
     if (!category) return null
     const targetCategory = category
     let group = groups.find((item) => item.categoryId === targetCategory.id && (!name || item.name.trim().toLowerCase() === name.toLowerCase()))
@@ -1744,7 +1816,7 @@ export default function App() {
   }
 
   function navigateWorkspace(tab: typeof sidebarTab) {
-    toolboxDragRef.current=null;dockBoundariesRef.current=null;setDockHover(false)
+    toolboxDragRef.current=null;setPanelMenu(null)
     setIsolatedMeasurementId(null);setDescriptionOpen(false)
     if (tab==='measure') setToolboxOpen(true)
     stopMeasurement()
@@ -1773,19 +1845,42 @@ export default function App() {
   function changeToolCategory(categoryId: string) {
     const category = categories.find((item) => item.id === categoryId && item.mode !== 'derived')
     if (!category) return
-    const kind = currentToolKind()
-    if (kind && ((kind === 'point') !== (category.mode === 'count'))) {
-      if (!finishToolBeforeSwitch()) return
-      const nextKind = category.mode === 'count' ? 'point' : lastMeasureToolRef.current
-      toolDestination(nextKind, categoryId, '')
-      setQueuedStart(nextKind)
-    } else if (kind) {
-      toolDestination(kind, categoryId, '')
-      setToolSwitchNotice(countMode ? 'New point markers will use this category. Existing markers are unchanged.' : 'Current points kept; this measurement will use the selected category.')
-    } else chooseMeasurementCategory(categoryId)
+    const kind=currentToolKind(),nextKind: MeasurementKind=category.mode==='count' ? 'point' : /ceiling/i.test(category.name) ? 'area' : 'run'
+    if(kind && kind!==nextKind && !finishToolBeforeSwitch())return
+    if(!pdf || !hasValidCalibration() || calibrationMode || pendingCalibration) {chooseMeasurementCategory(categoryId);if(nextKind!=='point')lastMeasureToolRef.current=nextKind;return}
+    toolDestination(nextKind,categoryId,'')
+    if(kind!==nextKind)setQueuedStart(nextKind)
+    if(nextKind!=='point')lastMeasureToolRef.current=nextKind
     setToolCustomName('')
   }
 
+  function openNewDescription() {
+    setNewDescriptionName('');setNewDescriptionError('');setNewDescriptionSkim('none')
+    setNewDescriptionMode(currentToolKind()==='point' ? 'count' : 'measure')
+    const selected=categories.find(category=>category.id===(chooserCategoryId || activeCategory?.id)),section=descriptionSections.find(section=>section.options.some(([id])=>id===selected?.id))
+    setNewDescriptionHeading(selected?.heading ?? (section?.title as WorkHeading | undefined) ?? 'Tack')
+    setDescriptionOpen(false);setPanelMenu(null);setNewDescriptionOpen(true)
+  }
+  function saveNewDescription() {
+    const name=newDescriptionName.trim()
+    if(!name) {setNewDescriptionError('Enter a work description name.');return}
+    if(name.length>100) {setNewDescriptionError('Use a name of 100 characters or fewer.');return}
+    const duplicate=categories.some(category=>(category.name.trim().toLowerCase()===name.toLowerCase() || descriptionSections.find(section=>section.title===newDescriptionHeading)?.options.some(([id,label])=>id===category.id && label.toLowerCase()===name.toLowerCase())) && (category.heading ?? descriptionSections.find(section=>section.options.some(([id])=>id===category.id))?.title)===newDescriptionHeading)
+    if(duplicate) {setNewDescriptionError('That work description already exists under '+newDescriptionHeading+'. Choose it from the menu or use a different name.');return}
+    const kind=currentToolKind(),switchType=!!kind && ((kind==='point')!==(newDescriptionMode==='count'))
+    if(switchType && !finishToolBeforeSwitch()) {setNewDescriptionError('Correct or clear the current wall height before changing the measurement type.');return}
+    let number=1;while(categories.some(category=>category.id==='custom-'+number))number++
+    const first=descriptionSections.find(section=>section.title===newDescriptionHeading)?.options[0]?.[0]
+    const category: WorkCategory={id:'custom-'+number,name,heading:newDescriptionHeading,mode:newDescriptionMode,color:categories.find(category=>category.id===first)?.color ?? '#0891b2',...(newDescriptionMode==='measure' && newDescriptionSkim!=='none' ? {skimTarget:newDescriptionSkim} : {})}
+    setCategories(current=>[...current,category]);setToolCustomName('')
+    if(kind) {
+      const targetKind=switchType ? newDescriptionMode==='count' ? 'point' : lastMeasureToolRef.current : kind
+      toolDestination(targetKind,category.id,'',[...categories,category]);if(switchType)setQueuedStart(targetKind)
+    } else {setChooserCategoryId(category.id);setChooserGroupId('__new__')}
+    setNewDescriptionOpen(false);setDescriptionOpen(false);setHoverHeading(null)
+    setStatus(name+' created under '+newDescriptionHeading+'. It is selected and ready to measure.')
+    setToolSwitchNotice(name+' created and selected. Automatic skim: '+(category.skimTarget ? category.skimTarget : 'not included')+'.')
+  }
   function applyToolCustomName() {
     const kind = currentToolKind()
     if (kind) {
@@ -2674,6 +2769,7 @@ export default function App() {
   }
 
   function startCalibration() {
+    setCalibrationVisible(true)
     setReadyToolKind(null)
     if (!pdf || runMode || areaMode || countMode) return
 
@@ -2734,6 +2830,7 @@ export default function App() {
   }
 
   function unlockCalibration() {
+    setCalibrationVisible(true)
     if (runMode || areaMode || countMode) return
     setRecalibrationDistance('')
 
@@ -2812,6 +2909,8 @@ export default function App() {
 
   function clearCalibration() {
     if (runMode || areaMode || countMode) return
+    setCalibrationVisible(true)
+    setCalibrationMode(false)
     setCalibrations((current) => {
       const updated = { ...current }
       delete updated[pageNumber]
@@ -2976,14 +3075,9 @@ export default function App() {
 
   const currentCalibration = calibrations[pageNumber]
 
-  const lineSource =
-    currentCalibration ??
-    (pendingCalibration
-      ? {
-          pointA: pendingCalibration.pointA,
-          pointB: pendingCalibration.pointB,
-        }
-      : null)
+  // Draft calibration must replace the saved overlay while new points are placed.
+  const editingCalibration = calibrationMode || !!pendingCalibration
+  const lineSource = editingCalibration ? pendingCalibration : currentCalibration
 
   let calibrationLine:
     | { x1: number; y1: number; x2: number; y2: number }
@@ -3005,15 +3099,12 @@ export default function App() {
   let pointAHandle: { x: number; y: number } | null = null
   let pointBHandle: { x: number; y: number } | null = null
 
-  const handleSourceA =
-    currentCalibration?.pointA ??
-    pendingCalibration?.pointA ??
-    (calibrationPoints.length >= 1 ? calibrationPoints[0] : null)
-
-  const handleSourceB =
-    currentCalibration?.pointB ??
-    pendingCalibration?.pointB ??
-    (calibrationPoints.length >= 2 ? calibrationPoints[1] : null)
+  const handleSourceA = editingCalibration
+    ? pendingCalibration?.pointA ?? calibrationPoints[0] ?? null
+    : currentCalibration?.pointA ?? null
+  const handleSourceB = editingCalibration
+    ? pendingCalibration?.pointB ?? calibrationPoints[1] ?? null
+    : currentCalibration?.pointB ?? null
 
   if (handleSourceA && viewportRef.current) {
     const [x, y] = viewportRef.current.convertToViewportPoint(
@@ -3488,7 +3579,7 @@ export default function App() {
 
   return (
     <div className="app-shell" style={{'--measure-bar-height':toolbarBarHeight+'px'} as React.CSSProperties} aria-busy={isFileBusy}>
-      <header ref={toolbarHeaderRef} className="topbar" inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest}>
+      <header ref={toolbarHeaderRef} className="topbar" inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen}>
         <div className="brand-and-project">
           <div className="takeoff-brand">
             <svg className="brand-mark" viewBox="0 0 34 38" aria-hidden="true"><path fill="#21d4ce" d="M17 1 32 9 17 18 2 10z" /><path fill="#00a8a4" d="m2 13 12 7v14L2 27z" /><path fill="#19d1c7" d="m19 20 13-8v15l-13 9z" /><path fill="#6ce8df" d="m8 17 7 4-7 12z" /></svg>
@@ -3568,113 +3659,7 @@ export default function App() {
 </section>
       </header>
 
-      <main ref={workspaceRef} className={`workspace ${sidebarTab==='measure' ? 'has-measure-toolbar' : ''} ${sidebarTab === 'summary' ? 'is-summary' : ''} ${selectedWork || showingAllWork ? 'has-work-details' : ''}`} inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest}>
-          <div hidden={sidebarTab!=='measure'} className="measure-toolbar-shell">
-            <div ref={dockZoneRef} className={`measure-dock-zone ${dockHover ? 'dock-hover' : ''}`} aria-label="Measurement toolbar">
-              <div className="measure-toolbar-rail" onScroll={event=>{if(event.target===event.currentTarget)setDescriptionOpen(false)}}>
-                <div hidden={sidebarTab!=='measure'} ref={toolboxRef} className={`measure-toolbox floating-toolbox icon-only-toolbox description-toolbox ${toolboxDocked ? 'is-docked' : 'is-floating'}`} role="region" aria-label="Movable measurement toolbox" tabIndex={0} title="Drag any empty space to move this panel" onPointerDown={startToolboxDrag} onPointerMove={moveToolboxDrag} onPointerUp={endToolboxDrag} onPointerCancel={endToolboxDrag} onKeyDown={moveIconToolbarWithKeys} data-dock-slot={iconDockSlot} style={toolboxDocked ? {order:iconDockSlot*2} : {left:toolbarOrigin.x+toolboxPosition.x,top:toolbarOrigin.y+toolboxPosition.y,maxWidth:'calc(100vw - 16px)'}} onWheel={event=>event.stopPropagation()}>
-          <details className="toolbar-description" data-no-drag open={descriptionOpen} onToggle={event=>setDescriptionOpen(event.currentTarget.open)}><summary ref={descriptionSummaryRef} aria-label="Choose Work Description" title="Work Description" onClick={event=>positionDescriptionMenu(event.currentTarget)}><strong>{categories.find(category=>category.id===(chooserCategoryId || activeCategory?.id))?.name || 'Choose work description'} <span aria-hidden="true">▾</span></strong></summary><div className="description-popover" data-no-drag ref={descriptionMenuRef} style={{left:descriptionPosition.x,top:descriptionPosition.y}} onKeyDown={descriptionMenuKeys}>
-          <div className="description-options" role="menu" aria-label="Work Description options">
-            {categories.filter(category=>category.mode!=='derived').map(category=><button type="button" role="menuitemradio" aria-checked={category.id===(chooserCategoryId || activeCategory?.id || 'tack-ceiling')} key={category.id} onClick={()=>{changeToolCategory(category.id);setDescriptionOpen(false)}}>{category.name || category.id}</button>)}
-          </div>
-          <button className="custom-category-toggle" aria-expanded={customFieldOpen} onClick={()=>setCustomFieldOpen(value=>!value)}>Custom/New Category</button>
-          <label hidden={!customFieldOpen} className="toolbox-custom">Custom/New Category
-            <input aria-label="Custom measurement name" value={toolCustomName} maxLength={100} placeholder="Work not listed? Type a name" onChange={(event) => setToolCustomName(event.target.value)} onBlur={applyToolCustomName} onKeyDown={(event) => {
-              if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); applyToolCustomName() }
-            }} />
-          </label>
-          </div></details>
-                  <div className="toolbox-body">
-          <div className="compact-tool-row"><div className="compact-measure-group"><small>Measure</small><div className="tool-selector-grid" aria-label="Measurement tools">
-            <button className="tool-tile" aria-label="Single Length" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : 'Single Length'} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={lengthMode || readyToolKind === 'length'} aria-disabled={calibrationMode || !!pendingCalibration || !lengthCalibrationValid}
-              onClick={() => activateMeasurementTool('length')}>
-              <UiIcon name="length" /><span>{'Single Length'}</span>
-            </button>
-            <button className="tool-tile" aria-label="Multiple Length" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : 'Multiple Length'} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={runMode || readyToolKind === 'run'} aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
-              onClick={() => activateMeasurementTool('run')}><UiIcon name="run" /><span>Multiple Length</span></button>
-            <button className="tool-tile" aria-label="Area" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : 'Area'} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={areaMode || readyToolKind === 'area'} aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
-              onClick={() => activateMeasurementTool('area')}><UiIcon name="area" /><span>Area</span></button>
-            <button className="tool-tile" aria-label="Point Marker" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : 'Point Marker'} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={countMode || readyToolKind === 'point'} aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
-              onClick={() => activateMeasurementTool('point')}><UiIcon name="point" /><span>Point Marker</span></button>
-          </div>
-
-          </div><div className="compact-snap-group"><small>Snap types</small><div className="compact-snap-buttons">
-            <button title="Snap to lines on/off" aria-label="Snap to lines" aria-pressed={snapEnabled} onClick={()=>setSnapEnabled(value=>!value)}><UiIcon name="snap" /></button>
-            <button title="Snap to start/end points" aria-label="Start / end" aria-pressed={snapEndpoints} disabled={!snapEnabled} onClick={()=>setSnapEndpoints(value=>!value)}><UiIcon name="endpoint" /></button>
-            <button title="Snap to midpoints" aria-label="Midpoints" aria-pressed={snapMidpoints} disabled={!snapEnabled} onClick={()=>setSnapMidpoints(value=>!value)}><UiIcon name="midpoint" /></button>
-          </div></div></div>
-                  </div>
-                </div>
-                {!toolboxDocked && dockHover && <div className="icon-dock-placeholder" style={{order:dockPreviewSlot*2}} data-preview-slot={dockPreviewSlot} aria-label="Drop measurement icons here">Drop icons here</div>}
-          <div className="toolbar-fixed-settings" ref={fixedToolbarSettingsRef}>
-          <label className="toolbox-height toolbar-fixed-control" ref={element=>{toolbarControlRefs.current[1]=element}} style={{order:3}}>Wall Height<div><input type="number" min="0.001" step="0.01" inputMode="decimal" aria-label="Toolbox wall height" value={heightInMm(toolWallHeight)} disabled={areaMode || countMode} onChange={(event) => {
-            const value=heightFromMm(event.target.value); setToolWallHeight(value)
-            if (value === '' || (Number.isFinite(Number(value)) && Number(value)>0)) setRunHeightM(value === '' ? undefined : Number(value))
-          }} /><span>mm</span></div></label>
-          <label className="compact-snap-source toolbar-fixed-control" ref={element=>{toolbarControlRefs.current[2]=element}} style={{order:5}}>Snap to<select aria-label="Snap source" disabled={!snapEnabled} value={snapSource} onChange={event=>setSnapSource(event.target.value as 'both'|'pdf'|'measure')}><option value="both">PDF + measurements</option><option value="pdf">PDF lines</option><option value="measure">Measurement lines</option></select><span>Hold Shift for straight lines</span></label>
-          </div>
-              </div>
-            </div>
-            <div className="toolbar-session-status" role="region" aria-label="Measurement progress" hidden={!currentToolKind() && !toolCalibrationNotice && !toolSwitchNotice && !toolHeightInvalid && !(snapEnabled && (snapSource!=='measure' && pdfSnapInfo!=='PDF lines ready.' || !snapEndpoints && !snapMidpoints))}>
-          {snapEnabled && snapSource!=='measure' && pdfSnapInfo!=='PDF lines ready.' && <p className="length-note">{pdfSnapInfo}</p>}
-          {snapEnabled && !snapEndpoints && !snapMidpoints && <p className="length-note">Choose a snap point type.</p>}
-          {toolCalibrationNotice && <p className="tool-calibration-help" role="status">{toolCalibrationNotice}</p>}
-          {toolSwitchNotice && <p className="tool-switch-notice" role="status">{toolSwitchNotice}</p>}
-          {toolHeightInvalid && <p className="calibration-warning">Enter a height greater than zero, or leave it blank.</p>}
-          {readyToolKind && <div className="ready-tool-banner" role="status"><strong>Ready for the next {readyToolKind === 'point' ? 'point marker' : readyToolKind === 'length' ? 'length' : readyToolKind}.</strong><div>{activeGroup?.name || activeCategory?.name} · click a new start point.</div></div>}
-          {(lengthMode || runMode || areaMode || countMode) && <div className="measuring-banner" role="status">
-            <strong>{activeCategory?.name || 'Uncategorised'}</strong>
-            <div>{activeGroup?.name || 'Ungrouped'} · {lengthMode ? lengthPoints.length ? 'Click the second point to finish' : 'Click the start point' : 'Press Enter to finish'}</div>
-          </div>}
-
-
-
-          {lengthMode && <div className="run-actions"><button disabled={!lengthPoints.length} onClick={()=>setLengthPoints([])}>Undo Last Point</button><button onClick={cancelLengthMeasurement}>Cancel Length</button></div>}
-          {runMode && (
-            <div className="run-panel" aria-label="Current run">
-              <strong>Run in progress</strong>
-              <div className="length-primary" aria-live="polite">
-                {(draftTotalMm / 1000).toFixed(2)} m
-              </div>
-              <div>{draftSegments.length} segment{draftSegments.length === 1 ? '' : 's'}</div>
-              {runHeightM !== undefined && <div className="wall-area-result">{(draftTotalMm / 1000 * runHeightM).toFixed(2)} m² · height {heightInMm(String(runHeightM))} mm</div>}
-              <p className="length-note">
-                {runPoints.length === 0 ? 'Click your start point on the drawing.' : 'Click the next wall corner, then keep going. Drag to pan; use the wheel to zoom.'}
-              </p>
-              <button className="run-finish" disabled={runPoints.length < 2 || !lengthCalibrationValid || toolHeightInvalid} onClick={() => finishRun()}>
-                Finish Run
-              </button>
-              <div className="run-actions">
-                <button disabled={runPoints.length === 0} onClick={() => setRunPoints((points) => points.slice(0, -1))}>
-                  Undo Last Point
-                </button>
-                <button onClick={cancelRun}>Cancel Run</button>
-              </div>
-              <p className="length-note">Finish or cancel before changing page or calibration.</p>
-            </div>
-          )}
-
-          {areaMode && (
-            <div className="area-panel" aria-label="Current area">
-              <strong>Area in progress · {areaPoints.length} corners</strong>
-              <div className="area-primary" aria-live="polite">{draftAreaM2 === null ? '— m²' : `${draftAreaM2.toFixed(2)} m² so far`}</div>
-              <p className="length-note">Click around the outside of the shape. Finish Area joins the last corner to the first. Drag to pan; use the wheel to zoom.</p>
-              {areaPoints.length >= 3 && draftAreaProblem && <p className="calibration-warning">{draftAreaProblem}</p>}
-              <button className="area-finish" onClick={finishArea} disabled={!!draftAreaProblem || !lengthCalibrationValid}>Finish Area</button>
-              <div className="run-actions">
-                <button disabled={!areaPoints.length} onClick={() => setAreaPoints((points) => points.slice(0, -1))}>Undo Last Point</button>
-                <button onClick={cancelArea}>Cancel Area</button>
-              </div>
-              <p className="length-note">Finish or cancel before changing page, calibration or group.</p>
-            </div>
-          )}
-          {countMode && <div className="count-panel">
-            <strong>{activeCategory?.name || 'Point marks'}</strong>
-            <p>Click once at each location. Each cross counts as one. Press Enter or Done Marking to finish.</p>
-            <button className="wide-control" onClick={finishCounting}>Done Marking</button><div className="run-actions"><button disabled={!countSessionIdsRef.current.length} onClick={()=>{const id=countSessionIdsRef.current.pop();if(id) setCountMeasurements(current=>({...current,[pageNumber]:(current[pageNumber] ?? []).filter(item=>item.id!==id)}))}}>Undo Last Marker</button><button onClick={stopMeasurement}>Cancel Marking</button></div>
-          </div>}
-            </div>
-          </div>
+      <main ref={workspaceRef} className={`workspace  ${sidebarTab === 'summary' ? 'is-summary' : ''} ${selectedWork || showingAllWork ? 'has-work-details' : ''}`} inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen}>
         <aside className="sidebar">
           <div className="sidebar-fixed">
           <nav className="sidebar-tabs" aria-label="Take-off sections">
@@ -3691,15 +3676,20 @@ export default function App() {
                 <div>{!pdf ? 'Use Import New Drawing above.' : lengthCalibrationValid ? `Page ${pageNumber} calibrated and locked.` : calibrationIssue === 'unlocked' ? 'Calibration is unlocked. Lock it before measuring.' : calibrationIssue === 'changed' ? 'Calibration points changed. Recalibrate before measuring.' : `Page ${pageNumber} needs calibration before measuring.`}</div>
               </div>
             </div>
-            <details className="calibration-dock-tools" open={!!pdf && (!lengthCalibrationValid || calibrationMode || !!pendingCalibration)}>
-              <summary>Calibration tools</summary>
+            <div className="calibration-dock-tools">
+              {currentCalibration && <div className="calibration-icon-actions">
+                <button type="button" aria-label={currentCalibration.locked ? 'Unlock calibration' : 'Lock calibration'} title={currentCalibration.locked ? 'Unlock calibration' : 'Lock calibration'} disabled={hasDraft || !!currentCalibration.needsRecalibration} onClick={()=>{setCalibrationVisible(true);currentCalibration.locked ? unlockCalibration() : lockCalibration()}}><UiIcon name={currentCalibration.locked ? 'lock' : 'unlock'} /></button>
+                <button type="button" className="clear-calibration-icon" aria-label="Clear calibration" title="Clear calibration" disabled={hasDraft} onClick={()=>{if(window.confirm('Clear calibration for this drawing? Its measurements will need calibration again.'))clearCalibration()}}>✕</button>
+                <button type="button" aria-label={calibrationVisible ? 'Hide calibration' : 'Show calibration'} title={calibrationVisible ? 'Hide calibration' : 'Show calibration'} aria-pressed={calibrationVisible} onClick={()=>setCalibrationVisible(value=>!value)}><UiIcon name={calibrationVisible ? 'eye' : 'eye-off'} /></button>
+              </div>}
           {!lengthCalibrationValid && pdf && <p className="calibration-first-note">
             {!currentCalibration ? 'Calibrate your drawing to enable measurement tools.' : currentCalibration.needsRecalibration ? 'Update the calibration below to enable measurement tools.' : 'Lock the calibration below to enable measurement tools.'}
           </p>}
           <button
+            hidden={!!currentCalibration?.locked && !currentCalibration.needsRecalibration && !calibrationMode}
             className={`future-tool ${calibrationAttention ? 'calibrate-attention' : ''}`}
             disabled={!pdf || runMode || areaMode || countMode}
-            onClick={calibrationMode ? cancelCalibration : startCalibration}
+            onClick={()=>{setCalibrationVisible(true);calibrationMode ? cancelCalibration() : startCalibration()}}
           >
             {calibrationMode ? 'Cancel Calibration' : calibrationAttention ? 'Calibrate Drawing' : 'Calibrate'}
           </button>
@@ -3732,6 +3722,7 @@ export default function App() {
 
           {currentCalibration && (
             <div
+              hidden={currentCalibration.locked && !currentCalibration.needsRecalibration}
               className={`calibration-panel ${
                 currentCalibration.needsRecalibration || !currentCalibration.locked
                   ? 'needs-recalibration'
@@ -3781,34 +3772,13 @@ export default function App() {
                     Recalibrate & Lock
                   </button>
                 </>
-              ) : currentCalibration.locked ? (
-                <button onClick={unlockCalibration} disabled={runMode || areaMode || countMode}>
-                  Unlock Calibration
-                </button>
-              ) : (
-                <>
-                  <div className="calibration-note">
-                    Drag point A or B to fine-tune its position.
-                  </div>
+              ) : !currentCalibration.locked ? <div className="calibration-note">Drag point A or B to fine-tune its position, then lock calibration.</div> : null}
 
-                  <button onClick={lockCalibration}>
-                    Lock Calibration
-                  </button>
-                </>
-              )}
-
-              <button
-                className="secondary-calibration-button"
-                onClick={clearCalibration}
-                disabled={runMode || areaMode || countMode}
-              >
-                Clear Calibration
-              </button>
             </div>
           )}
 
 
-            </details>
+            </div>
           </section>
           </div>
           <div className="sidebar-scroll">
@@ -3982,6 +3952,81 @@ export default function App() {
 
           </div>
 
+
+          <div hidden={sidebarTab!=='measure'} className={`measure-panel-layer${toolboxDocked ? ' is-sidebar-docked' : ''}`}>
+                <div hidden={sidebarTab!=='measure'} ref={toolboxRef} className={`measure-toolbox floating-toolbox icon-only-toolbox description-toolbox compact-floating-panel ${toolboxDocked ? 'is-docked' : 'is-floating'}`} role="region" aria-label="Movable measurement toolbox" tabIndex={0} title="Drag any empty space to move this panel" onPointerDown={startToolboxDrag} onPointerMove={moveToolboxDrag} onPointerUp={endToolboxDrag} onPointerCancel={endToolboxDrag} onKeyDown={moveIconToolbarWithKeys} onContextMenu={openPanelMenu} style={toolboxDocked ? {} : {left:toolbarOrigin.x+toolboxPosition.x,top:toolbarOrigin.y+toolboxPosition.y,maxWidth:'calc(100vw - 16px)'}} onWheel={event=>event.stopPropagation()}>
+          <div className="panel-description-header">
+          <details className="toolbar-description" data-no-drag open={descriptionOpen} onToggle={event=>setDescriptionOpen(event.currentTarget.open)}><summary ref={descriptionSummaryRef} aria-label="Choose Work Description" title="Work Description" onClick={event=>positionDescriptionMenu(event.currentTarget)}><strong>{workDescriptionLabel(chooserCategoryId || activeCategory?.id || 'tack-ceiling',categories)} <span aria-hidden="true">▾</span></strong></summary><div className="description-popover" data-no-drag ref={descriptionMenuRef} style={{left:descriptionPosition.x,top:descriptionPosition.y}} onKeyDown={descriptionMenuKeys}>
+          <div className="description-heading-list" aria-label="Work Description headings">
+            {descriptionSections.map(section=><button type="button" key={section.title} data-description-heading={section.title} aria-haspopup="menu" aria-expanded={hoverHeading===section.title} className="description-heading-button" onMouseEnter={()=>setHoverHeading(section.title as WorkHeading)} onFocus={()=>setHoverHeading(section.title as WorkHeading)} onClick={()=>setHoverHeading(section.title as WorkHeading)}>{section.title}</button>)}
+          </div>
+          <button type="button" className="create-new-description" onClick={openNewDescription}>Create New</button>
+          {hoverHeading && <div className="description-submenu" ref={descriptionSubmenuRef} style={{top:submenuTop}} role="menu" aria-label={hoverHeading+' Work Descriptions'}>
+            <h3>{hoverHeading==='Other' ? 'Other work' : hoverHeading}<button type="button" className="reorder-descriptions" aria-pressed={reorderDescriptions} onClick={()=>setReorderDescriptions(value=>!value)}>{reorderDescriptions ? 'Done' : 'Reorder'}</button></h3>
+            {descriptionOptions(hoverHeading).map(({category,label},index,list)=><div className="description-option-row" key={category.id}>{category.mode==='derived' ? <div className="automatic-description">{label}<small>Automatic</small></div> : <button type="button" role="menuitemradio" aria-checked={category.id===(chooserCategoryId || activeCategory?.id || 'tack-ceiling')} onClick={()=>{if(!reorderDescriptions){changeToolCategory(category.id);setDescriptionOpen(false)}}}>{category.name!==initialCategories.find(item=>item.id===category.id)?.name ? category.name : label}</button>}{reorderDescriptions && hoverHeading!=='Other' && <div className="description-order-actions"><button type="button" aria-label={'Move '+label+' up'} disabled={index===0} onClick={()=>moveDescription(hoverHeading,category.id,-1)}>↑</button><button type="button" aria-label={'Move '+label+' down'} disabled={index===list.length-1} onClick={()=>moveDescription(hoverHeading,category.id,1)}>↓</button></div>}</div>)}
+            {hoverHeading==='Skim' && <p className="automatic-skim-note">N.B. Skim is calculated automatically from Tack and Dab measurements. Custom work is included when enabled.</p>}
+          </div>}
+          </div></details>
+          <button type="button" className="panel-messages-toggle" data-no-drag aria-label={messagesHidden ? 'Show messages' : 'Hide messages'} aria-pressed={!messagesHidden} title={messagesHidden ? 'Show messages' : 'Hide messages'} onClick={()=>setMessagesHidden(hidden=>!hidden)}><UiIcon name={messagesHidden ? 'eye-off' : 'eye'} /></button>
+          </div>
+                  <div className="toolbox-body">
+          <div className="compact-tool-row"><div className="compact-measure-group"><small>Measure</small><div className="tool-selector-grid" aria-label="Measurement tools">
+            <button className="tool-tile" aria-label="Single Length" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : 'Single Length'} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={lengthMode || readyToolKind === 'length'} aria-disabled={calibrationMode || !!pendingCalibration || !lengthCalibrationValid}
+              onClick={() => activateMeasurementTool('length')}>
+              <UiIcon name="length" /><span>{'Single Length'}</span>
+            </button>
+            <button className="tool-tile" aria-label="Multiple Length" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : 'Multiple Length'} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={runMode || readyToolKind === 'run'} aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
+              onClick={() => activateMeasurementTool('run')}><UiIcon name="run" /><span>Multiple Length</span></button>
+            <button className="tool-tile" aria-label="Area" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : 'Area'} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={areaMode || readyToolKind === 'area'} aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
+              onClick={() => activateMeasurementTool('area')}><UiIcon name="area" /><span>Area</span></button>
+            <button className="tool-tile" aria-label="Point Marker" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : 'Point Marker'} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={countMode || readyToolKind === 'point'} aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
+              onClick={() => activateMeasurementTool('point')}><UiIcon name="point" /><span>Point Marker</span></button>
+          </div>
+
+          </div><div className="compact-snap-group"><small>Snap types</small><div className="compact-snap-buttons">
+            <button title="Snap to lines on/off" aria-label="Snap to lines" aria-pressed={snapEnabled} onClick={()=>setSnapEnabled(value=>!value)}><UiIcon name="snap" /></button>
+            <button title="Snap to start/end points" aria-label="Start / end" aria-pressed={snapEndpoints} disabled={!snapEnabled} onClick={()=>setSnapEndpoints(value=>!value)}><UiIcon name="endpoint" /></button>
+            <button title="Snap to midpoints" aria-label="Midpoints" aria-pressed={snapMidpoints} disabled={!snapEnabled} onClick={()=>setSnapMidpoints(value=>!value)}><UiIcon name="midpoint" /></button>
+          </div>
+          {snapEnabled && <div className="snap-source-icons" role="group" aria-label="Snap source">
+            <button type="button" aria-label="PDF lines" title="Snap to PDF lines" aria-pressed={snapSource==='pdf'} onClick={()=>setSnapSource('pdf')}><UiIcon name="snap-pdf" /></button>
+            <button type="button" aria-label="Measured lines" title="Snap to measured lines" aria-pressed={snapSource==='measure'} onClick={()=>setSnapSource('measure')}><UiIcon name="snap-measure" /></button>
+            <button type="button" aria-label="PDF and measured lines" title="Snap to PDF and measured lines" aria-pressed={snapSource==='both'} onClick={()=>setSnapSource('both')}><UiIcon name="snap-both" /></button>
+          </div>}
+          </div></div>
+                  </div>
+
+          <label hidden={currentToolKind()==='area' || currentToolKind()==='point'} className={`toolbox-height panel-wall-height${toolWallHeight==='' && (currentToolKind()==='length' || currentToolKind()==='run') ? ' height-reminder' : ''}`}>Wall Height<div><input type="number" min="0.001" step="0.01" inputMode="decimal" aria-label="Toolbox wall height" value={heightInMm(toolWallHeight)} disabled={areaMode || countMode} onChange={(event) => {
+            const value=heightFromMm(event.target.value); setToolWallHeight(value)
+            if (value === '' || (Number.isFinite(Number(value)) && Number(value)>0)) setRunHeightM(value === '' ? undefined : Number(value))
+          }} /><span>mm</span></div></label>
+            <div className={`toolbar-session-status${currentToolKind() ? ' compact-measurement-progress' : ''}`} role="region" aria-label="Measurement progress" hidden={(messagesHidden && !currentToolKind()) || (!currentToolKind() && !toolCalibrationNotice && !toolSwitchNotice && !toolHeightInvalid && !(snapEnabled && (snapSource!=='measure' && pdfSnapInfo!=='PDF lines ready.' || !snapEndpoints && !snapMidpoints)))}>
+          <div className="measurement-notices" hidden={messagesHidden || !!currentToolKind()}>
+          {snapEnabled && snapSource!=='measure' && pdfSnapInfo!=='PDF lines ready.' && <p className="length-note">{pdfSnapInfo}</p>}
+          {snapEnabled && !snapEndpoints && !snapMidpoints && <p className="length-note">Choose a snap point type.</p>}
+          {toolCalibrationNotice && <p className="tool-calibration-help" role="status">{toolCalibrationNotice}</p>}
+          {toolSwitchNotice && <p className="tool-switch-notice" role="status">{toolSwitchNotice}</p>}
+          {toolHeightInvalid && <p className="calibration-warning">Enter a height greater than zero, or leave it blank.</p>}
+          {readyToolKind && <div className="ready-tool-banner" role="status"><strong>Ready for the next {readyToolKind === 'point' ? 'point marker' : readyToolKind === 'length' ? 'length' : readyToolKind}.</strong><div>{activeGroup?.name || activeCategory?.name} · click a new start point.</div></div>}
+          {(lengthMode || runMode || areaMode || countMode) && <div className="measuring-banner" role="status">
+            <strong>{activeCategory?.name || 'Uncategorised'}</strong>
+            <div>{activeGroup?.name || 'Ungrouped'} · {lengthMode ? lengthPoints.length ? 'Click the second point to finish' : 'Click the start point' : 'Press Enter to finish'}</div>
+          </div>}
+
+
+
+          </div>
+          {currentToolKind() && <div className="compact-progress-strip" role="group" aria-label="Measurement controls">
+            <output className="compact-progress-figure" aria-label="Current measurement" aria-live="polite" title={areaMode && draftAreaProblem ? draftAreaProblem : toolHeightInvalid ? 'Enter a height greater than zero, or leave it blank.' : undefined}>
+              {currentToolKind()==='point' ? countSessionIdsRef.current.length+(countSessionIdsRef.current.length===1 ? ' pt' : ' pts') : currentToolKind()==='area' ? (draftAreaM2===null ? '—' : draftAreaM2.toFixed(2))+' m²' : (draftTotalMm/1000).toFixed(2)+' m'}
+            </output>
+            <button type="button" className="compact-progress-action progress-finish" aria-label="Finish measurement" title={lengthMode || readyToolKind==='length' ? 'Single lengths finish automatically at the second point' : areaMode && draftAreaProblem ? draftAreaProblem : toolHeightInvalid ? 'Correct or clear the wall height before finishing' : 'Finish measurement (Enter)'} disabled={!!readyToolKind || lengthMode || (runMode && (runPoints.length<2 || !lengthCalibrationValid || toolHeightInvalid)) || (areaMode && (!!draftAreaProblem || !lengthCalibrationValid))} onClick={()=>{if(runMode)finishRun();else if(areaMode)finishArea();else if(countMode)finishCounting()}}><span aria-hidden="true">✓</span></button>
+            <button type="button" className="compact-progress-action progress-undo" aria-label="Undo last point" title="Undo last point" disabled={!!readyToolKind || (lengthMode ? !lengthPoints.length : runMode ? !runPoints.length : areaMode ? !areaPoints.length : !countSessionIdsRef.current.length)} onClick={()=>{if(lengthMode)setLengthPoints([]);else if(runMode)setRunPoints(points=>points.slice(0,-1));else if(areaMode)setAreaPoints(points=>points.slice(0,-1));else if(countMode){const id=countSessionIdsRef.current.pop();if(id)setCountMeasurements(current=>({...current,[pageNumber]:(current[pageNumber]??[]).filter(item=>item.id!==id)}))}}}><span aria-hidden="true">↶</span></button>
+            <button type="button" className="compact-progress-action progress-cancel" aria-label="Cancel measurement" title="Cancel measurement (Esc)" onClick={()=>{if(lengthMode)cancelLengthMeasurement();else if(runMode)cancelRun();else if(areaMode)cancelArea();else stopMeasurement()}}><span aria-hidden="true">✕</span></button>
+          </div>}
+            </div>
+                </div>
+          </div>
 
           <div hidden={sidebarTab !== 'measure'} className="measurement-history">          {currentRuns.length > 0 && (
             <details className={`run-panel measurement-section ${lengthCalibrationValid ? '' : 'invalid'}`}>
@@ -4239,7 +4284,8 @@ export default function App() {
                   </g>
                 ))}
 
-                {calibrationLine && !overviewDrawing && sidebarTab!=='groups' && (
+                {calibrationVisible && sidebarTab==='measure' && <g className="calibration-overlay" aria-label="Drawing calibration">
+                {calibrationLine && (
                   <line
                     x1={calibrationLine.x1}
                     y1={calibrationLine.y1}
@@ -4250,7 +4296,7 @@ export default function App() {
                   />
                 )}
 
-                {pointAHandle && sidebarTab!=='groups' && (
+                {pointAHandle && (
                   <>
                     <circle
                       cx={pointAHandle.x}
@@ -4286,7 +4332,7 @@ export default function App() {
                   </>
                 )}
 
-                {pointBHandle && sidebarTab!=='groups' && (
+                {pointBHandle && (
                   <>
                     <circle
                       cx={pointBHandle.x}
@@ -4321,6 +4367,7 @@ export default function App() {
                     </text>
                   </>
                 )}
+                </g>}
                 {renderedLengths.filter((measurement) => measurement.visible).map((measurement) => (
                   <g key={measurement.id} opacity={measurementAppearance(measurement.groupId).opacity}>
                     {measurement.line && (
@@ -4633,6 +4680,7 @@ export default function App() {
           <button role="menuitem" className="context-menu-delete" onClick={() => workMenuAction('delete')}>Delete selected measurements</button>
           <button role="menuitem" onClick={() => setWorkMenu(null)}>Close</button>
         </div>}
+        {panelMenu && sidebarTab==='measure' && <div className="panel-context-menu" data-panel-menu role="menu" aria-label="Measurement panel actions" style={{left:panelMenu.x,top:panelMenu.y}}><button type="button" role="menuitem" autoFocus onClick={dockMeasurementPanel}>Dock</button><button type="button" role="menuitem" onClick={()=>setPanelMenu(null)}>Close</button></div>}
         {pageDeletePrompt && <div data-page-delete-prompt className="page-delete-prompt" role="alertdialog" aria-label="Delete drawing page" style={{left:pageDeletePrompt.x,top:pageDeletePrompt.y}}>
           <strong>Delete {pageDeletePrompt.name}?</strong><p>This removes this page and its measurements.</p><div><button className="delete-page-confirm" autoFocus onClick={confirmPageDelete}>Delete Page</button><button onClick={()=>setPageDeletePrompt(null)}>Cancel</button></div>
         </div>}
@@ -4647,6 +4695,17 @@ export default function App() {
           <button role="menuitem" onClick={() => setMeasurementMenu(null)}>Close</button>
         </div>}
       </main>
+      {newDescriptionOpen && <div className="measurement-dialog-backdrop" onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setNewDescriptionOpen(false)}}}>
+        <form className="measurement-dialog new-description-dialog" role="dialog" aria-modal="true" aria-labelledby="new-description-title" onSubmit={event=>{event.preventDefault();saveNewDescription()}}>
+          <h2 id="new-description-title">Create New Work Description</h2>
+          <label>Name<input autoFocus aria-label="New work description name" value={newDescriptionName} maxLength={100} onChange={event=>{setNewDescriptionName(event.target.value);setNewDescriptionError('')}} placeholder="e.g. Garage bulkhead" /></label>
+          <label>Heading<select aria-label="New work description heading" value={newDescriptionHeading} onChange={event=>setNewDescriptionHeading(event.target.value as WorkHeading)}>{descriptionSections.map(section=><option key={section.title} value={section.title}>{section.title}</option>)}</select></label>
+          <label>Type<select aria-label="New work description type" value={newDescriptionMode} onChange={event=>{const mode=event.target.value as 'measure'|'count';setNewDescriptionMode(mode);if(mode==='count')setNewDescriptionSkim('none')}}><option value="measure">Measure — lengths and areas</option><option value="count">Point — markers and quantity count</option></select></label>
+          <label>Automatic skim<select aria-label="New work description skim" value={newDescriptionSkim} disabled={newDescriptionMode==='count'} onChange={event=>setNewDescriptionSkim(event.target.value as 'none'|'ceilings'|'walls')}><option value="none">Do not include in automatic skim</option><option value="ceilings">Include in Skimmed Ceilings</option><option value="walls">Include in Skimmed Walls</option></select></label>
+          <p className="length-note">{newDescriptionMode==='count' ? 'Point markers count items and do not contribute to skim area.' : 'Automatic skim uses measured areas, or wall lengths with a height. It does not add another measurement.'}</p>
+          {newDescriptionError && <p className="calibration-warning" role="alert">{newDescriptionError}</p>}
+          <div className="dialog-actions"><button type="button" onClick={()=>setNewDescriptionOpen(false)}>Cancel</button><button type="submit" className="run-finish">Create New</button></div>
+        </form></div>}
       {duplicateRequest && <div className="measurement-dialog-backdrop" onKeyDown={event=>{if(event.key==='Escape' && !duplicateBusyRef.current){event.stopPropagation();setDuplicateRequest(null)}}}>
         <form className="measurement-dialog duplicate-dialog" role="dialog" aria-modal="true" aria-labelledby="duplicate-title" aria-busy={duplicating} onSubmit={event=>{event.preventDefault();void confirmDuplicate()}}>
           <h2 id="duplicate-title">Duplicate Measurement</h2><p><strong>{duplicateRequest.title}</strong> · from {drawingPageName(duplicateRequest.page)}</p>
