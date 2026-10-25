@@ -2451,3 +2451,60 @@ canvas { box-shadow: 0 3px 24px #1b39421c; }
 .drawing-render-message { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); z-index: 25; width: max-content; max-width: calc(100% - 32px); padding: 12px 15px; border: 1px solid #527586; border-radius: 7px; color: #e4eef5; background: var(--workspace-banner-bg); box-shadow: 0 5px 18px #10283c30; font-size: 12px; }
 .drawing-render-message p { max-width: 420px; overflow-wrap: anywhere; color: #d4e2ec; }
 .drawing-render-message button { padding: 6px 10px; color: #63e9d8; background: #ffffff08; border: 1px solid #4d687d; border-radius: 5px; }
+/* Universal board specification selector. */
+.panel-board-spec { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 100%; margin-top: 2px; text-align: center; }
+.panel-board-spec > span { color: #e4eef5; font-size: 12px; font-weight: 700; }
+.floating-toolbox.compact-floating-panel .board-spec-value { display: block; width: fit-content; max-width: 100%; margin: 0 auto; padding: 4px 6px; border: 0; border-bottom: 2px solid #25d6cb; border-radius: 2px; background: #ffffff08; color: #3ce1d7; font-family: inherit; font-size: 14px; font-weight: 700; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; text-align: center; }
+.board-spec-value:focus-visible, .board-spec-popover button:focus-visible { outline: 2px solid #63e9d8; outline-offset: 2px; }
+.board-spec-popover { position: fixed; z-index: 110; width: min(370px, calc(100vw - 16px)); max-height: calc(100dvh - 24px); overflow-y: auto; padding: 12px; border: 1px solid #527586; border-radius: 8px; color: #e4eef5; background: var(--workspace-banner-bg); box-shadow: 0 8px 25px #07152666; font-family: inherit; font-size: 12px; }
+.board-picker-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+.board-picker-heading strong { font-size: 15px; }
+.board-spec-popover button { padding: 7px 9px; border: 1px solid #4d687d; border-radius: 4px; color: #d9e4ec; background: #ffffff05; font-family: inherit; font-size: 13px; cursor: pointer; }
+.board-spec-popover button:hover { color: #3ce1d7; border-color: #25d6cb; background: #ffffff0b; }
+.board-picker-breadcrumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; color: #b9cedd; }
+.board-picker-breadcrumbs button { color: #63e9d8; padding: 4px 7px; }
+.board-spec-popover h3 { margin: 8px 0; color: #e4eef5; font-size: 14px; }
+.board-spec-popover p { margin: 7px 0; color: #b9cedd; }
+.board-type-options { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; }
+.board-spec-popover .board-type-options button { color: #3ce1d7; font-size: 15px; font-weight: 700; }
+.board-thickness-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.board-size-options { display: flex; flex-direction: column; gap: 5px; }
+.board-spec-popover .board-size-options button { text-align: left; }
+.board-size-options button small { display: block; margin-top: 3px; color: #e1b9a5; font-size: 10px; }
+.board-spec-popover .board-size-options button[aria-disabled="true"] { color: #92a6b5; border-style: dashed; background: #ffffff03; }
+.board-height-warning { width: 100%; margin: 6px 0 0; padding: 8px; border: 1px solid #b47e61; border-radius: 5px; background: #63432f; color: #ffe4cd; font-size: 11px; line-height: 1.5; }
+.sidebar .board-height-warning, .work-details-panel .board-height-warning, .board-spec-popover .board-height-warning, .board-spec-popover .board-height-warning p { color: #ffe4cd; }
+.board-height-warning button { padding: 3px 5px; margin: 3px; border: 1px solid #b58a6e; border-radius: 4px; background: #ffffff08; color: #fff0e2; font: inherit; }
+.board-picker-footer { display: flex; justify-content: space-between; gap: 6px; margin-top: 12px; padding-top: 9px; border-top: 1px solid #425b70; }
+.measurement-board-field { margin: 10px 0; padding-bottom: 9px; border-bottom: 1px solid #425b70; }
+.measurement-board-field label { display: block; margin: 0 0 5px; font-weight: 700; }
+.sidebar .measurement-board-field .board-spec-value, .work-details-panel .measurement-board-field .board-spec-value { width: 100%; color: #63e9d8; background: #ffffff05; border-color: #4d687d; white-space: normal; text-align: left; padding: 7px; font-weight: 600; }
+.board-override-note { color: #d6c5aa; font-size: 10px; }
+/* Board selection reminders and user-defined size ordering. */
+.floating-toolbox.compact-floating-panel .board-spec-reminder .board-spec-value { animation: wall-height-reminder 1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .floating-toolbox.compact-floating-panel .board-spec-reminder .board-spec-value { animation: none; outline: 2px solid #25d6cb; } }
+.board-size-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.board-size-heading > button { padding: 4px 8px; color: #63e9d8; }
+.board-size-row { display: flex; align-items: stretch; gap: 5px; }
+.board-size-row > button { flex: 1; min-width: 0; }
+.board-size-order-actions { display: flex; align-items: center; gap: 3px; }
+.board-size-order-actions button { width: 29px; padding: 5px; }
+/* Separate contractor/subcontractor books and subcontractor pricing in Plot Summary. */
+.sidebar .rate-card { margin: 11px 0; padding: 11px; border: 1px solid #4d687d; border-radius: 7px; background: var(--workspace-banner-bg); }
+.rate-card > strong { display: block; font-size: 12px; line-height: 1.5; }
+.rate-card label { display: block; margin-top: 10px; font-size: 11px; font-weight: 600; }
+.rate-card input { display: block; width: 100%; margin-top: 5px; padding: 8px; border-radius: 5px; }
+.sidebar .rate-card input[aria-invalid="true"] { border-color: #ee9b84; }
+.sidebar .rate-error { margin: 6px 0; color: #ffcfbc; font-size: 11px; }
+.sidebar .summary-values .work-price, .summary-page-values .work-price { padding: 2px 6px; border: 1px solid #3d9d99; border-radius: 4px; color: #63e9d8; background: #ffffff08; font-size: 17px; font-weight: 700; white-space: nowrap; }
+.sidebar .summary-values .work-price.is-unpriced, .summary-page-values .work-price.is-unpriced { color: #b9cedd; border-color: #4d687d; font-size: 10px; font-weight: 500; white-space: normal; }
+.sidebar .plot-price-total { margin: 14px 0; padding: 13px; border: 1px solid #4d687d; border-radius: 8px; background: #ffffff05; color: #e4eef5; }
+.plot-price-total > span { display: block; font-weight: 600; font-size: 12px; }
+.sidebar .plot-price-total > strong { display: block; margin: 7px 0; color: #63e9d8; font-size: 25px; }
+.plot-price-total p { color: #b9cedd; font-size: 10px; line-height: 1.5; }
+@media (min-width: 1251px) and (max-width: 1500px) {
+  .topbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto 43px; height: auto; min-height: 66px; padding: 8px 14px 0; gap: 4px 12px; }
+  .topbar > .brand-and-project { grid-column: 1; grid-row: 1; }
+  .topbar > .file-actions { grid-column: 2; grid-row: 1; }
+  .topbar > .top-navigation { grid-column: 1 / -1; grid-row: 2; height: 43px; width: max-content; max-width: 100%; justify-content: center; }
+}

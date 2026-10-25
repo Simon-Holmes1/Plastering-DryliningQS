@@ -30,11 +30,37 @@ type Calibration = {
   needsRecalibration: boolean
 }
 
+type BoardType = 'STD' | 'MR' | 'FIRE' | 'SOUND' | 'THERMAL'
+type BoardSpec = { boardType: BoardType; thicknessMm: number; widthMm: number; lengthMm: number; heightOverrideMm?: number }
+type BoardChoice = BoardSpec | null | undefined
+const boardTypes: BoardType[] = ['STD','MR','FIRE','SOUND','THERMAL']
+const boardThicknesses = [12.5,15,19]
+const thermalThicknesses = [22,27,30,35,40,50,60,70,90]
+const boardSizes: Array<[number,number]> = [[1200,2300],[1200,2400],[1200,2500],[1200,2700],[900,1800],[900,2400],[600,2400]]
+function boardSpecLabel(spec: BoardChoice) {return spec===null ? 'Not applicable' : spec ? spec.boardType+' · '+spec.thicknessMm+'mm · '+spec.widthMm+' × '+spec.lengthMm+'mm' : 'Choose board specification'}
+function boardThicknessOptions(type: BoardType) {return type==='THERMAL' ? thermalThicknesses : type==='STD' ? boardThicknesses : [12.5,15]}
+const defaultBoardSizeOrder=boardSizes.map(([w,l])=>w+'x'+l)
+type RateBook = Record<string,number>
+function roundWorkValue(value:number) {const pence=Math.round((value+Number.EPSILON)*100);return Math.floor(pence/100)+(pence%100>50 ? 1 : 0)}
+function pounds(value:number) {return '£'+value.toLocaleString('en-GB',{maximumFractionDigits:0})}
+function validRateText(text:string) {return text.trim()!=='' && Number.isFinite(Number(text)) && Number(text)>=0}
+function validBoardSpec(spec: any,allowLegacy=false): boolean {
+  if(spec===undefined || spec===null)return true
+  return !!spec && typeof spec==='object' && !Array.isArray(spec) && boardTypes.includes(spec.boardType)
+    && (boardThicknessOptions(spec.boardType).includes(spec.thicknessMm) || allowLegacy && spec.boardType!=='THERMAL' && spec.thicknessMm===19)
+    && (spec.boardType==='THERMAL' ? spec.widthMm===1200 && spec.lengthMm===2400 : boardSizes.some(([w,l])=>w===spec.widthMm && l===spec.lengthMm))
+    && (spec.heightOverrideMm===undefined || typeof spec.heightOverrideMm==='number' && Number.isFinite(spec.heightOverrideMm) && spec.heightOverrideMm>0)
+}
+function boardHeightMismatch(spec: BoardChoice,heightM?: number) {
+  return !!spec && !!heightM && heightM*1000>spec.lengthMm+0.001 && Math.abs((spec.heightOverrideMm ?? 0)-heightM*1000)>0.001
+}
+
 type LengthMeasurement = {
   id: string
   name?: string
   groupId?: string
   heightM?: number
+  boardSpec?: BoardSpec | null
   pointA: Point
   pointB: Point
   locked: boolean
@@ -50,6 +76,7 @@ type RunMeasurement = {
   name?: string
   groupId?: string
   heightM?: number
+  boardSpec?: BoardSpec | null
   // Shared corners keep adjacent segments connected when edited.
   points: Point[]
   locked: boolean
@@ -58,7 +85,7 @@ type RunMeasurement = {
 type MeasurementGroup = { id: string; name: string; categoryId?: string; includeSkim?: boolean; appearance?: { color?: string; width?: number; opacity?: number } }
 type WorkHeading = 'Tack' | 'Dab' | 'Skim' | 'Insulation' | 'Metal'
 type WorkCategory = { menuOrder?: number; heading?: WorkHeading; id: string; name: string; color: string; mode: 'measure' | 'count' | 'derived'; skimTarget?: 'walls' | 'ceilings' }
-type CountMeasurement = { id: string; name?: string; groupId?: string; categoryId?: string; point: Point; locked: boolean }
+type CountMeasurement = { boardSpec?: BoardSpec | null; id: string; name?: string; groupId?: string; categoryId?: string; point: Point; locked: boolean }
 type MeasurementKind = 'length' | 'run' | 'area' | 'point'
 
 type UiIconName = 'file' | 'save' | 'import' | 'length' | 'run' | 'area' | 'point' | 'check' | 'work' | 'summary' | 'lock' | 'unlock' | 'mixed-lock' | 'snap' | 'endpoint' | 'midpoint' | 'snap-pdf' | 'snap-measure' | 'snap-both' | 'eye' | 'eye-off'
@@ -91,8 +118,8 @@ function UiIcon({ name, className = '' }: { name: UiIconName; className?: string
 
 const initialCategories: WorkCategory[] = [
   { id: 'tack-ceiling', name: 'Tack Ceiling', color: '#2563eb', mode: 'measure', skimTarget: 'ceilings' },
-  { id: 'tack-timber-wall', name: 'Tack Timber Wall', color: '#0f766e', mode: 'measure', skimTarget: 'walls' },
-  { id: 'tack-metal-wall', name: 'Tack Metal Wall', color: '#7c3aed', mode: 'measure', skimTarget: 'walls' },
+  { id: 'tack-timber-wall', name: 'Tack Timber Studs', color: '#0f766e', mode: 'measure', skimTarget: 'walls' },
+  { id: 'tack-metal-wall', name: 'Tack Metal Studs', color: '#7c3aed', mode: 'measure', skimTarget: 'walls' },
   { id: 'dabbed-external-wall', name: 'Dabbed External Wall', color: '#c2410c', mode: 'measure', skimTarget: 'walls' },
   { id: 'dabbed-internal-wall', name: 'Dabbed Internal Wall', color: '#be185d', mode: 'measure', skimTarget: 'walls' },
   { id: 'metal-studwork', name: 'Metal Studwork', color: '#475569', mode: 'measure' },
@@ -122,7 +149,7 @@ const initialCategories: WorkCategory[] = [
   {"id":"metal-deflection-head","name":"Metal Deflection Head","color":"#64748b","mode":"measure"},
 ]
 
-const descriptionSections: Array<{title:string;options:Array<[string,string]>}> = [{"title":"Tack","options":[["tack-ceiling","Ceilings"],["tack-timber-wall","Timber Wall"],["tack-metal-wall","Metal Wall"],["tack-treds","Treds"]]},{"title":"Dab","options":[["dabbed-external-wall","External Walls"],["dabbed-internal-wall","Internal Walls"]]},{"title":"Skim","options":[["skimmed-ceiling","Ceilings"],["skimmed-walls","Walls"]]},{"title":"Insulation","options":[["insulation-ceiling-100","Ceilings / 100mm"],["insulation-ceiling-200","Ceilings / 200mm"],["insulation-wall-50","Walls / 50mm"],["insulation-wall-65","Walls / 65mm"],["insulation-celotex-25","Celotex / 25mm"],["insulation-celotex-50","Celotex / 50mm"],["insulation-celotex-90","Celotex / 90mm"],["insulation-celotex-100","Celotex / 100mm"],["insulation-celotex-120","Celotex / 120mm"],["insulation-celotex-150","Celotex / 150mm"]]},{"title":"Metal","options":[["metal-mf-ceiling","MF Ceiling"],["metal-stud-50-400","50/400mm Stud Wall"],["metal-stud-50-450","50/450mm Stud Wall"],["metal-stud-50-600","50/600mm Stud Wall"],["metal-stud-70-400","70/400mm Stud Wall"],["metal-stud-70-450","70/450mm Stud Wall"],["metal-stud-70-600","70/600mm Stud Wall"],["metal-deflection-head","Deflection Head"]]}]
+const descriptionSections: Array<{title:string;options:Array<[string,string]>}> = [{"title":"Tack","options":[["tack-ceiling","Ceilings"],["tack-timber-wall","Timber Studs"],["tack-metal-wall","Metal Studs"],["tack-treds","Treds"]]},{"title":"Dab","options":[["dabbed-external-wall","External Walls"],["dabbed-internal-wall","Internal Walls"]]},{"title":"Skim","options":[["skimmed-ceiling","Ceilings"],["skimmed-walls","Walls"]]},{"title":"Insulation","options":[["insulation-ceiling-100","Ceilings / 100mm"],["insulation-ceiling-200","Ceilings / 200mm"],["insulation-wall-50","Walls / 50mm"],["insulation-wall-65","Walls / 65mm"],["insulation-celotex-25","Celotex / 25mm"],["insulation-celotex-50","Celotex / 50mm"],["insulation-celotex-90","Celotex / 90mm"],["insulation-celotex-100","Celotex / 100mm"],["insulation-celotex-120","Celotex / 120mm"],["insulation-celotex-150","Celotex / 150mm"]]},{"title":"Metal","options":[["metal-mf-ceiling","MF Ceiling"],["metal-stud-50-400","50/400mm Stud Wall"],["metal-stud-50-450","50/450mm Stud Wall"],["metal-stud-50-600","50/600mm Stud Wall"],["metal-stud-70-400","70/400mm Stud Wall"],["metal-stud-70-450","70/450mm Stud Wall"],["metal-stud-70-600","70/600mm Stud Wall"],["metal-deflection-head","Deflection Head"]]}]
 const legacyCategoryIds = new Set(["tack-ceiling","tack-timber-wall","tack-metal-wall","dabbed-external-wall","dabbed-internal-wall","metal-studwork","insulated-ceiling","insulated-wall","svp-boxing","skimmed-walls","skimmed-ceiling"])
 function workDescriptionLabel(id: string,categories: WorkCategory[]) {
   const category=categories.find(item=>item.id===id), original=initialCategories.find(item=>item.id===id)
@@ -133,6 +160,7 @@ function workDescriptionLabel(id: string,categories: WorkCategory[]) {
 }
 
 type AreaMeasurement = {
+  boardSpec?: BoardSpec | null
   id: string
   name?: string
   groupId?: string
@@ -220,6 +248,9 @@ type TakeoffFile = {
   areas: Record<number, AreaMeasurement[]>
   counts: Record<number, CountMeasurement[]>
   categories: WorkCategory[]
+  subcontractorRates: RateBook
+  contractorRates: RateBook
+  boardSizeOrder: string[]
   nextCountNumber: number
   nextLengthNumber: number
   nextRunNumber: number
@@ -322,6 +353,15 @@ function readTakeoff(value: unknown): TakeoffFile {
     if (group.categoryId !== undefined && (!categoryIds.has(group.categoryId)
       || categories.find((category) => category.id === group.categoryId)?.mode === 'derived')) invalid()
   }
+  function rates(raw:any): RateBook {
+    if(raw===undefined)return {}
+    if(!object(raw) || Object.entries(raw).some(([id,rate])=>!categoryIds.has(id) || !finite(rate) || (rate as number)<0))invalid()
+    return {...raw}
+  }
+  const subcontractorRates=rates(value.subcontractorRates),contractorRates=rates(value.contractorRates)
+  const order=value.boardSizeOrder
+  if(order!==undefined && (!Array.isArray(order) || new Set(order).size!==order.length || order.some((id:unknown)=>typeof id!=='string' || !defaultBoardSizeOrder.includes(id))))invalid()
+  const boardSizeOrder=order===undefined ? [...defaultBoardSizeOrder] : [...defaultBoardSizeOrder.filter(id=>!order.includes(id)),...order]
   let maxLength = 0
   let maxRun = 0
   let maxArea = 0
@@ -340,6 +380,7 @@ function readTakeoff(value: unknown): TakeoffFile {
     if (!object(item) || typeof item.id !== 'string' || !new RegExp(`^${prefix}\\d{3,}$`).test(item.id)
       || typeof item.locked !== 'boolean' || ids.has(item.id)) return false
     if (item.name !== undefined && typeof item.name !== 'string') return false
+    if (!validBoardSpec(item.boardSpec,true)) return false
     if (item.groupId !== undefined && (typeof item.groupId !== 'string' || !groupIds.has(item.groupId))) return false
     if (item.heightM !== undefined && ((prefix !== 'L' && prefix !== 'R') || !finite(item.heightM) || item.heightM <= 0)) return false
     if (item.groupId) {
@@ -379,7 +420,7 @@ function readTakeoff(value: unknown): TakeoffFile {
   if (view.showUngrouped !== undefined && typeof view.showUngrouped !== 'boolean') invalid()
   if (view.categoryId !== undefined && (typeof view.categoryId !== 'string' || (view.categoryId !== '' && !categoryIds.has(view.categoryId)))) invalid()
   if (view.groupId !== undefined && (typeof view.groupId !== 'string' || (view.groupId !== '' && !groupIds.has(view.groupId)))) invalid()
-  return { ...value, version: 6, drawing: { ...value.drawing, additionalPdfs: value.version === 6 ? value.drawing.additionalPdfs : [], pages: value.version === 6 ? value.drawing.pages : undefined }, groups, nextGroupNumber, areas, nextAreaNumber, categories: [...categories,...initialCategories.filter(category=>!categoryIds.has(category.id)).map(category=>({...category}))], counts, nextCountNumber } as TakeoffFile
+  return { ...value, subcontractorRates, contractorRates, boardSizeOrder, version: 6, drawing: { ...value.drawing, additionalPdfs: value.version === 6 ? value.drawing.additionalPdfs : [], pages: value.version === 6 ? value.drawing.pages : undefined }, groups, nextGroupNumber, areas, nextAreaNumber, categories: [...categories.map(category=>({...category,name:category.id==='tack-timber-wall' && category.name==='Tack Timber Wall' ? 'Tack Timber Studs' : category.id==='tack-metal-wall' && category.name==='Tack Metal Wall' ? 'Tack Metal Studs' : category.name})),...initialCategories.filter(category=>!categoryIds.has(category.id)).map(category=>({...category}))], counts, nextCountNumber } as TakeoffFile
 }
 
 type SnapSegment = { a: Point; b: Point }
@@ -609,6 +650,22 @@ export default function App() {
   const descriptionMenuRef=useRef<HTMLDivElement | null>(null)
   const descriptionSummaryRef=useRef<HTMLElement | null>(null)
   const [descriptionOpen,setDescriptionOpen]=useState(false)
+  const [boardPreferences,setBoardPreferences]=useState<Record<string,BoardSpec | null>>({})
+  const [boardPickerOpen,setBoardPickerOpen]=useState(false)
+  const [boardSizeOrder,setBoardSizeOrder]=useState<string[]>([...defaultBoardSizeOrder])
+  const [boardSizeReordering,setBoardSizeReordering]=useState(false)
+  const [subcontractorRates,setSubcontractorRates]=useState<RateBook>({})
+  const [contractorRates,setContractorRates]=useState<RateBook>({})
+  const [rateDrafts,setRateDrafts]=useState<Record<string,string>>({})
+  const [boardTarget,setBoardTarget]=useState<{id:string;page:number} | null>(null)
+  const [boardStep,setBoardStep]=useState<'type'|'thickness'|'size'>('type')
+  const [boardDraftType,setBoardDraftType]=useState<BoardType>('STD')
+  const [boardDraftThickness,setBoardDraftThickness]=useState(15)
+  const [boardDraftOverride,setBoardDraftOverride]=useState<number | undefined>()
+  const [boardPendingSize,setBoardPendingSize]=useState<[number,number] | null>(null)
+  const [boardPendingSpec,setBoardPendingSpec]=useState<BoardSpec | null>(null)
+  const [boardPosition,setBoardPosition]=useState<Point>({x:8,y:100})
+  const boardTriggerRef=useRef<HTMLButtonElement | null>(null)
   const [reorderDescriptions,setReorderDescriptions]=useState(false)
   const [calibrationVisible,setCalibrationVisible]=useState(true)
   const [hoverHeading,setHoverHeading]=useState<WorkHeading | 'Other' | null>(null)
@@ -754,7 +811,7 @@ export default function App() {
   const [countMode, setCountMode] = useState(false)
   const [hiddenGroupIds, setHiddenGroupIds] = useState<string[]>([])
   const [showUngrouped, setShowUngrouped] = useState(true)
-  const [sidebarTab, setSidebarTab] = useState<'measure' | 'groups' | 'summary' | 'rates' | 'materials'>('measure')
+  const [sidebarTab, setSidebarTab] = useState<'measure' | 'groups' | 'summary' | 'contractor-rates' | 'rates' | 'materials'>('measure')
   const [newCategoryName, setNewCategoryName] = useState('')
   const [newCategoryColor, setNewCategoryColor] = useState('#0891b2')
   const [newCategoryMode, setNewCategoryMode] = useState<'measure' | 'count'>('measure')
@@ -792,16 +849,18 @@ export default function App() {
   const hasInvalidHeight = toolHeightInvalid || Object.entries(groupHeightDrafts).some(([id, text]) => groups.some((group) => group.id === id.split(':')[0]) && text !== '' && (!Number.isFinite(Number(text)) || Number(text) <= 0)) || Object.entries(heightDrafts).some(([id, text]) => wallIds.has(id)
     && text !== '' && (!Number.isFinite(Number(text)) || Number(text) <= 0))
 
+  const hasInvalidRates=Object.values(rateDrafts).some(text=>text!=='' && !validRateText(text))
+
   // View changes do not mark measurements as changed, but the view is saved too.
   const dataSignature = JSON.stringify({ job, drawingPages, calibrations, lengths: lengthMeasurements,
     runs: runMeasurements, nextLengthNumber: nextLengthNumberRef.current,
     nextRunNumber: nextRunNumberRef.current, groups, nextGroupNumber: nextGroupNumberRef.current,
     areas: areaMeasurements, nextAreaNumber: nextAreaNumberRef.current,
-    counts: countMeasurements, nextCountNumber: nextCountNumberRef.current, categories })
+    counts: countMeasurements, nextCountNumber: nextCountNumberRef.current, categories, subcontractorRates, contractorRates, boardSizeOrder })
   const hasDraft = runMode || lengthMode || areaMode || countMode || calibrationMode || !!pendingCalibration
   const hasUnsavedChanges = (savedSignature === null
     ? !!pdf || Object.values(job).some(Boolean)
-    : savedSignature !== dataSignature) || hasDraft || hasInvalidHeight
+    : savedSignature !== dataSignature) || hasDraft || hasInvalidHeight || hasInvalidRates
 
   useEffect(() => {
     if (queuedStart) beginQueuedMeasurement()
@@ -851,6 +910,8 @@ export default function App() {
     setMeasurementMenu(null)
     setWorkMenu(null)
     setToolCustomName('')
+    setSubcontractorRates({});setContractorRates({});setRateDrafts({});setBoardSizeOrder([...defaultBoardSizeOrder]);setBoardSizeReordering(false)
+    setBoardPreferences({});setBoardPickerOpen(false);setBoardTarget(null);setBoardPendingSpec(null);setBoardPendingSize(null)
     setNewDescriptionOpen(false);setHoverHeading(null);setMessagesHidden(true);setDescriptionOpen(false);setReorderDescriptions(false);setSnapEnabled(false);setToolboxDocked(true);setPanelMenu(null);setCalibrationVisible(true)
     setIsolatedMeasurementId(null);setDuplicateRequest(null)
     setSelectedEditPoint(null)
@@ -886,6 +947,7 @@ export default function App() {
 
   function saveTakeoff() {
     if (!pdf || !pdfBytesRef.current || fileBusyRef.current) return
+    if(hasInvalidRates){setStatus('Correct or clear the invalid rate before saving.');return}
     if (hasDraft || hasInvalidHeight) {
       if (hasInvalidHeight) {
         setStatus('Enter a wall height greater than zero, or clear the height field before saving.')
@@ -903,7 +965,7 @@ export default function App() {
         nextLengthNumber: nextLengthNumberRef.current, nextRunNumber: nextRunNumberRef.current,
         groups, nextGroupNumber: nextGroupNumberRef.current,
         areas: areaMeasurements, nextAreaNumber: nextAreaNumberRef.current,
-        counts: countMeasurements, nextCountNumber: nextCountNumberRef.current, categories,
+        counts: countMeasurements, nextCountNumber: nextCountNumberRef.current, categories, subcontractorRates, contractorRates, boardSizeOrder,
         view: { page: pageNumber, rotation, mode: viewMode, scale, pan, hiddenGroupIds, showUngrouped, categoryId: viewCategoryId, groupId: viewGroupId },
       }
       const blob = new Blob([JSON.stringify(takeoff)], { type: 'application/json' })
@@ -965,6 +1027,7 @@ export default function App() {
       setRunMeasurements(saved.runs)
       setAreaMeasurements(saved.areas)
       setCategories(saved.categories)
+      setSubcontractorRates(saved.subcontractorRates);setContractorRates(saved.contractorRates);setBoardSizeOrder(saved.boardSizeOrder)
       setCountMeasurements(saved.counts)
       nextCountNumberRef.current = saved.nextCountNumber
       setHiddenGroupIds([])
@@ -990,7 +1053,7 @@ export default function App() {
         lengths: saved.lengths, runs: saved.runs, nextLengthNumber: saved.nextLengthNumber,
         nextRunNumber: saved.nextRunNumber, groups: saved.groups, nextGroupNumber: saved.nextGroupNumber,
         areas: saved.areas, nextAreaNumber: saved.nextAreaNumber,
-        counts: saved.counts, nextCountNumber: saved.nextCountNumber, categories: saved.categories }))
+        counts: saved.counts, nextCountNumber: saved.nextCountNumber, categories: saved.categories, subcontractorRates:saved.subcontractorRates, contractorRates:saved.contractorRates, boardSizeOrder:saved.boardSizeOrder }))
       setLastSavedAt(saved.savedAt)
       setStatus(`Opened ${file.name}. Your drawing, job details and measurements are restored.`)
       loadedPdf = null // Ownership has passed to the viewer.
@@ -1457,7 +1520,7 @@ export default function App() {
     return ()=>observer.disconnect()
   },[sidebarTab])
   function dockMeasurementPanel() {
-    setToolboxDocked(true);setPanelMenu(null);setDescriptionOpen(false);setHoverHeading(null);setReorderDescriptions(false);setMessagesHidden(true);setSnapEnabled(false);toolboxDragRef.current=null
+    setBoardSizeReordering(false);setBoardPickerOpen(false);setToolboxDocked(true);setPanelMenu(null);setDescriptionOpen(false);setHoverHeading(null);setReorderDescriptions(false);setMessagesHidden(true);setSnapEnabled(false);toolboxDragRef.current=null
     const workspace=workspaceRef.current?.getBoundingClientRect(),box=toolboxRef.current?.getBoundingClientRect()
     setToolboxPosition({x:Math.max(0,((workspace?.width ?? window.innerWidth ?? 1200)-(box?.width ?? 342))/2),y:0})
   }
@@ -1828,7 +1891,7 @@ export default function App() {
 
   function navigateWorkspace(tab: typeof sidebarTab) {
     toolboxDragRef.current=null;setPanelMenu(null)
-    setIsolatedMeasurementId(null);setDescriptionOpen(false)
+    setIsolatedMeasurementId(null);setDescriptionOpen(false);setBoardPickerOpen(false)
     if (tab==='measure') setToolboxOpen(true)
     stopMeasurement()
     setSidebarTab(tab)
@@ -2056,7 +2119,7 @@ export default function App() {
     const id = `C${String(nextCountNumberRef.current++).padStart(3, '0')}`
     countSessionIdsRef.current.push(id)
     setCountMeasurements((current) => ({ ...current,
-      [pageNumber]: [...(current[pageNumber] ?? []), { id, point, locked: true, groupId: activeGroupId, categoryId: activeCategory.id }],
+      [pageNumber]: [...(current[pageNumber] ?? []), { id, point, locked: true, ...boardSnapshot(), groupId: activeGroupId, categoryId: activeCategory.id }],
     }))
   }
 
@@ -2142,7 +2205,7 @@ export default function App() {
     setAreaMeasurements((current) => ({
       ...current,
       [pageNumber]: [...(current[pageNumber] ?? []), {
-        id, points: [...areaPoints], locked: true, ...(activeGroupId ? { groupId: activeGroupId } : {}),
+        id, points: [...areaPoints], locked: true, ...boardSnapshot(), ...(activeGroupId ? { groupId: activeGroupId } : {}),
       }],
     }))
     setAreaMode(false)
@@ -2279,7 +2342,7 @@ export default function App() {
     setGroups((current) => current.map((group) => group.id === id ? { ...group, name } : group))
   }
 
-  function updateMeasurementDetails(id: string, details: { name?: string; groupId?: string; heightM?: number }, measurementPage = pageNumber) {
+  function updateMeasurementDetails(id: string, details: { name?: string; groupId?: string; heightM?: number; boardSpec?: BoardSpec | null }, measurementPage = pageNumber) {
     if (details.groupId && !groups.some((group) => group.id === details.groupId)) return
     if (details.groupId) {
       const categoryId = groups.find((group) => group.id === details.groupId)?.categoryId
@@ -2397,9 +2460,65 @@ export default function App() {
     finally {duplicateBusyRef.current=false;setDuplicating(false)}
   }
 
+  function orderedBoardSizes(): Array<[number,number]> {return boardSizeOrder.map(id=>boardSizes.find(([w,l])=>w+'x'+l===id)!).filter(Boolean)}
+  function moveBoardSize(id:string,delta:number) {setBoardSizeOrder(current=>{const index=current.indexOf(id),target=index+delta;if(index<0 || target<0 || target>=current.length)return current;const next=[...current];[next[index],next[target]]=[next[target],next[index]];return next})}
+  function toolBoardSelection(): BoardChoice {return boardPreferences[chooserCategoryId || activeCategory?.id || 'tack-ceiling']}
+  function boardSnapshot() {const spec=toolBoardSelection();return spec===undefined ? {} : {boardSpec:spec ? {...spec} : null}}
+  function boardPickerHeight() {
+    if(boardTarget) {const saved=savedMeasurement(boardTarget.id,boardTarget.page);return saved && (saved.kind==='length' || saved.kind==='run') ? saved.item.heightM : undefined}
+    return currentToolKind()==='area' || currentToolKind()==='point' ? undefined : toolWallHeight!=='' && Number(toolWallHeight)>0 ? Number(toolWallHeight) : undefined
+  }
+  function openBoardPicker(target: {id:string;page:number} | null,button: HTMLButtonElement) {
+    boardTriggerRef.current=button;setBoardSizeReordering(false);setBoardTarget(target);setBoardStep('type');setBoardDraftOverride(undefined);setBoardPendingSize(null);setBoardPendingSpec(null);setDescriptionOpen(false)
+    const rect=button.getBoundingClientRect(),width=window.innerWidth || 1200,height=window.innerHeight || 800
+    setBoardPosition({x:Math.max(8,Math.min(rect.left+rect.width/2-Math.min(370,width-16)/2,width-Math.min(370,width-16)-8)),y:Math.max(8,Math.min(rect.bottom+5,height-360))});setBoardPickerOpen(true)
+  }
+  function closeBoardPicker() {setBoardPickerOpen(false);boardTriggerRef.current?.focus?.()}
+  function applyBoardChoice(spec: BoardChoice) {
+    if(!validBoardSpec(spec))return
+    if(boardTarget) {if(!savedMeasurement(boardTarget.id,boardTarget.page)){closeBoardPicker();return} updateMeasurementDetails(boardTarget.id,{boardSpec:spec},boardTarget.page)}
+    else {const category=chooserCategoryId || activeCategory?.id || 'tack-ceiling';setBoardPreferences(current=>{const next={...current};if(spec===undefined)delete next[category];else next[category]=spec ? {...spec} : null;return next})}
+    setBoardPendingSize(null);setBoardPendingSpec(null);closeBoardPicker()
+  }
+  function completeBoardSpec(spec: BoardSpec,override=false) {
+    if(!validBoardSpec(spec))return
+    const height=boardPickerHeight()
+    const choice={...spec};delete choice.heightOverrideMm
+    if(height && choice.lengthMm+0.001<height*1000) {
+      if(!override && Math.abs((boardDraftOverride ?? 0)-height*1000)>0.001){setBoardPendingSpec(choice);return}
+      choice.heightOverrideMm=height*1000
+    }
+    applyBoardChoice(choice)
+  }
+  function selectBoardSize(width:number,length:number,override=false) {
+    const height=boardPickerHeight()
+    if(height && length+0.001<height*1000 && !override){setBoardPendingSize([width,length]);return}
+    setBoardPendingSize(null);const approval=override && height ? height*1000 : undefined;setBoardDraftOverride(approval)
+    if(boardDraftType==='THERMAL')setBoardStep('thickness')
+    else completeBoardSpec({boardType:boardDraftType,thicknessMm:boardDraftThickness,widthMm:width,lengthMm:length},override)
+  }
+  function selectBoardThickness(thickness:number) {
+    setBoardDraftThickness(thickness)
+    if(boardDraftType==='THERMAL')completeBoardSpec({boardType:'THERMAL',thicknessMm:thickness,widthMm:1200,lengthMm:2400})
+    else setBoardStep('size')
+  }
+  function measurementBoardField(id:string,number=pageNumber) {
+    const saved=savedMeasurement(id,number);if(!saved)return null
+    const spec=saved.item.boardSpec,height=saved.kind==='length' || saved.kind==='run' ? saved.item.heightM : undefined
+    return <div className="measurement-board-field"><label>Board Specification</label><button type="button" className="board-spec-value" aria-label={'Board specification for '+id} data-board-picker onClick={event=>openBoardPicker({id,page:number},event.currentTarget)}>{boardSpecLabel(spec)}</button>{boardHeightMismatch(spec,height) && <p className="board-height-warning" role="alert">Board length is shorter than the wall height. Change the board or <button type="button" onClick={()=>{if(spec && height && window.confirm('Use '+spec.lengthMm+'mm boards for a '+Math.round(height*1000)+'mm wall height anyway?'))updateMeasurementDetails(id,{boardSpec:{...spec,heightOverrideMm:height*1000}},number)}}>Override and keep</button>.</p>}{spec?.heightOverrideMm!==undefined && !boardHeightMismatch(spec,height) && height && height*1000>spec.lengthMm && <p className="board-override-note">Board length override accepted for {Math.round(height*1000)}mm height.</p>}</div>
+  }
+  useEffect(()=>{
+    if(!boardPickerOpen)return
+    const outside=(event:PointerEvent)=>{if(!(event.target as Element | null)?.closest('[data-board-picker]'))setBoardPickerOpen(false)}
+    const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeBoardPicker()}}
+    const resize=()=>setBoardPickerOpen(false)
+    window.addEventListener('pointerdown',outside);window.addEventListener('keydown',escape);window.addEventListener('resize',resize)
+    return ()=>{window.removeEventListener('pointerdown',outside);window.removeEventListener('keydown',escape);window.removeEventListener('resize',resize)}
+  },[boardPickerOpen])
+
   function measurementDetails(id: string, name = '', groupId = '') {
     return (
-      <div className="measurement-details"><button className="duplicate-measurement-button" disabled={hasDraft} onClick={()=>requestDuplicate([id])}>Duplicate Measurement</button>
+      <div className="measurement-details">{measurementBoardField(id)}<button className="duplicate-measurement-button" disabled={hasDraft} onClick={()=>requestDuplicate([id])}>Duplicate Measurement</button>
         <label>
           Name
           <input value={name} maxLength={100} placeholder="Optional measurement name"
@@ -2442,7 +2561,7 @@ export default function App() {
     setRunMeasurements((current) => ({
       ...current,
       [pageNumber]: [...(current[pageNumber] ?? []), {
-        id, points: [...runPoints], locked: true, ...(activeGroupId ? { groupId: activeGroupId } : {}),
+        id, points: [...runPoints], locked: true, ...boardSnapshot(), ...(activeGroupId ? { groupId: activeGroupId } : {}),
         ...(runHeightM !== undefined ? { heightM: runHeightM } : {}),
       }],
     }))
@@ -2600,7 +2719,7 @@ export default function App() {
       ...current,
       [pageNumber]: [
         ...(current[pageNumber] ?? []),
-        { id, pointA, pointB, locked: true, ...(runHeightM !== undefined ? { heightM: runHeightM } : {}), ...(activeGroupId ? { groupId: activeGroupId } : {}) },
+        { id, pointA, pointB, locked: true, ...boardSnapshot(), ...(runHeightM !== undefined ? { heightM: runHeightM } : {}), ...(activeGroupId ? { groupId: activeGroupId } : {}) },
       ],
     }))
 
@@ -3214,6 +3333,35 @@ export default function App() {
   const categorySummaries = summarizeCategories(groupSummaries)
   const measuredCategorySummaries = categorySummaries.filter((category) => category.mode === 'count' ? category.count > 0
     : category.sourceGroups.some((group) => group.members.some((item) => category.mode !== 'derived' || item.kind === 'area' || (item.kind === 'wall' && item.heightM !== undefined))))
+  function setWorkRate(kind:'subcontractor'|'contractor',id:string,text:string) {
+    if(!categories.some(category=>category.id===id))return
+    const key=kind+':'+id;setRateDrafts(current=>({...current,[key]:text}))
+    const setter=kind==='subcontractor' ? setSubcontractorRates : setContractorRates
+    if(text==='')setter(current=>{const next={...current};delete next[id];return next})
+    else if(validRateText(text))setter(current=>({...current,[id]:Number(text)}))
+  }
+  function workPrice(row:{id:string;mode:string;totalAreaM2:number|null;count:number}) {
+    const draft=rateDrafts['subcontractor:'+row.id]
+    if(draft!==undefined && draft!=='' && !validRateText(draft))return {value:null,note:'Correct rate'}
+    const rate=subcontractorRates[row.id]
+    if(rate===undefined)return {value:null,note:'Rate not set'}
+    const quantity=row.mode==='count' ? row.count : row.totalAreaM2
+    if(quantity===null)return {value:null,note:'Check calibration / heights'}
+    const raw=quantity*rate
+    if(!Number.isFinite(raw) || !Number.isSafeInteger(Math.round(raw*100)))return {value:null,note:'Value too large'}
+    return {value:roundWorkValue(raw),note:quantity.toFixed(row.mode==='count' ? 0 : 2)+(row.mode==='count' ? ' items' : ' m²')+' × £'+rate.toLocaleString('en-GB',{maximumFractionDigits:6})+(row.mode==='count' ? ' per item' : '/m²')}
+  }
+  function workPriceLabel(row:{id:string;name:string;mode:string;totalAreaM2:number|null;count:number}) {
+    const price=workPrice(row)
+    return <span className={'work-price'+(price.value===null ? ' is-unpriced' : '')} aria-label={'Subcontractor value for '+row.name} title={price.note}>{price.value===null ? price.note : pounds(price.value)}</span>
+  }
+  function ratesPanel(kind:'subcontractor'|'contractor') {
+    const book=kind==='subcontractor' ? subcontractorRates : contractorRates
+    return <div hidden={sidebarTab!==(kind==='subcontractor' ? 'rates' : 'contractor-rates')} className="rates-panel"><h2>{kind==='subcontractor' ? 'Subcontractor Rates' : 'Contractor Rates'}</h2><p className="length-note">{kind==='subcontractor' ? 'Rates apply to measured work across all drawings. These values are used in Plot Summary.' : 'Saved separately for reference. Contractor rates do not affect Plot Summary pricing.'}</p>{measuredCategorySummaries.map(category=>{const key=kind+':'+category.id,text=rateDrafts[key] ?? (book[category.id]===undefined ? '' : String(book[category.id])),invalid=text!=='' && !validRateText(text);return <div className="rate-card" key={category.id}><strong><span className="category-swatch" style={{background:category.color}} />{category.name}</strong><label>{category.mode==='count' ? '£ per item' : '£ per m²'}<input type="number" min="0" step="any" inputMode="decimal" placeholder="Enter rate" value={text} aria-label={(kind==='subcontractor' ? 'Subcontractor' : 'Contractor')+' rate for '+category.name} aria-invalid={invalid} onChange={event=>setWorkRate(kind,category.id,event.target.value)} /></label>{invalid && <p role="alert" className="rate-error">Enter a rate of zero or more, or clear the box.</p>}<p className="length-note">{category.mode==='count' ? category.count+' items' : category.totalAreaM2===null ? 'Check calibration / heights' : category.totalAreaM2.toFixed(2)+' m²'}</p></div>})}{!measuredCategorySummaries.length && <p className="length-note">Measure some work first. Only categories used in Plot Summary appear here.</p>}</div>
+  }
+  const plotPriceRows=measuredCategorySummaries.map(category=>({category,...workPrice(category)}))
+  const plotPriceTotal=plotPriceRows.reduce((sum,row)=>sum+(row.value ?? 0),0)
+  const unpricedCategories=plotPriceRows.filter(row=>row.value===null).length
   const selectedWork = currentPageGroupSummaries.find((group) => group.id === selectedWorkId)
   const showingAllWork = selectedWorkId === '__all__'
   const viewedWork = groupSummaries.find((group) => group.id === viewGroupId)
@@ -3619,6 +3767,7 @@ export default function App() {
           <button aria-pressed={sidebarTab === 'measure'} onClick={() => navigateWorkspace('measure')}><UiIcon name="file" />Drawings</button>
           <button aria-pressed={sidebarTab === 'groups'} onClick={() => navigateWorkspace('groups')}><UiIcon name="work" />Measured Work</button>
           <button aria-pressed={sidebarTab === 'summary'} onClick={() => navigateWorkspace('summary')}><UiIcon name="summary" />Plot Summary</button>
+          <button aria-pressed={sidebarTab === 'contractor-rates'} onClick={() => navigateWorkspace('contractor-rates')}><UiIcon name="summary" />Contractor Rates</button>
           <button aria-pressed={sidebarTab === 'rates'} onClick={() => navigateWorkspace('rates')}><UiIcon name="summary" />Subcontractor Rates</button>
           <button aria-pressed={sidebarTab === 'materials'} onClick={() => navigateWorkspace('materials')}><UiIcon name="work" />Materials</button>
         </nav>
@@ -3807,7 +3956,7 @@ export default function App() {
 
           <div className={`save-status ${hasUnsavedChanges ? 'unsaved' : ''}`} role="status">
             <strong>{isFileBusy ? 'Opening file…' : hasUnsavedChanges ? 'Changes not saved' : lastSavedAt ? 'Saved file loaded / downloaded' : 'Start a new take-off'}</strong>
-            <p>{hasInvalidHeight ? 'Correct or clear the invalid wall height before saving.' : hasDraft ? 'Finish or cancel your current measurement or calibration to save.'
+            <p>{hasInvalidRates ? 'Correct or clear the invalid rate before saving.' : hasInvalidHeight ? 'Correct or clear the invalid wall height before saving.' : hasDraft ? 'Finish or cancel your current measurement or calibration to save.'
               : 'Save Measure downloads one file with your PDF and measurements. Open Measure restores it on any device.'}</p>
             {lastSavedAt && <span>Last saved: {new Date(lastSavedAt).toLocaleString()}</span>}
           </div>
@@ -3838,7 +3987,8 @@ export default function App() {
 
           </div>
 
-          <div hidden={sidebarTab !== 'rates'} className="rates-panel"><h2>Subcontractor Rates</h2><p>Subcontractor rates will be added here.</p></div>
+          {ratesPanel('contractor')}
+          {ratesPanel('subcontractor')}
           <div hidden={sidebarTab !== 'materials'} className="materials-panel"><h2>Materials</h2><p>Materials calculations coming next.</p><p className="length-note">This will use your Measured Work to calculate material quantities.</p></div>
           <div hidden={sidebarTab !== 'summary'} className="summary-panel">
             <div className="summary-job-heading">{[job.site, job.plot ? 'Plot ' + job.plot : '', job.houseType, job.revision ? (/^rev\b/i.test(job.revision) ? job.revision : 'Rev ' + job.revision) : ''].filter(Boolean).join(' / ') || 'Job details not entered'}</div>
@@ -3847,17 +3997,19 @@ export default function App() {
             <p className="length-note">Drawing visibility does not change these totals. Skim rows reuse the source areas and represent separate work.</p>
             {measuredCategorySummaries.map((category) => <div className="category-summary" key={category.id}>
               <strong><span className="category-swatch" style={{ background: category.color }} />{category.name || category.id}</strong>
-              {category.mode === 'count' ? <div className="summary-values">{category.count} no.</div> : <div className="summary-values">
+              {category.mode === 'count' ? <div className="summary-values">{category.count} no.{workPriceLabel(category)}</div> : <div className="summary-values">
                 <span>{category.totalAreaM2 === null ? 'Check calibration / heights' : `${category.totalAreaM2.toFixed(2)} m²`}</span>
                 {category.mode !== 'derived' && <span>{category.totalMm === null ? 'LM awaiting calibration' : `${(category.totalMm / 1000).toFixed(2)} LM`}</span>}
+                {workPriceLabel(category)}
               </div>}
               {category.mode === 'derived' && <details><summary>Automatic skim sources</summary>
-                <p className="length-note">{category.id === 'skimmed-walls' ? 'From Tack Timber Wall, Tack Metal Wall and both Dabbed Wall categories.' : 'From Tack Ceiling.'} Source groups can opt out using Include this area in skim.</p>
+                <p className="length-note">{category.id === 'skimmed-walls' ? 'From Tack Timber Studs, Tack Metal Studs and both Dabbed Wall categories.' : 'From Tack Ceiling.'} Source groups can opt out using Include this area in skim.</p>
                 <ul className="group-members">{category.sourceGroups.map((group) => <li key={group.id}>{group.name || group.id} · {group.totalAreaM2 === null ? 'Check measurements' : `${group.totalAreaM2.toFixed(2)} m²`}</li>)}</ul>
               </details>}
               {category.wallsWithoutHeight > 0 && <p className="length-note">{category.wallsWithoutHeight} lengths/runs without height are excluded from m².</p>}
             </div>)}
             {!measuredCategorySummaries.length && <p className="length-note">No categories measured yet.</p>}
+            {measuredCategorySummaries.length>0 && <div className="plot-price-total"><span>{unpricedCategories ? 'Priced subcontractor subtotal' : 'Plot subcontractor total'}</span><strong>{pounds(plotPriceTotal)}</strong>{unpricedCategories>0 && <p>{unpricedCategories} categories awaiting a rate or valid quantities.</p>}<p>50p or less rounds down; 51p or more rounds up. Totals add the rounded category values. LM is not charged separately.</p>{measuredCategorySummaries.some(category=>category.wallsWithoutHeight>0) && <p>Lengths without wall heights are excluded from m² pricing.</p>}</div>}
             <p className="length-note">{groups.filter((group) => !group.categoryId).length} work items are uncategorised. Assign categories in Measured Work settings to include them above. Ungrouped geometry is also excluded.</p>
             <details className="category-settings"><summary>Edit category names and colours</summary>
               {categories.map((category) => <div className="category-editor" key={category.id}>
@@ -4022,6 +4174,8 @@ export default function App() {
             const value=heightFromMm(event.target.value); setToolWallHeight(value)
             if (value === '' || (Number.isFinite(Number(value)) && Number(value)>0)) setRunHeightM(value === '' ? undefined : Number(value))
           }} /><span>mm</span></div></label>
+          <div className={`panel-board-spec${toolBoardSelection()===undefined ? ' board-spec-reminder' : ''}`} data-no-drag><span>Board Specification</span><button type="button" className="board-spec-value" aria-label="Choose board specification" aria-haspopup="dialog" aria-expanded={boardPickerOpen && !boardTarget} data-board-picker onClick={event=>openBoardPicker(null,event.currentTarget)}>{boardSpecLabel(toolBoardSelection())}<span aria-hidden="true"> ▾</span></button>
+          {boardHeightMismatch(toolBoardSelection(),currentToolKind()==='area' || currentToolKind()==='point' ? undefined : Number(toolWallHeight)||undefined) && <p className="board-height-warning" role="alert">Board length is shorter than the wall height. <button type="button" onClick={event=>openBoardPicker(null,event.currentTarget)}>Change / override</button></p>}</div>
             <div className={`toolbar-session-status${currentToolKind() ? ' compact-measurement-progress' : ''}`} role="region" aria-label="Measurement progress" hidden={(messagesHidden && !currentToolKind()) || (!currentToolKind() && !toolCalibrationNotice && !toolSwitchNotice && !toolHeightInvalid && !(snapEnabled && (snapSource!=='measure' && pdfSnapInfo!=='PDF lines ready.' || !snapEndpoints && !snapMidpoints)))}>
           <div className="measurement-notices" hidden={messagesHidden || !!currentToolKind()}>
           {snapEnabled && snapSource!=='measure' && pdfSnapInfo!=='PDF lines ready.' && <p className="length-note">{pdfSnapInfo}</p>}
@@ -4602,7 +4756,7 @@ export default function App() {
                 {!page.rows.length && <p className="length-note">No measured work on this drawing yet.</p>}
                 {page.rows.map((row) => <div className="summary-page-quantity" key={row.id}>
                   <h5><span className="work-legend-swatches">{row.colors.map((color) => <span className="work-legend-swatch" key={color} style={{background:color}} />)}</span>{row.name}</h5>
-                  <div className="summary-page-values">{row.mode !== 'count' && <><strong>{row.totalAreaM2 === null ? 'Check calibration / heights' : row.totalAreaM2.toFixed(2) + ' m²'}</strong>{row.mode !== 'derived' && <span>{row.totalMm === null ? 'Check calibration' : (row.totalMm/1000).toFixed(2) + ' LM'}</span>}</>}{(row.mode === 'count' || row.count>0) && <strong>{row.count} no.</strong>}</div>
+                  <div className="summary-page-values">{row.mode !== 'count' && <><strong>{row.totalAreaM2 === null ? 'Check calibration / heights' : row.totalAreaM2.toFixed(2) + ' m²'}</strong>{row.mode !== 'derived' && <span>{row.totalMm === null ? 'Check calibration' : (row.totalMm/1000).toFixed(2) + ' LM'}</span>}</>}{(row.mode === 'count' || row.count>0) && <strong>{row.count} no.</strong>}{row.id!=='__ungrouped__' && workPriceLabel(row)}</div>
                   {row.wallsWithoutHeight>0 && <p className="length-note">{row.wallsWithoutHeight} lengths/runs without height excluded from m².</p>}
                   {row.sourceNote && <p className="skim-source-note">{row.sourceNote}</p>}
                 </div>)}
@@ -4721,6 +4875,15 @@ export default function App() {
           <button role="menuitem" onClick={() => setMeasurementMenu(null)}>Close</button>
         </div>}
       </main>
+      {boardPickerOpen && <div className="board-spec-popover" data-board-picker role="dialog" aria-label="Board specification selector" style={{left:boardPosition.x,top:boardPosition.y}} onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeBoardPicker()}}}>
+        <div className="board-picker-heading"><strong>Board Specification{boardTarget ? ' · '+boardTarget.id : ''}</strong><button type="button" aria-label="Close board specification" onClick={closeBoardPicker}>✕</button></div>
+        <div className="board-picker-breadcrumbs"><button type="button" onClick={()=>{setBoardStep('type');setBoardPendingSize(null);setBoardPendingSpec(null)}}>Board Spec</button>{boardStep!=='type' && <span>› {boardDraftType} › {boardStep==='size' ? 'Size' : 'Thickness'}</span>}</div>
+        {boardStep==='type' && <div className="board-type-options">{boardTypes.map(type=><button type="button" key={type} onClick={()=>{setBoardDraftType(type);setBoardSizeReordering(false);setBoardDraftOverride(undefined);setBoardPendingSize(null);setBoardPendingSpec(null);setBoardStep(type==='THERMAL' ? 'size' : 'thickness')}}>{type}</button>)}</div>}
+        {boardStep==='thickness' && <><h3>Thickness (mm)</h3>{boardDraftType==='THERMAL' && <p>1200 × 2400mm</p>}<div className="board-thickness-options">{boardThicknessOptions(boardDraftType).map(thickness=><button type="button" key={thickness} onClick={()=>selectBoardThickness(thickness)}>{thickness}mm</button>)}</div></>}
+        {boardStep==='size' && <><div className="board-size-heading"><h3>Size (mm)</h3>{boardDraftType!=='THERMAL' && <button type="button" aria-pressed={boardSizeReordering} onClick={()=>{setBoardSizeReordering(value=>!value);setBoardPendingSize(null);setBoardPendingSpec(null)}}>{boardSizeReordering ? 'Done' : 'Reorder'}</button>}</div>{boardDraftType!=='THERMAL' && <p>{boardDraftType} · {boardDraftThickness}mm</p>}<div className="board-size-options">{(boardDraftType==='THERMAL' ? [[1200,2400]] : orderedBoardSizes()).map(([width,length],index,list)=>{const height=boardPickerHeight(),blocked=!!height && height*1000>length+0.001;return <div className="board-size-row" key={width+'x'+length}><button type="button" aria-disabled={blocked} title={blocked ? 'Board length is shorter than the wall height. Override is available.' : undefined} onClick={()=>{if(!boardSizeReordering)selectBoardSize(width,length)}}>{width} × {length}mm{blocked && <small>Wall height too high · override available</small>}</button>{boardSizeReordering && boardDraftType!=='THERMAL' && <div className="board-size-order-actions"><button type="button" aria-label={'Move '+width+' × '+length+'mm up'} disabled={index===0} onClick={()=>moveBoardSize(width+'x'+length,-1)}>↑</button><button type="button" aria-label={'Move '+width+' × '+length+'mm down'} disabled={index===list.length-1} onClick={()=>moveBoardSize(width+'x'+length,1)}>↓</button></div>}</div>})}</div></>}
+        {(boardPendingSize || boardPendingSpec) && <div className="board-height-warning" role="alert"><strong>Board length is shorter than the wall height.</strong><p>{boardPendingSpec?.lengthMm ?? boardPendingSize?.[1]}mm board · {Math.round((boardPickerHeight() ?? 0)*1000)}mm wall height.</p><button type="button" onClick={()=>{if(boardPendingSpec)completeBoardSpec(boardPendingSpec,true);else if(boardPendingSize)selectBoardSize(boardPendingSize[0],boardPendingSize[1],true)}}>Override and select anyway</button><button type="button" onClick={()=>{setBoardPendingSize(null);setBoardPendingSpec(null)}}>Choose another size</button></div>}
+        <div className="board-picker-footer"><button type="button" onClick={()=>applyBoardChoice(null)}>Not applicable</button><button type="button" onClick={()=>applyBoardChoice(undefined)}>Clear selection</button></div>
+      </div>}
       {newDescriptionOpen && <div className="measurement-dialog-backdrop" onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setNewDescriptionOpen(false)}}}>
         <form className="measurement-dialog new-description-dialog" role="dialog" aria-modal="true" aria-labelledby="new-description-title" onSubmit={event=>{event.preventDefault();saveNewDescription()}}>
           <h2 id="new-description-title">Create New Work Description</h2>
