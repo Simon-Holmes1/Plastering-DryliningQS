@@ -30,32 +30,40 @@ type Calibration = {
   needsRecalibration: boolean
 }
 
-type BoardType = 'STD' | 'MR' | 'FIRE' | 'SOUND' | 'THERMAL'
+type BoardType = 'STD' | 'MR' | 'FIRE' | 'SOUND' | 'THERMAL' | 'INS' | 'CELO'
 type BoardSpec = { boardType: BoardType; thicknessMm: number; widthMm: number; lengthMm: number; heightOverrideMm?: number }
 type BoardChoice = BoardSpec | null | undefined
-const boardTypes: BoardType[] = ['STD','MR','FIRE','SOUND','THERMAL']
+const boardTypes: BoardType[] = ['STD','MR','FIRE','SOUND','THERMAL','INS','CELO']
 const boardThicknesses = [12.5,15,19]
 const thermalThicknesses = [22,27,30,35,40,50,60,70,90]
 const boardSizes: Array<[number,number]> = [[1200,2300],[1200,2400],[1200,2500],[1200,2700],[900,1800],[900,2400],[600,2400]]
-function boardSpecLabel(spec: BoardChoice) {return spec===null ? 'Not applicable' : spec ? spec.boardType+' · '+spec.thicknessMm+'mm · '+spec.widthMm+' × '+spec.lengthMm+'mm' : 'Choose board specification'}
-function boardThicknessOptions(type: BoardType) {return type==='THERMAL' ? thermalThicknesses : type==='STD' ? boardThicknesses : [12.5,15]}
+function boardSpecLabel(spec: BoardChoice) {return spec===null ? 'Not applicable' : spec ? spec.boardType+' · '+spec.thicknessMm+'mm'+(spec.boardType==='INS' ? ' · Roll' : ' · '+spec.widthMm+' × '+spec.lengthMm+'mm') : 'Choose board specification'}
+function boardThicknessOptions(type: BoardType) {return type==='INS' ? [50,65,100,200] : type==='CELO' ? [25,50,90,100,120,150] : type==='THERMAL' ? thermalThicknesses : type==='STD' ? boardThicknesses : [12.5,15]}
 const defaultBoardSizeOrder=boardSizes.map(([w,l])=>w+'x'+l)
 type RateBook = Record<string,number>
 function roundWorkValue(value:number) {const pence=Math.round((value+Number.EPSILON)*100);return Math.floor(pence/100)+(pence%100>50 ? 1 : 0)}
 function pounds(value:number) {return '£'+value.toLocaleString('en-GB',{maximumFractionDigits:0})}
 function validRateText(text:string) {return text.trim()!=='' && Number.isFinite(Number(text)) && Number(text)>=0}
+function validMaterialWasteKey(id:string) {
+  if(id==='adhesive' || id==='skim')return true
+  const parts=id.split('|');return parts.length===4 && validBoardSpec({boardType:parts[0],thicknessMm:Number(parts[1]),widthMm:Number(parts[2]),lengthMm:Number(parts[3])},true)
+}
 function validBoardSpec(spec: any,allowLegacy=false): boolean {
   if(spec===undefined || spec===null)return true
   return !!spec && typeof spec==='object' && !Array.isArray(spec) && boardTypes.includes(spec.boardType)
-    && (boardThicknessOptions(spec.boardType).includes(spec.thicknessMm) || allowLegacy && spec.boardType!=='THERMAL' && spec.thicknessMm===19)
-    && (spec.boardType==='THERMAL' ? spec.widthMm===1200 && spec.lengthMm===2400 : boardSizes.some(([w,l])=>w===spec.widthMm && l===spec.lengthMm))
+    && (boardThicknessOptions(spec.boardType).includes(spec.thicknessMm) || allowLegacy && ['STD','MR','FIRE','SOUND'].includes(spec.boardType) && spec.thicknessMm===19)
+    && (spec.boardType==='INS' ? spec.widthMm===0 && spec.lengthMm===0 : ['THERMAL','CELO'].includes(spec.boardType) ? spec.widthMm===1200 && spec.lengthMm===2400 : boardSizes.some(([w,l])=>w===spec.widthMm && l===spec.lengthMm))
     && (spec.heightOverrideMm===undefined || typeof spec.heightOverrideMm==='number' && Number.isFinite(spec.heightOverrideMm) && spec.heightOverrideMm>0)
 }
 function boardHeightMismatch(spec: BoardChoice,heightM?: number) {
-  return !!spec && !!heightM && heightM*1000>spec.lengthMm+0.001 && Math.abs((spec.heightOverrideMm ?? 0)-heightM*1000)>0.001
+  return !!spec && spec.boardType!=='INS' && !!heightM && heightM*1000>spec.lengthMm+0.001 && Math.abs((spec.heightOverrideMm ?? 0)-heightM*1000)>0.001
 }
 
+const doorOpeningHeightMm=2000
+function wallAreaFromLength(lengthMm:number,heightM:number,doorHead=false) {return doorHead ? heightM>doorOpeningHeightMm/1000 ? lengthMm/1000*(heightM-doorOpeningHeightMm/1000)*2 : null : lengthMm/1000*heightM}
+
 type LengthMeasurement = {
+  doorHead?: true
   id: string
   name?: string
   groupId?: string
@@ -86,10 +94,14 @@ type MeasurementGroup = { id: string; name: string; categoryId?: string; include
 type WorkHeading = 'Tack' | 'Dab' | 'Skim' | 'Insulation' | 'Metal'
 type WorkCategory = { menuOrder?: number; heading?: WorkHeading; id: string; name: string; color: string; mode: 'measure' | 'count' | 'derived'; skimTarget?: 'walls' | 'ceilings' }
 type CountMeasurement = { boardSpec?: BoardSpec | null; id: string; name?: string; groupId?: string; categoryId?: string; point: Point; locked: boolean }
+type BoardTarget = {id:string;page:number} | {groupId:string;page:number}
+type MaterialCoverage = {adhesive:number;skim:number;insulation:Record<string,number>}
+const defaultInsulationCoverage:Record<string,number>={'50':15.6,'65':12,'100':11,'200':6}
 type MeasurementKind = 'length' | 'run' | 'area' | 'point'
 
-type UiIconName = 'file' | 'save' | 'import' | 'length' | 'run' | 'area' | 'point' | 'check' | 'work' | 'summary' | 'lock' | 'unlock' | 'mixed-lock' | 'snap' | 'endpoint' | 'midpoint' | 'snap-pdf' | 'snap-measure' | 'snap-both' | 'eye' | 'eye-off'
+type UiIconName = 'file' | 'save' | 'import' | 'length' | 'run' | 'area' | 'point' | 'check' | 'work' | 'summary' | 'lock' | 'unlock' | 'mixed-lock' | 'snap' | 'endpoint' | 'midpoint' | 'snap-pdf' | 'snap-measure' | 'snap-both' | 'eye' | 'eye-off' | 'door-head'
 const uiIconPaths: Record<UiIconName, string> = {
+  'door-head': 'M5 22V2h14v20 M5 7h14 M5 3h14 M5 5h14 M8 22V10h8v12 M13 16h1',
   eye: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12 M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0',
   'eye-off': 'M2 2l20 20 M4 7c-1 1-2 3-2 5 0 0 4 7 10 7 2 0 4-1 5-2 M8 5c1 0 3-1 4-1 6 0 10 8 10 8l-3 4 M10 10a3 3 0 0 0 4 4',
   file: 'M6 3h8l4 4v14H6z M14 3v5h5 M9 12h6 M9 16h6',
@@ -116,6 +128,11 @@ function UiIcon({ name, className = '' }: { name: UiIconName; className?: string
   return <svg className={`ui-icon ${className}`} viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d={uiIconPaths[name]} /></svg>
 }
 
+const pointTrades=['Tack','Dab','Skim','Metal'] as const
+type PointTrade=typeof pointTrades[number]
+type PointMarkerKind='marker'|'treds'|'svp'
+const pointMarkerLabels:Record<PointMarkerKind,string>={marker:'Point Marker',treds:'Treds',svp:'SVP Boxing'}
+const pointMarkerCategories:WorkCategory[]=pointTrades.flatMap(trade=>(['marker','treds','svp'] as PointMarkerKind[]).map(kind=>({id:'point-'+kind+'-'+trade.toLowerCase(),name:trade+' · '+pointMarkerLabels[kind],heading:trade,mode:'count' as const,color:({Tack:'#0f766e',Dab:'#c2410c',Skim:'#9333ea',Metal:'#475569'})[trade]})))
 const initialCategories: WorkCategory[] = [
   { id: 'tack-ceiling', name: 'Tack Ceiling', color: '#2563eb', mode: 'measure', skimTarget: 'ceilings' },
   { id: 'tack-timber-wall', name: 'Tack Timber Studs', color: '#0f766e', mode: 'measure', skimTarget: 'walls' },
@@ -147,9 +164,17 @@ const initialCategories: WorkCategory[] = [
   {"id":"metal-stud-70-450","name":"Metal 70/450mm Stud Wall","color":"#7c3aed","mode":"measure"},
   {"id":"metal-stud-70-600","name":"Metal 70/600mm Stud Wall","color":"#7c3aed","mode":"measure"},
   {"id":"metal-deflection-head","name":"Metal Deflection Head","color":"#64748b","mode":"measure"},
+  ...pointMarkerCategories,
 ]
 
-const descriptionSections: Array<{title:string;options:Array<[string,string]>}> = [{"title":"Tack","options":[["tack-ceiling","Ceilings"],["tack-timber-wall","Timber Studs"],["tack-metal-wall","Metal Studs"],["tack-treds","Treds"]]},{"title":"Dab","options":[["dabbed-external-wall","External Walls"],["dabbed-internal-wall","Internal Walls"]]},{"title":"Skim","options":[["skimmed-ceiling","Ceilings"],["skimmed-walls","Walls"]]},{"title":"Insulation","options":[["insulation-ceiling-100","Ceilings / 100mm"],["insulation-ceiling-200","Ceilings / 200mm"],["insulation-wall-50","Walls / 50mm"],["insulation-wall-65","Walls / 65mm"],["insulation-celotex-25","Celotex / 25mm"],["insulation-celotex-50","Celotex / 50mm"],["insulation-celotex-90","Celotex / 90mm"],["insulation-celotex-100","Celotex / 100mm"],["insulation-celotex-120","Celotex / 120mm"],["insulation-celotex-150","Celotex / 150mm"]]},{"title":"Metal","options":[["metal-mf-ceiling","MF Ceiling"],["metal-stud-50-400","50/400mm Stud Wall"],["metal-stud-50-450","50/450mm Stud Wall"],["metal-stud-50-600","50/600mm Stud Wall"],["metal-stud-70-400","70/400mm Stud Wall"],["metal-stud-70-450","70/450mm Stud Wall"],["metal-stud-70-600","70/600mm Stud Wall"],["metal-deflection-head","Deflection Head"]]}]
+const descriptionSections: Array<{title:string;options:Array<[string,string]>}> = [{"title":"Tack","options":[["tack-ceiling","Ceilings"],["tack-timber-wall","Timber Studs"],["tack-metal-wall","Metal Studs"]]},{"title":"Dab","options":[["dabbed-external-wall","External Walls"],["dabbed-internal-wall","Internal Walls"]]},{"title":"Skim","options":[["skimmed-ceiling","Ceilings"],["skimmed-walls","Walls"]]},{"title":"Insulation","options":[["insulation-ceiling-100","Ceilings / 100mm"],["insulation-ceiling-200","Ceilings / 200mm"],["insulation-wall-50","Walls / 50mm"],["insulation-wall-65","Walls / 65mm"],["insulation-celotex-25","Celotex / 25mm"],["insulation-celotex-50","Celotex / 50mm"],["insulation-celotex-90","Celotex / 90mm"],["insulation-celotex-100","Celotex / 100mm"],["insulation-celotex-120","Celotex / 120mm"],["insulation-celotex-150","Celotex / 150mm"]]},{"title":"Metal","options":[["metal-mf-ceiling","MF Ceiling"],["metal-stud-50-400","50/400mm Stud Wall"],["metal-stud-50-450","50/450mm Stud Wall"],["metal-stud-50-600","50/600mm Stud Wall"],["metal-stud-70-400","70/400mm Stud Wall"],["metal-stud-70-450","70/450mm Stud Wall"],["metal-stud-70-600","70/600mm Stud Wall"],["metal-deflection-head","Deflection Head"]]}]
+function categoryWorkHeading(category:WorkCategory) {
+  return category.heading ?? descriptionSections.find(section=>section.options.some(([id])=>id===category.id))?.title ?? (category.id==='insulated-ceiling' || category.id==='insulated-wall' ? 'Insulation' : category.id==='metal-studwork' ? 'Metal' : category.id==='tack-treds' ? 'Tack' : '')
+}
+function defaultSubcontractorRates(categories:WorkCategory[]):RateBook {
+  const defaults:Record<string,number>={Tack:2.10,Dab:3.40,Skim:3.45,Insulation:1.30}
+  return Object.fromEntries(categories.filter(category=>category.mode!=='count' && defaults[categoryWorkHeading(category)]!==undefined).map(category=>[category.id,defaults[categoryWorkHeading(category)]]))
+}
 const legacyCategoryIds = new Set(["tack-ceiling","tack-timber-wall","tack-metal-wall","dabbed-external-wall","dabbed-internal-wall","metal-studwork","insulated-ceiling","insulated-wall","svp-boxing","skimmed-walls","skimmed-ceiling"])
 function workDescriptionLabel(id: string,categories: WorkCategory[]) {
   const category=categories.find(item=>item.id===id), original=initialCategories.find(item=>item.id===id)
@@ -238,7 +263,7 @@ function removePageRecord<T>(record: Record<number, T>, removedPage: number): Re
 
 type TakeoffFile = {
   format: 'drylining-takeoff'
-  version: 6
+  version: 8
   savedAt: string
   drawing: { name: string; pdfBase64: string; additionalPdfs?: Array<{ name: string; pdfBase64: string }>; pages?: DrawingPage[] }
   job: JobDetails
@@ -248,9 +273,13 @@ type TakeoffFile = {
   areas: Record<number, AreaMeasurement[]>
   counts: Record<number, CountMeasurement[]>
   categories: WorkCategory[]
+  clearedSubcontractorRates: string[]
   subcontractorRates: RateBook
   contractorRates: RateBook
   boardSizeOrder: string[]
+  materialWastePercent: number
+  materialWasteOverrides: Record<string,number>
+  materialCoverage: MaterialCoverage
   nextCountNumber: number
   nextLengthNumber: number
   nextRunNumber: number
@@ -296,13 +325,13 @@ function readTakeoff(value: unknown): TakeoffFile {
   if (!object(value) || value.format !== 'drylining-takeoff') {
     throw new Error('Choose a saved take-off (.takeoff.json), or use Import New Drawing for a PDF.')
   }
-  if (![1, 2, 3, 4, 5, 6].includes(value.version)) {
+  if (![1, 2, 3, 4, 5, 6, 7, 8].includes(value.version)) {
     throw new Error('This take-off uses a different file version. Open it with the version of the app that saved it.')
   }
   if (!object(value.drawing) || typeof value.drawing.name !== 'string' || !value.drawing.name.trim()
     || !isValidPdfBase64(value.drawing.pdfBase64)
     || typeof value.savedAt !== 'string' || !Number.isFinite(Date.parse(value.savedAt))) invalid()
-  if (value.version === 6) {
+  if (value.version >= 6) {
     if (!Array.isArray(value.drawing.additionalPdfs) || !Array.isArray(value.drawing.pages) || !value.drawing.pages.length) invalid()
     for (const source of value.drawing.additionalPdfs) if (!object(source) || typeof source.name !== 'string' || !source.name.trim() || !isValidPdfBase64(source.pdfBase64)) invalid()
     const seenPages = new Set<string>()
@@ -358,10 +387,25 @@ function readTakeoff(value: unknown): TakeoffFile {
     if(!object(raw) || Object.entries(raw).some(([id,rate])=>!categoryIds.has(id) || !finite(rate) || (rate as number)<0))invalid()
     return {...raw}
   }
-  const subcontractorRates=rates(value.subcontractorRates),contractorRates=rates(value.contractorRates)
+  const clearedSubcontractorRates=value.clearedSubcontractorRates ?? []
+  if(!Array.isArray(clearedSubcontractorRates) || new Set(clearedSubcontractorRates).size!==clearedSubcontractorRates.length || clearedSubcontractorRates.some((id:unknown)=>typeof id!=='string' || !categoryIds.has(id)))invalid()
+  const defaults=defaultSubcontractorRates([...categories,...initialCategories.filter(category=>!categoryIds.has(category.id))])
+  const savedRates=rates(value.subcontractorRates)
+  const subcontractorRates={...defaults,...savedRates},contractorRates=rates(value.contractorRates)
+  clearedSubcontractorRates.forEach((id:string)=>{if(savedRates[id]!==undefined)invalid();delete subcontractorRates[id]})
+  const materialWastePercent=value.materialWastePercent ?? 10
+  if(!finite(materialWastePercent) || materialWastePercent<0)invalid()
+  const rawCoverage=value.materialCoverage===undefined ? {adhesive:8.5,skim:15} : value.materialCoverage
+  if(!object(rawCoverage) || !finite(rawCoverage.adhesive) || rawCoverage.adhesive<=0 || !finite(rawCoverage.skim) || rawCoverage.skim<=0)invalid()
+  const insulation=rawCoverage.insulation===undefined ? {...defaultInsulationCoverage} : rawCoverage.insulation
+  if(!object(insulation) || Object.keys(insulation).length!==4 || Object.keys(defaultInsulationCoverage).some(key=>!finite(insulation[key]) || insulation[key]<=0))invalid()
+  const materialCoverage={adhesive:rawCoverage.adhesive,skim:rawCoverage.skim,insulation:{...insulation}}
+  const materialWasteOverrides=value.materialWasteOverrides ?? {}
+  if(!object(materialWasteOverrides) || Object.entries(materialWasteOverrides).some(([id,waste])=>!validMaterialWasteKey(id) || !finite(waste) || (waste as number)<0))invalid()
   const order=value.boardSizeOrder
   if(order!==undefined && (!Array.isArray(order) || new Set(order).size!==order.length || order.some((id:unknown)=>typeof id!=='string' || !defaultBoardSizeOrder.includes(id))))invalid()
   const boardSizeOrder=order===undefined ? [...defaultBoardSizeOrder] : [...defaultBoardSizeOrder.filter(id=>!order.includes(id)),...order]
+  const fileVersion=value.version
   let maxLength = 0
   let maxRun = 0
   let maxArea = 0
@@ -381,6 +425,7 @@ function readTakeoff(value: unknown): TakeoffFile {
       || typeof item.locked !== 'boolean' || ids.has(item.id)) return false
     if (item.name !== undefined && typeof item.name !== 'string') return false
     if (!validBoardSpec(item.boardSpec,true)) return false
+    if (item.doorHead!==undefined && (fileVersion<7 || prefix!=='L' || item.doorHead!==true))return false
     if (item.groupId !== undefined && (typeof item.groupId !== 'string' || !groupIds.has(item.groupId))) return false
     if (item.heightM !== undefined && ((prefix !== 'L' && prefix !== 'R') || !finite(item.heightM) || item.heightM <= 0)) return false
     if (item.groupId) {
@@ -420,7 +465,7 @@ function readTakeoff(value: unknown): TakeoffFile {
   if (view.showUngrouped !== undefined && typeof view.showUngrouped !== 'boolean') invalid()
   if (view.categoryId !== undefined && (typeof view.categoryId !== 'string' || (view.categoryId !== '' && !categoryIds.has(view.categoryId)))) invalid()
   if (view.groupId !== undefined && (typeof view.groupId !== 'string' || (view.groupId !== '' && !groupIds.has(view.groupId)))) invalid()
-  return { ...value, subcontractorRates, contractorRates, boardSizeOrder, version: 6, drawing: { ...value.drawing, additionalPdfs: value.version === 6 ? value.drawing.additionalPdfs : [], pages: value.version === 6 ? value.drawing.pages : undefined }, groups, nextGroupNumber, areas, nextAreaNumber, categories: [...categories.map(category=>({...category,name:category.id==='tack-timber-wall' && category.name==='Tack Timber Wall' ? 'Tack Timber Studs' : category.id==='tack-metal-wall' && category.name==='Tack Metal Wall' ? 'Tack Metal Studs' : category.name})),...initialCategories.filter(category=>!categoryIds.has(category.id)).map(category=>({...category}))], counts, nextCountNumber } as TakeoffFile
+  return { ...value, subcontractorRates, clearedSubcontractorRates, contractorRates, boardSizeOrder, materialWastePercent, materialWasteOverrides, materialCoverage, version: 8, drawing: { ...value.drawing, additionalPdfs: value.version >= 6 ? value.drawing.additionalPdfs : [], pages: value.version >= 6 ? value.drawing.pages : undefined }, groups, nextGroupNumber, areas, nextAreaNumber, categories: [...categories.map(category=>({...category,name:category.id==='tack-timber-wall' && category.name==='Tack Timber Wall' ? 'Tack Timber Studs' : category.id==='tack-metal-wall' && category.name==='Tack Metal Wall' ? 'Tack Metal Studs' : category.name})),...initialCategories.filter(category=>!categoryIds.has(category.id)).map(category=>({...category}))], counts, nextCountNumber } as TakeoffFile
 }
 
 type SnapSegment = { a: Point; b: Point }
@@ -624,7 +669,7 @@ function SummaryDrawingPreview({ pdf, number, rotation, lengths, runs, areas, co
     {error && <p className="preview-error">{error}</p>}
     {viewport && <svg className="summary-measurement-overlay" viewBox={`0 0 ${viewport.width} ${viewport.height}`} aria-label="All measurements on this drawing">
       {areas.map((item) => <polygon key={item.id} points={outline(item.points)} fill={colorFor(item.groupId, '#c2410c') + '18'} stroke={colorFor(item.groupId, '#c2410c')} strokeWidth={appearanceFor(item.groupId).width} opacity={appearanceFor(item.groupId).opacity} />)}
-      {lengths.map((item) => { const a=point(item.pointA), b=point(item.pointB); return <line key={item.id} x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke={colorFor(item.groupId,'#2563eb')} strokeWidth={appearanceFor(item.groupId).width} opacity={appearanceFor(item.groupId).opacity} /> })}
+      {lengths.map((item) => { const a=point(item.pointA), b=point(item.pointB); return <line key={item.id} x1={a[0]} y1={a[1]} x2={b[0]} y2={b[1]} stroke={colorFor(item.groupId,'#2563eb')} strokeDasharray={item.doorHead ? '5 3' : undefined} strokeWidth={appearanceFor(item.groupId).width} opacity={appearanceFor(item.groupId).opacity} /> })}
       {runs.map((item) => <polyline key={item.id} points={outline(item.points)} fill="none" stroke={colorFor(item.groupId,'#0f766e')} strokeWidth={appearanceFor(item.groupId).width} opacity={appearanceFor(item.groupId).opacity} />)}
       {counts.map((item) => { const [x,y]=point(item.point); return <path key={item.id} d={`M ${x-7} ${y-7} L ${x+7} ${y+7} M ${x+7} ${y-7} L ${x-7} ${y+7}`} stroke={item.previewColor ?? colorFor(item.groupId,'#dc2626')} strokeWidth={appearanceFor(item.groupId).width} opacity={appearanceFor(item.groupId).opacity} /> })}
     </svg>}
@@ -654,16 +699,20 @@ export default function App() {
   const [boardPickerOpen,setBoardPickerOpen]=useState(false)
   const [boardSizeOrder,setBoardSizeOrder]=useState<string[]>([...defaultBoardSizeOrder])
   const [boardSizeReordering,setBoardSizeReordering]=useState(false)
-  const [subcontractorRates,setSubcontractorRates]=useState<RateBook>({})
+  const [subcontractorRates,setSubcontractorRates]=useState<RateBook>(()=>defaultSubcontractorRates(initialCategories))
+  const [clearedSubcontractorRates,setClearedSubcontractorRates]=useState<string[]>([])
   const [contractorRates,setContractorRates]=useState<RateBook>({})
   const [rateDrafts,setRateDrafts]=useState<Record<string,string>>({})
-  const [boardTarget,setBoardTarget]=useState<{id:string;page:number} | null>(null)
+  const [boardTarget,setBoardTarget]=useState<BoardTarget | null>(null)
   const [boardStep,setBoardStep]=useState<'type'|'thickness'|'size'>('type')
   const [boardDraftType,setBoardDraftType]=useState<BoardType>('STD')
   const [boardDraftThickness,setBoardDraftThickness]=useState(15)
   const [boardDraftOverride,setBoardDraftOverride]=useState<number | undefined>()
   const [boardPendingSize,setBoardPendingSize]=useState<[number,number] | null>(null)
   const [boardPendingSpec,setBoardPendingSpec]=useState<BoardSpec | null>(null)
+  const [pointTrade,setPointTrade]=useState<PointTrade>('Tack')
+  const [pointMarkerKind,setPointMarkerKind]=useState<PointMarkerKind>('marker')
+  const [pointOptionsOpen,setPointOptionsOpen]=useState(false)
   const [boardPosition,setBoardPosition]=useState<Point>({x:8,y:100})
   const boardTriggerRef=useRef<HTMLButtonElement | null>(null)
   const [reorderDescriptions,setReorderDescriptions]=useState(false)
@@ -697,6 +746,12 @@ export default function App() {
   const [pdfSnapInfo, setPdfSnapInfo] = useState('Import a drawing to use PDF snapping.')
   const pdfSnapCache = useRef<{ doc: PdfDoc | null; pages: Map<number, SnapIndex> }>({ doc: null, pages: new Map() })
   const [toolWallHeight, setToolWallHeight] = useState('')
+  const [toolDoorHead,setToolDoorHead]=useState(false)
+  const [materialWasteText,setMaterialWasteText]=useState('10')
+  const [materialWasteDrafts,setMaterialWasteDrafts]=useState<Record<string,string>>({})
+  const [insulationCoverageTexts,setInsulationCoverageTexts]=useState<Record<string,string>>({'50':'15.6','65':'12','100':'11','200':'6'})
+  const [adhesiveCoverageText,setAdhesiveCoverageText]=useState('8.5')
+  const [skimCoverageText,setSkimCoverageText]=useState('15')
   const [readyToolKind, setReadyToolKind] = useState<MeasurementKind | null>(null)
   const [overviewDrawing, setOverviewDrawing] = useState(false)
   const [groupHeightDrafts, setGroupHeightDrafts] = useState<Record<string, string>>({})
@@ -811,7 +866,7 @@ export default function App() {
   const [countMode, setCountMode] = useState(false)
   const [hiddenGroupIds, setHiddenGroupIds] = useState<string[]>([])
   const [showUngrouped, setShowUngrouped] = useState(true)
-  const [sidebarTab, setSidebarTab] = useState<'measure' | 'groups' | 'summary' | 'contractor-rates' | 'rates' | 'materials'>('measure')
+  const [sidebarTab, setSidebarTab] = useState<'measure' | 'groups' | 'summary' | 'contractor-rates' | 'rates' | 'materials' | 'export'>('measure')
   const [newCategoryName, setNewCategoryName] = useState('')
   const [newCategoryColor, setNewCategoryColor] = useState('#0891b2')
   const [newCategoryMode, setNewCategoryMode] = useState<'measure' | 'count'>('measure')
@@ -849,6 +904,18 @@ export default function App() {
   const hasInvalidHeight = toolHeightInvalid || Object.entries(groupHeightDrafts).some(([id, text]) => groups.some((group) => group.id === id.split(':')[0]) && text !== '' && (!Number.isFinite(Number(text)) || Number(text) <= 0)) || Object.entries(heightDrafts).some(([id, text]) => wallIds.has(id)
     && text !== '' && (!Number.isFinite(Number(text)) || Number(text) <= 0))
 
+  const validWaste=(text:string)=>text.trim()!=='' && Number.isFinite(Number(text)) && Number(text)>=0
+  const hasInvalidWaste=!validWaste(materialWasteText) || Object.values(materialWasteDrafts).some(text=>!validWaste(text))
+  const materialWasteOverrides=Object.fromEntries(Object.entries(materialWasteDrafts).filter(([,text])=>validWaste(text)).map(([key,text])=>[key,Number(text)]))
+  const materialWastePercent=validWaste(materialWasteText) ? Number(materialWasteText) : 0
+  const coverageWork=[...Object.values(lengthMeasurements).flat(),...Object.values(runMeasurements).flat(),...Object.values(areaMeasurements).flat()]
+  const usedInsulationThicknesses=new Set(coverageWork.filter(item=>item.boardSpec?.boardType==='INS').map(item=>String(item.boardSpec!.thicknessMm)))
+  const coverageSources=coverageWork.map(item=>{const group=groups.find(group=>group.id===item.groupId),category=categories.find(category=>category.id===group?.categoryId);return {group,category}})
+  const adhesiveCoverageUsed=coverageSources.some(({category})=>category && categoryWorkHeading(category)==='Dab')
+  const skimCoverageUsed=coverageSources.some(({group,category})=>category && (categoryWorkHeading(category)==='Skim' || group?.includeSkim!==false && !!category.skimTarget))
+  const hasInvalidCoverage=[...(adhesiveCoverageUsed ? [adhesiveCoverageText] : []),...(skimCoverageUsed ? [skimCoverageText] : []),...Array.from(usedInsulationThicknesses,thickness=>insulationCoverageTexts[thickness])].some(text=>text.trim()==='' || !Number.isFinite(Number(text)) || Number(text)<=0)
+  const coverageValue=(text:string,fallback:number,used:boolean)=>!used && (!Number.isFinite(Number(text)) || Number(text)<=0) ? fallback : Number.isFinite(Number(text)) ? Number(text) : 0
+  const materialCoverage:MaterialCoverage={adhesive:coverageValue(adhesiveCoverageText,8.5,adhesiveCoverageUsed),skim:coverageValue(skimCoverageText,15,skimCoverageUsed),insulation:Object.fromEntries(Object.entries(insulationCoverageTexts).map(([key,text])=>[key,coverageValue(text,defaultInsulationCoverage[key],usedInsulationThicknesses.has(key))]))}
   const hasInvalidRates=Object.values(rateDrafts).some(text=>text!=='' && !validRateText(text))
 
   // View changes do not mark measurements as changed, but the view is saved too.
@@ -856,11 +923,11 @@ export default function App() {
     runs: runMeasurements, nextLengthNumber: nextLengthNumberRef.current,
     nextRunNumber: nextRunNumberRef.current, groups, nextGroupNumber: nextGroupNumberRef.current,
     areas: areaMeasurements, nextAreaNumber: nextAreaNumberRef.current,
-    counts: countMeasurements, nextCountNumber: nextCountNumberRef.current, categories, subcontractorRates, contractorRates, boardSizeOrder })
+    counts: countMeasurements, nextCountNumber: nextCountNumberRef.current, categories, subcontractorRates, clearedSubcontractorRates, contractorRates, boardSizeOrder, materialWastePercent, materialWasteOverrides, materialCoverage })
   const hasDraft = runMode || lengthMode || areaMode || countMode || calibrationMode || !!pendingCalibration
   const hasUnsavedChanges = (savedSignature === null
     ? !!pdf || Object.values(job).some(Boolean)
-    : savedSignature !== dataSignature) || hasDraft || hasInvalidHeight || hasInvalidRates
+    : savedSignature !== dataSignature) || hasDraft || hasInvalidHeight || hasInvalidRates || hasInvalidWaste || hasInvalidCoverage
 
   useEffect(() => {
     if (queuedStart) beginQueuedMeasurement()
@@ -910,7 +977,9 @@ export default function App() {
     setMeasurementMenu(null)
     setWorkMenu(null)
     setToolCustomName('')
-    setSubcontractorRates({});setContractorRates({});setRateDrafts({});setBoardSizeOrder([...defaultBoardSizeOrder]);setBoardSizeReordering(false)
+    setToolDoorHead(false);setMaterialWasteText('10');setMaterialWasteDrafts({});setInsulationCoverageTexts({'50':'15.6','65':'12','100':'11','200':'6'});setAdhesiveCoverageText('8.5');setSkimCoverageText('15')
+    setSubcontractorRates(defaultSubcontractorRates(initialCategories));setClearedSubcontractorRates([]);setContractorRates({});setRateDrafts({});setBoardSizeOrder([...defaultBoardSizeOrder]);setBoardSizeReordering(false)
+    setPointTrade('Tack');setPointMarkerKind('marker');setPointOptionsOpen(false)
     setBoardPreferences({});setBoardPickerOpen(false);setBoardTarget(null);setBoardPendingSpec(null);setBoardPendingSize(null)
     setNewDescriptionOpen(false);setHoverHeading(null);setMessagesHidden(true);setDescriptionOpen(false);setReorderDescriptions(false);setSnapEnabled(false);setToolboxDocked(true);setPanelMenu(null);setCalibrationVisible(true)
     setIsolatedMeasurementId(null);setDuplicateRequest(null)
@@ -947,6 +1016,8 @@ export default function App() {
 
   function saveTakeoff() {
     if (!pdf || !pdfBytesRef.current || fileBusyRef.current) return
+    if(hasInvalidCoverage){setStatus('Enter positive material coverage values before saving.');return}
+    if(hasInvalidWaste){setStatus('Enter valid material waste percentages before saving.');return}
     if(hasInvalidRates){setStatus('Correct or clear the invalid rate before saving.');return}
     if (hasDraft || hasInvalidHeight) {
       if (hasInvalidHeight) {
@@ -959,13 +1030,13 @@ export default function App() {
     try {
       const savedAt = new Date().toISOString()
       const takeoff: TakeoffFile = {
-        format: 'drylining-takeoff', version: 6, savedAt,
+        format: 'drylining-takeoff', version: 8, savedAt,
         drawing: { name: fileName, pdfBase64: encodePdf(pdfBytesRef.current), additionalPdfs: drawingSources.slice(1).map((source) => ({ name: source.name, pdfBase64: encodePdf(source.bytes) })), pages: drawingPages },
         job: { ...job }, calibrations, lengths: lengthMeasurements, runs: runMeasurements,
         nextLengthNumber: nextLengthNumberRef.current, nextRunNumber: nextRunNumberRef.current,
         groups, nextGroupNumber: nextGroupNumberRef.current,
         areas: areaMeasurements, nextAreaNumber: nextAreaNumberRef.current,
-        counts: countMeasurements, nextCountNumber: nextCountNumberRef.current, categories, subcontractorRates, contractorRates, boardSizeOrder,
+        counts: countMeasurements, nextCountNumber: nextCountNumberRef.current, categories, subcontractorRates, clearedSubcontractorRates, contractorRates, boardSizeOrder, materialWastePercent, materialWasteOverrides, materialCoverage,
         view: { page: pageNumber, rotation, mode: viewMode, scale, pan, hiddenGroupIds, showUngrouped, categoryId: viewCategoryId, groupId: viewGroupId },
       }
       const blob = new Blob([JSON.stringify(takeoff)], { type: 'application/json' })
@@ -1027,14 +1098,15 @@ export default function App() {
       setRunMeasurements(saved.runs)
       setAreaMeasurements(saved.areas)
       setCategories(saved.categories)
-      setSubcontractorRates(saved.subcontractorRates);setContractorRates(saved.contractorRates);setBoardSizeOrder(saved.boardSizeOrder)
+      setSubcontractorRates(saved.subcontractorRates);setClearedSubcontractorRates(saved.clearedSubcontractorRates);setContractorRates(saved.contractorRates);setBoardSizeOrder(saved.boardSizeOrder);setMaterialWasteText(String(saved.materialWastePercent));setMaterialWasteDrafts(Object.fromEntries(Object.entries(saved.materialWasteOverrides).map(([key,value])=>[key,String(value)])));setInsulationCoverageTexts(Object.fromEntries(Object.entries(saved.materialCoverage.insulation).map(([key,value])=>[key,String(value)])));setAdhesiveCoverageText(String(saved.materialCoverage.adhesive));setSkimCoverageText(String(saved.materialCoverage.skim))
       setCountMeasurements(saved.counts)
       nextCountNumberRef.current = saved.nextCountNumber
       setHiddenGroupIds([])
       setShowUngrouped(true)
-      setViewCategoryId(saved.view.categoryId ?? '')
-      setViewGroupId(saved.view.groupId ?? '')
-      setSidebarTab('measure')
+      setViewCategoryId('')
+      setViewGroupId('')
+      setOverviewDrawing(true)
+      setSidebarTab('summary')
       setNewCategoryName('')
       nextAreaNumberRef.current = saved.nextAreaNumber
       setGroups(saved.groups)
@@ -1053,7 +1125,7 @@ export default function App() {
         lengths: saved.lengths, runs: saved.runs, nextLengthNumber: saved.nextLengthNumber,
         nextRunNumber: saved.nextRunNumber, groups: saved.groups, nextGroupNumber: saved.nextGroupNumber,
         areas: saved.areas, nextAreaNumber: saved.nextAreaNumber,
-        counts: saved.counts, nextCountNumber: saved.nextCountNumber, categories: saved.categories, subcontractorRates:saved.subcontractorRates, contractorRates:saved.contractorRates, boardSizeOrder:saved.boardSizeOrder }))
+        counts: saved.counts, nextCountNumber: saved.nextCountNumber, categories: saved.categories, subcontractorRates:saved.subcontractorRates, clearedSubcontractorRates:saved.clearedSubcontractorRates, contractorRates:saved.contractorRates, boardSizeOrder:saved.boardSizeOrder, materialWastePercent:saved.materialWastePercent, materialWasteOverrides:saved.materialWasteOverrides, materialCoverage:saved.materialCoverage }))
       setLastSavedAt(saved.savedAt)
       setStatus(`Opened ${file.name}. Your drawing, job details and measurements are restored.`)
       loadedPdf = null // Ownership has passed to the viewer.
@@ -1240,7 +1312,22 @@ export default function App() {
       return
     }
     setToolCalibrationNotice('')
-    startToolMeasurement(kind)
+    if(kind==='point') {
+      setPointOptionsOpen(true)
+      const current=categories.find(category=>category.id===(chooserCategoryId || activeCategory?.id))
+      if(current?.mode==='count' && !current.id.startsWith('point-')) {startToolMeasurement(kind);return}
+      selectPointMarker(pointTrade,pointMarkerKind);return
+    }
+    setPointOptionsOpen(false);startToolMeasurement(kind)
+  }
+  function selectPointMarker(trade:PointTrade,kind:PointMarkerKind) {
+    if(!pdf || !hasValidCalibration() || calibrationMode || pendingCalibration){setToolCalibrationNotice(measurementToolHelp());return}
+    if(queuedStart || !finishToolBeforeSwitch())return
+    const id='point-'+kind+'-'+trade.toLowerCase()
+    if(!toolDestination('point',id,''))return
+    setPointTrade(trade);setPointMarkerKind(kind);setPointOptionsOpen(true);setToolDoorHead(false)
+    setQueuedStart('point');setToolboxOpen(true);setDescriptionOpen(false)
+    setStatus(trade+' · '+pointMarkerLabels[kind]+': click once at each location. Press Enter when finished.')
   }
 
 
@@ -1583,9 +1670,9 @@ export default function App() {
     return ()=>observer.disconnect()
   },[descriptionOpen,customFieldOpen,categories.length])
   function descriptionOptions(heading: WorkHeading | 'Other') {
-    if(heading==='Other') return categories.filter(category=>category.mode!=='derived' && !category.heading && !descriptionSections.some(section=>section.options.some(([id])=>id===category.id)) && (!legacyCategoryIds.has(category.id) || category.mode==='count' || groups.some(group=>group.categoryId===category.id))).map(category=>({category,label:category.name}))
+    if(heading==='Other') return categories.filter(category=>category.id!=='tack-treds' && !category.id.startsWith('point-') && category.mode!=='derived' && !category.heading && !descriptionSections.some(section=>section.options.some(([id])=>id===category.id)) && (!legacyCategoryIds.has(category.id) || category.mode==='count' || groups.some(group=>group.categoryId===category.id))).map(category=>({category,label:category.name}))
     const section=descriptionSections.find(section=>section.title===heading)!
-    return [...section.options.map(([id,label])=>({category:categories.find(category=>category.id===id)!,label})),...categories.filter(category=>category.heading===heading && !descriptionSections.some(section=>section.options.some(([id])=>id===category.id))).map(category=>({category,label:category.name}))].map((item,index)=>({...item,index})).sort((a,b)=>(a.category.menuOrder ?? a.index)-(b.category.menuOrder ?? b.index))
+    return [...section.options.map(([id,label])=>({category:categories.find(category=>category.id===id)!,label})),...categories.filter(category=>!category.id.startsWith('point-') && category.heading===heading && !descriptionSections.some(section=>section.options.some(([id])=>id===category.id))).map(category=>({category,label:category.name}))].map((item,index)=>({...item,index})).sort((a,b)=>(a.category.menuOrder ?? a.index)-(b.category.menuOrder ?? b.index))
   }
   function moveDescription(heading: WorkHeading,id: string,delta: number) {
     const ids=descriptionOptions(heading).map(item=>item.category.id),index=ids.indexOf(id),target=index+delta
@@ -1869,6 +1956,7 @@ export default function App() {
   }
 
   function stopMeasurement() {
+    setPointOptionsOpen(false)
     setSelectedEditPoint(null)
     if (runMode) {
       if (runPoints.length >= 2 && hasValidCalibration()) finishRun({ allowHeightDraft: true })
@@ -1907,8 +1995,9 @@ export default function App() {
   function startToolMeasurement(kind: MeasurementKind) {
     setSelectedEditPoint(null)
     if (!pdf || queuedStart || !hasValidCalibration() || calibrationMode || pendingCalibration || toolHeightInvalid) return
-    if (currentToolKind() === kind) return
+    if (currentToolKind() === kind && !toolDoorHead) return
     if (!finishToolBeforeSwitch()) return
+    setToolDoorHead(false)
     if (!toolDestination(kind, chooserCategoryId || activeCategory?.id || '')) return
     if (kind !== 'point') lastMeasureToolRef.current = kind
     setRunHeightM(toolWallHeight === '' ? undefined : Number(toolWallHeight))
@@ -1916,7 +2005,20 @@ export default function App() {
     setToolboxOpen(true)
   }
 
+  function activateDoorHead() {
+    setPointOptionsOpen(false)
+    if(!pdf || !hasValidCalibration() || calibrationMode || pendingCalibration){setToolCalibrationNotice(measurementToolHelp());return}
+    const category=categories.find(item=>item.id===(chooserCategoryId || activeCategory?.id || 'tack-timber-wall'))
+    if(category?.mode!=='measure'){setStatus('Choose a wall work description before measuring a door head.');return}
+    if(!finishToolBeforeSwitch())return
+    if(!toolDestination('length',category.id,''))return
+    setToolDoorHead(true);setRunHeightM(Number(toolWallHeight)>0 ? Number(toolWallHeight) : undefined);setQueuedStart('length');setToolboxOpen(true)
+    setStatus('Door head: click the two sides of the doorway once. Opening height is 2000mm; both faces are included.')
+  }
+
   function changeToolCategory(categoryId: string) {
+    setPointOptionsOpen(false)
+    setToolDoorHead(false)
     const category = categories.find((item) => item.id === categoryId && item.mode !== 'derived')
     if (!category) return
     const kind=currentToolKind(),nextKind: MeasurementKind=category.mode==='count' ? 'point' : /ceiling/i.test(category.name) ? 'area' : 'run'
@@ -1946,7 +2048,7 @@ export default function App() {
     let number=1;while(categories.some(category=>category.id==='custom-'+number))number++
     const first=descriptionSections.find(section=>section.title===newDescriptionHeading)?.options[0]?.[0]
     const category: WorkCategory={id:'custom-'+number,name,heading:newDescriptionHeading,mode:newDescriptionMode,color:categories.find(category=>category.id===first)?.color ?? '#0891b2',...(newDescriptionMode==='measure' && newDescriptionSkim!=='none' ? {skimTarget:newDescriptionSkim} : {})}
-    setCategories(current=>[...current,category]);setToolCustomName('')
+    setCategories(current=>[...current,category]);setSubcontractorRates(current=>({...current,...defaultSubcontractorRates([category])}));setToolCustomName('')
     if(kind) {
       const targetKind=switchType ? newDescriptionMode==='count' ? 'point' : lastMeasureToolRef.current : kind
       toolDestination(targetKind,category.id,'',[...categories,category]);if(switchType)setQueuedStart(targetKind)
@@ -2296,9 +2398,13 @@ export default function App() {
 
   function wallHeightField(id: string, heightM: number | undefined, lengthMm: number | null, measurementPage = pageNumber) {
     const text = heightDrafts[id] ?? (heightM === undefined ? '' : String(heightM))
+    const doorHead=!!savedMeasurement(id,measurementPage)?.item && !!(savedMeasurement(id,measurementPage)?.item as LengthMeasurement).doorHead
     const invalid = text !== '' && (!Number.isFinite(Number(text)) || Number(text) <= 0)
+    const headInvalid=doorHead && !(heightM!==undefined && heightM>2)
     return (
       <div className="wall-height-field">
+        {doorHead && <p className="door-head-note">Door head · 2000mm opening · both faces. Width is measured once; no extra wall LM is added.</p>}
+        {headInvalid && <p className="calibration-warning">Enter a wall height greater than 2000mm for this door head.</p>}
         <label>
           Wall height (mm, optional)
           <input type="number" min="0.001" step="any" inputMode="decimal" value={heightInMm(text)}
@@ -2307,8 +2413,8 @@ export default function App() {
         </label>
         {invalid ? <p className="calibration-warning">Enter a height greater than zero, or clear the field.</p>
           : heightM !== undefined ? <>
-            <div className="wall-area-result">{lengthMm === null ? 'Calibration required' : `${((lengthMm / 1000) * heightM).toFixed(2)} m²`}</div>
-            <p className="length-note">{lengthMm === null ? '' : `${(lengthMm / 1000).toFixed(2)} m × ${heightInMm(String(heightM))} mm · `}One face, before deductions.</p>
+            <div className="wall-area-result">{lengthMm === null ? 'Calibration required' : wallAreaFromLength(lengthMm,heightM,doorHead)===null ? 'Check wall height' : `${wallAreaFromLength(lengthMm,heightM,doorHead)!.toFixed(2)} m²`}</div>
+            <p className="length-note">{lengthMm === null ? '' : `${(lengthMm / 1000).toFixed(2)} m × ${heightInMm(String(heightM))} mm · `}{doorHead ? 'Width × (wall height − 2000mm) × 2 faces.' : 'One face, before deductions.'}</p>
           </> : <p className="length-note">Add height to calculate wall area. Leave blank for length only.</p>}
       </div>
     )
@@ -2465,18 +2571,30 @@ export default function App() {
   function toolBoardSelection(): BoardChoice {return boardPreferences[chooserCategoryId || activeCategory?.id || 'tack-ceiling']}
   function boardSnapshot() {const spec=toolBoardSelection();return spec===undefined ? {} : {boardSpec:spec ? {...spec} : null}}
   function boardPickerHeight() {
-    if(boardTarget) {const saved=savedMeasurement(boardTarget.id,boardTarget.page);return saved && (saved.kind==='length' || saved.kind==='run') ? saved.item.heightM : undefined}
+    if(boardTarget && 'groupId' in boardTarget) {const target=boardTarget;const heights=[...(lengthMeasurements[target.page] ?? []),...(runMeasurements[target.page] ?? [])].filter(item=>item.groupId===target.groupId && item.heightM!==undefined).map(item=>item.heightM!);return heights.length ? Math.max(...heights) : undefined}
+    if(boardTarget && 'id' in boardTarget) {const saved=savedMeasurement(boardTarget.id,boardTarget.page);return saved && (saved.kind==='length' || saved.kind==='run') ? saved.item.heightM : undefined}
     return currentToolKind()==='area' || currentToolKind()==='point' ? undefined : toolWallHeight!=='' && Number(toolWallHeight)>0 ? Number(toolWallHeight) : undefined
   }
-  function openBoardPicker(target: {id:string;page:number} | null,button: HTMLButtonElement) {
+  function openBoardPicker(target: BoardTarget | null,button: HTMLButtonElement) {
     boardTriggerRef.current=button;setBoardSizeReordering(false);setBoardTarget(target);setBoardStep('type');setBoardDraftOverride(undefined);setBoardPendingSize(null);setBoardPendingSpec(null);setDescriptionOpen(false)
     const rect=button.getBoundingClientRect(),width=window.innerWidth || 1200,height=window.innerHeight || 800
-    setBoardPosition({x:Math.max(8,Math.min(rect.left+rect.width/2-Math.min(370,width-16)/2,width-Math.min(370,width-16)-8)),y:Math.max(8,Math.min(rect.bottom+5,height-360))});setBoardPickerOpen(true)
+    setBoardPosition({x:Math.max(8,Math.min(rect.left+rect.width/2-Math.min(370,width-16)/2,width-Math.min(370,width-16)-8)),y:Math.max(8,Math.min(rect.bottom+5,height-480))});setBoardPickerOpen(true)
   }
+  useEffect(()=>{setBoardPickerOpen(false)},[pageNumber,sidebarTab])
   function closeBoardPicker() {setBoardPickerOpen(false);boardTriggerRef.current?.focus?.()}
   function applyBoardChoice(spec: BoardChoice) {
     if(!validBoardSpec(spec))return
-    if(boardTarget) {if(!savedMeasurement(boardTarget.id,boardTarget.page)){closeBoardPicker();return} updateMeasurementDetails(boardTarget.id,{boardSpec:spec},boardTarget.page)}
+    if(boardTarget && 'groupId' in boardTarget) {
+      const target=boardTarget
+      const change=<T extends {groupId?:string;boardSpec?:BoardSpec|null;heightM?:number},>(record:Record<number,T[]>,wall=false)=>({...record,[target.page]:(record[target.page] ?? []).map(item=>{
+        if(item.groupId!==target.groupId)return item
+        const choice=spec ? {...spec} : spec
+        if(choice){delete choice.heightOverrideMm;if(wall && item.heightM && item.heightM*1000>choice.lengthMm && spec?.heightOverrideMm!==undefined)choice.heightOverrideMm=item.heightM*1000}
+        return {...item,boardSpec:choice}
+      })})
+      setLengthMeasurements(current=>change(current,true));setRunMeasurements(current=>change(current,true));setAreaMeasurements(current=>change(current));setCountMeasurements(current=>change(current))
+    }
+    else if(boardTarget && 'id' in boardTarget) {if(!savedMeasurement(boardTarget.id,boardTarget.page)){closeBoardPicker();return} updateMeasurementDetails(boardTarget.id,{boardSpec:spec},boardTarget.page)}
     else {const category=chooserCategoryId || activeCategory?.id || 'tack-ceiling';setBoardPreferences(current=>{const next={...current};if(spec===undefined)delete next[category];else next[category]=spec ? {...spec} : null;return next})}
     setBoardPendingSize(null);setBoardPendingSpec(null);closeBoardPicker()
   }
@@ -2484,7 +2602,7 @@ export default function App() {
     if(!validBoardSpec(spec))return
     const height=boardPickerHeight()
     const choice={...spec};delete choice.heightOverrideMm
-    if(height && choice.lengthMm+0.001<height*1000) {
+    if(choice.boardType!=='INS' && height && choice.lengthMm+0.001<height*1000) {
       if(!override && Math.abs((boardDraftOverride ?? 0)-height*1000)>0.001){setBoardPendingSpec(choice);return}
       choice.heightOverrideMm=height*1000
     }
@@ -2499,8 +2617,14 @@ export default function App() {
   }
   function selectBoardThickness(thickness:number) {
     setBoardDraftThickness(thickness)
-    if(boardDraftType==='THERMAL')completeBoardSpec({boardType:'THERMAL',thicknessMm:thickness,widthMm:1200,lengthMm:2400})
+    if(boardDraftType==='INS')completeBoardSpec({boardType:'INS',thicknessMm:thickness,widthMm:0,lengthMm:0})
+    else if(boardDraftType==='CELO' || boardDraftType==='THERMAL')completeBoardSpec({boardType:boardDraftType,thicknessMm:thickness,widthMm:1200,lengthMm:2400})
     else setBoardStep('size')
+  }
+  function workBoardField(groupId:string,number:number) {
+    const items=[...(lengthMeasurements[number] ?? []),...(runMeasurements[number] ?? []),...(areaMeasurements[number] ?? []),...(countMeasurements[number] ?? [])].filter(item=>item.groupId===groupId)
+    const labels=[...new Set(items.map(item=>boardSpecLabel(item.boardSpec)))],label=labels.length>1 ? 'Mixed board specifications' : labels[0] || 'Choose board specification'
+    return <div className="work-board-editor"><label>Board Specification on this drawing</label><button type="button" className="board-spec-value" data-board-picker aria-label="Board specification for selected work" onClick={event=>openBoardPicker({groupId,page:number},event.currentTarget)}>{label}</button><p className="length-note">Changes apply to this work’s measurements on {drawingPageName(number)} only. Individual specifications can still be changed below.</p></div>
   }
   function measurementBoardField(id:string,number=pageNumber) {
     const saved=savedMeasurement(id,number);if(!saved)return null
@@ -2518,7 +2642,7 @@ export default function App() {
 
   function measurementDetails(id: string, name = '', groupId = '') {
     return (
-      <div className="measurement-details">{measurementBoardField(id)}<button className="duplicate-measurement-button" disabled={hasDraft} onClick={()=>requestDuplicate([id])}>Duplicate Measurement</button>
+      <div className="measurement-details">{(savedMeasurement(id,pageNumber)?.item as LengthMeasurement | undefined)?.doorHead && <p className="door-head-note">Door head · 2000mm opening · both faces included</p>}{measurementBoardField(id)}<button className="duplicate-measurement-button" disabled={hasDraft} onClick={()=>requestDuplicate([id])}>Duplicate Measurement</button>
         <label>
           Name
           <input value={name} maxLength={100} placeholder="Optional measurement name"
@@ -2673,6 +2797,7 @@ export default function App() {
   }
 
   function cancelLengthMeasurement() {
+    setToolDoorHead(false)
     setReadyToolKind(null)
     setLengthMode(false)
     setLengthPoints([])
@@ -2680,6 +2805,7 @@ export default function App() {
   }
 
   function addLengthPoint(clientX: number, clientY: number) {
+    if(toolDoorHead && !(Number(toolWallHeight)>2)){setStatus('Door heads need a wall height greater than 2000mm.');return}
     if (toolHeightInvalid) { setStatus('Enter a valid wall height or clear it before measuring.'); return }
     if (!lengthMode && readyToolKind !== 'length') return
 
@@ -2712,6 +2838,7 @@ export default function App() {
 
     const pointA = lengthPoints[0]
     const pointB = newPoint
+    if(toolDoorHead && Math.hypot(pointB.x-pointA.x,pointB.y-pointA.y)<0.000001){setStatus('Click the other side of the doorway to give it a width.');return}
     const id = `L${String(nextLengthNumberRef.current).padStart(3, '0')}`
     nextLengthNumberRef.current += 1
 
@@ -2719,7 +2846,7 @@ export default function App() {
       ...current,
       [pageNumber]: [
         ...(current[pageNumber] ?? []),
-        { id, pointA, pointB, locked: true, ...boardSnapshot(), ...(runHeightM !== undefined ? { heightM: runHeightM } : {}), ...(activeGroupId ? { groupId: activeGroupId } : {}) },
+        { id, pointA, pointB, locked: true, ...boardSnapshot(), ...(toolDoorHead ? {doorHead:true as const,heightM:Number(toolWallHeight)} : runHeightM !== undefined ? { heightM: runHeightM } : {}), ...(activeGroupId ? { groupId: activeGroupId } : {}) },
       ],
     }))
 
@@ -2727,7 +2854,7 @@ export default function App() {
     setLengthMode(false)
     setReadyToolKind('length')
     setStatus(
-      `${id} measured and locked. Untick Lock if you want to fine-tune its end points.`
+      toolDoorHead ? `Door head ${id} saved: ${wallAreaFromLength(Math.hypot(pointB.x-pointA.x,pointB.y-pointA.y)*calibration.mmPerPdfUnit,Number(toolWallHeight),true)!.toFixed(2)} m² for both faces. Click the next doorway.` : `${id} measured and locked. Untick Lock if you want to fine-tune its end points.`
     )
   }
 
@@ -2899,6 +3026,7 @@ export default function App() {
   }
 
   function startCalibration() {
+    setToolDoorHead(false)
     setCalibrationVisible(true)
     setReadyToolKind(null)
     if (!pdf || runMode || areaMode || countMode) return
@@ -3055,7 +3183,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!pdf || sidebarTab === 'summary' || viewMode !== 'fit-page') return
+    if (!pdf || (sidebarTab === 'summary' || sidebarTab === 'materials' || sidebarTab === 'export') || viewMode !== 'fit-page') return
 
     let cancelled = false
 
@@ -3101,7 +3229,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!pdf || sidebarTab === 'summary' || !canvasRef.current) return
+    if (!pdf || (sidebarTab === 'summary' || sidebarTab === 'materials' || sidebarTab === 'export') || !canvasRef.current) return
 
     const document = pdf
     let disposed = false
@@ -3279,7 +3407,7 @@ export default function App() {
   }
 
   const currentRuns = runMeasurements[pageNumber] ?? []
-  const allMeasurements: Array<{ id: string; name?: string; groupId?: string; categoryId?: string; page: number; pdfLength: number; pdfArea: number; heightM?: number; kind: 'wall' | 'area' | 'count' }> = [
+  const allMeasurements: Array<{ id: string; name?: string; groupId?: string; categoryId?: string; boardSpec?: BoardSpec | null; doorHead?: true; page: number; pdfLength: number; pdfArea: number; heightM?: number; kind: 'wall' | 'area' | 'count' }> = [
     ...Object.entries(lengthMeasurements).flatMap(([page, items]) => items.map((item) => ({
       ...item, page: Number(page), pdfLength: Math.hypot(item.pointB.x - item.pointA.x, item.pointB.y - item.pointA.y), pdfArea: 0, kind: 'wall' as const,
     }))),
@@ -3300,16 +3428,16 @@ export default function App() {
       return item.kind !== 'count' && (!calibration || !calibration.locked || calibration.needsRecalibration)
     }).map((item) => item.page))].sort((a, b) => a - b)
     const totalMm = invalidPages.length ? null : members.reduce((sum, item) =>
-      sum + (item.kind === 'count' ? 0 : item.pdfLength * calibrations[item.page].mmPerPdfUnit), 0)
+      sum + (item.kind === 'count' || item.doorHead ? 0 : item.pdfLength * calibrations[item.page].mmPerPdfUnit), 0)
     const invalidHeightIds = members.filter((item) => {
       const text = heightDrafts[item.id]
-      return item.kind === 'wall' && text !== undefined && text !== '' && (!Number.isFinite(Number(text)) || Number(text) <= 0)
+      return item.kind === 'wall' && ((item.doorHead && !(item.heightM!==undefined && item.heightM>2)) || text !== undefined && text !== '' && (!Number.isFinite(Number(text)) || Number(text) <= 0))
     }).map((item) => item.id)
     const totalAreaM2 = invalidPages.length || invalidHeightIds.length ? null : members.reduce((sum, item) => {
       if (item.kind === 'count') return sum
       const mmPerUnit = calibrations[item.page].mmPerPdfUnit
       return sum + (item.kind === 'area' ? item.pdfArea * mmPerUnit ** 2 / 1000000
-        : item.heightM === undefined ? 0 : item.pdfLength * mmPerUnit / 1000 * item.heightM)
+        : item.heightM === undefined ? 0 : (wallAreaFromLength(item.pdfLength*mmPerUnit,item.heightM,!!item.doorHead) ?? 0))
     }, 0)
     const wallsWithoutHeight = members.filter((item) => item.kind === 'wall' && item.heightM === undefined).length
     return { ...group, members, invalidPages, totalMm, totalAreaM2, wallsWithoutHeight, invalidHeightIds,
@@ -3333,9 +3461,57 @@ export default function App() {
   const categorySummaries = summarizeCategories(groupSummaries)
   const measuredCategorySummaries = categorySummaries.filter((category) => category.mode === 'count' ? category.count > 0
     : category.sourceGroups.some((group) => group.members.some((item) => category.mode !== 'derived' || item.kind === 'area' || (item.kind === 'wall' && item.heightM !== undefined))))
+  function workHeading(id:string) {
+    const category=categories.find(item=>item.id===id)
+    return category ? categoryWorkHeading(category) : ''
+  }
+  function priceSubtotals(rows:Array<{id:string;mode:string;totalAreaM2:number|null;count:number}>,scope:string) {
+    const sections=[{name:'Tack & Ins Total',headings:['Tack','Insulation']},{name:'Dab Total',headings:['Dab']},{name:'Skim Total',headings:['Skim']}]
+    return <div className="trade-subtotals" aria-label={'Trade subtotals for '+scope}>{sections.map(section=>{const matching=rows.filter(row=>section.headings.includes(workHeading(row.id))),prices=matching.map(workPrice),missing=prices.filter(price=>price.value===null).length,total=prices.reduce((sum,price)=>sum+(price.value ?? 0),0);return <div className="trade-subtotal" key={section.name}><span>{section.name}</span><strong>{pounds(total)}</strong>{missing>0 && <small>{missing} awaiting pricing / quantities</small>}</div>})}</div>
+  }
+  function finalMaterialQuantity(exact:number|null,id?:string) {
+    if(exact===null || !(id && materialWasteDrafts[id]!==undefined ? validWaste(materialWasteDrafts[id]) : validWaste(materialWasteText)))return null
+    const value=exact*(1+(id ? materialWasteOverrides[id] ?? materialWastePercent : materialWastePercent)/100)
+    if(!Number.isFinite(value))return null
+    const result=Math.ceil(Number(value.toPrecision(12)))
+    return Number.isSafeInteger(result) ? result : null
+  }
+  function calculateMaterials() {
+    const boards=new Map<string,{id:string;label:string;areaM2:number;incomplete:boolean;boardAreaM2:number}>(),issues:string[]=[]
+    let measuredAreaM2=0,unknownAreas=0
+    for(const measurement of allMeasurements) {
+      if(measurement.kind==='count')continue
+      const quantity=withQuantities(measurement),area=quantity.areaM2,spec=measurement.boardSpec,label=(measurement.name || measurement.id)+' · '+drawingPageName(measurement.page)
+      if(area===null){unknownAreas++;issues.push(label+': check calibration and wall height.')}else measuredAreaM2+=area
+      if(spec===undefined){issues.push(label+': choose a board specification, or Not applicable.');continue}
+      if(spec===null)continue
+      const key=spec.boardType+'|'+spec.thicknessMm+'|'+spec.widthMm+'|'+spec.lengthMm,boardAreaM2=spec.boardType==='INS' ? materialCoverage.insulation[String(spec.thicknessMm)] : spec.widthMm*spec.lengthMm/1000000
+      const row=boards.get(key) ?? {id:key,label:boardSpecLabel(spec),areaM2:0,incomplete:false,boardAreaM2}
+      const mismatch=measurement.kind==='wall' && boardHeightMismatch(spec,measurement.heightM)
+      if(mismatch)issues.push(label+': board length is shorter than wall height; confirm an override or change the board.')
+      if(area===null || mismatch || boardAreaM2<=0)row.incomplete=true
+      if(area!==null)row.areaM2+=area
+      boards.set(key,row)
+    }
+    const rows=Array.from(boards.values()).map(row=>{const exact=row.incomplete ? null : row.areaM2/row.boardAreaM2;return {...row,unit:row.id.startsWith('INS|') ? 'rolls' : 'boards',exact,final:finalMaterialQuantity(exact,row.id),coverage:row.boardAreaM2}})
+    const bagRows:Array<{id:string;label:string;areaM2:number;incomplete:boolean;coverage:number;exact:number|null;final:number|null;unit:string}>=[]
+    for(const bag of [{id:'adhesive',label:'Dabbing adhesive',coverage:materialCoverage.adhesive,source:measuredCategorySummaries.filter(category=>workHeading(category.id)==='Dab' && category.mode!=='count')},{id:'skim',label:'Skimming plaster',coverage:materialCoverage.skim,source:measuredCategorySummaries.filter(category=>workHeading(category.id)==='Skim' && category.mode!=='count')}]) {
+      if(!bag.source.length)continue
+      const incomplete=bag.coverage<=0 || bag.source.some(category=>category.totalAreaM2===null || category.wallsWithoutHeight>0),areaM2=bag.source.reduce((sum,category)=>sum+(category.totalAreaM2 ?? 0),0),exact=incomplete ? null : areaM2/bag.coverage
+      bagRows.push({id:bag.id,label:bag.label,areaM2,incomplete,coverage:bag.coverage,exact,final:finalMaterialQuantity(exact,bag.id),unit:'bags'})
+      if(incomplete)issues.push(bag.label+(bag.coverage<=0 ? ': enter positive m² coverage per bag.' : ': quantities are incomplete; check calibration and wall heights in the source work.'))
+    }
+    return {boards:rows.filter(row=>row.unit==='boards'),rolls:rows.filter(row=>row.unit==='rolls'),bags:bagRows,issues,measuredAreaM2,unknownAreas}
+  }
+  const materialSummary=sidebarTab==='materials' ? calculateMaterials() : null
+  function materialsTable(rows:Array<{id:string;label:string;areaM2:number;coverage:number;incomplete:boolean;exact:number|null;final:number|null;unit:string}>,label:string) {
+    return <div className="material-table-wrap"><table className="material-table" aria-label={label}><colgroup><col className="material-col-spec" /><col className="material-col-area" /><col className="material-col-exact" /><col className="material-col-waste" /><col className="material-col-final" /></colgroup><thead><tr><th>Material / specification</th><th>Measured m²</th><th>Exact</th><th>Waste (%)</th><th>Final order</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}><th scope="row">{row.label}<small>{row.coverage>0 ? row.coverage.toFixed(2)+'m² per '+(row.unit==='boards' ? 'board' : row.unit==='rolls' ? 'roll' : 'bag') : 'Enter positive coverage'}</small></th><td>{row.incomplete ? 'Check quantities' : row.areaM2.toFixed(2)+' m²'}</td><td>{row.exact===null ? 'Check quantities' : row.exact.toFixed(2)+' '+row.unit}</td><td><input className="material-row-waste" type="number" min="0" step="any" inputMode="decimal" aria-label={row.label+' waste percentage'} value={materialWasteDrafts[row.id] ?? materialWasteText} aria-invalid={!validWaste(materialWasteDrafts[row.id] ?? materialWasteText)} onChange={event=>setMaterialWasteDrafts(current=>({...current,[row.id]:event.target.value}))} /></td><td><strong>{row.final===null ? hasInvalidWaste ? 'Check waste %' : 'Check quantities' : row.final+' '+row.unit}</strong></td></tr>)}</tbody></table></div>
+  }
+
   function setWorkRate(kind:'subcontractor'|'contractor',id:string,text:string) {
     if(!categories.some(category=>category.id===id))return
     const key=kind+':'+id;setRateDrafts(current=>({...current,[key]:text}))
+    if(kind==='subcontractor')setClearedSubcontractorRates(current=>text==='' ? [...new Set([...current,id])] : validRateText(text) ? current.filter(key=>key!==id) : current)
     const setter=kind==='subcontractor' ? setSubcontractorRates : setContractorRates
     if(text==='')setter(current=>{const next={...current};delete next[id];return next})
     else if(validRateText(text))setter(current=>({...current,[id]:Number(text)}))
@@ -3353,7 +3529,8 @@ export default function App() {
   }
   function workPriceLabel(row:{id:string;name:string;mode:string;totalAreaM2:number|null;count:number}) {
     const price=workPrice(row)
-    return <span className={'work-price'+(price.value===null ? ' is-unpriced' : '')} aria-label={'Subcontractor value for '+row.name} title={price.note}>{price.value===null ? price.note : pounds(price.value)}</span>
+    const rate=subcontractorRates[row.id],draft=rateDrafts['subcontractor:'+row.id],valid=rate!==undefined && (draft===undefined || draft==='' || validRateText(draft))
+    return <span className="work-price-detail">{valid && <span className="work-rate" aria-label={'Subcontractor rate for '+row.name}>{'£'+rate.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:6})+(row.mode==='count' ? ' / item' : ' / m²')}</span>}<span className={'work-price'+(price.value===null ? ' is-unpriced' : '')} aria-label={'Subcontractor value for '+row.name} title={price.note}>{price.value===null ? price.note : pounds(price.value)}</span></span>
   }
   function ratesPanel(kind:'subcontractor'|'contractor') {
     const book=kind==='subcontractor' ? subcontractorRates : contractorRates
@@ -3413,7 +3590,7 @@ export default function App() {
     const invalidHeight = heightDrafts[item.id] !== undefined && heightDrafts[item.id] !== ''
       && (!Number.isFinite(Number(heightDrafts[item.id])) || Number(heightDrafts[item.id]) <= 0)
     const areaM2 = !valid || invalidHeight ? null : item.kind === 'area' ? item.pdfArea * calibration.mmPerPdfUnit ** 2 / 1000000
-      : item.heightM !== undefined ? item.pdfLength * calibration.mmPerPdfUnit / 1000 * item.heightM : null
+      : item.heightM !== undefined ? wallAreaFromLength(item.pdfLength*calibration.mmPerPdfUnit,item.heightM,!!item.doorHead) : null
     return { ...item, lengthMm, areaM2 }
   }
   const viewItems = allMeasurements.filter((item) => matchesViewCategory(item.groupId, item.categoryId, item.kind === 'wall', item.heightM)).map(withQuantities)
@@ -3455,7 +3632,7 @@ export default function App() {
     const ungrouped = members.filter((item) => !item.groupId && item.kind !== 'count').map(withQuantities)
     const geometry = ungrouped.filter((item) => item.kind !== 'count')
     if (ungrouped.length) rows.push({ id:'__ungrouped__', name:'Ungrouped Measurements', mode:'mixed',
-      totalMm:geometry.some((item) => item.lengthMm === null) ? null : geometry.reduce((sum,item) => sum+(item.lengthMm ?? 0),0),
+      totalMm:geometry.some((item) => item.lengthMm === null) ? null : geometry.reduce((sum,item) => sum+(item.doorHead ? 0 : item.lengthMm ?? 0),0),
       totalAreaM2:geometry.some((item) => (item.kind === 'area' || item.heightM !== undefined) && item.areaM2 === null) ? null : geometry.reduce((sum,item) => sum+(item.areaM2 ?? 0),0),
       count:0, colors:[...new Set(ungrouped.map((item) => item.kind === 'area' ? '#c2410c' : item.id.startsWith('R') ? '#0f766e' : '#2563eb'))], sourceNote:'Not assigned to a work category.', wallsWithoutHeight:geometry.filter((item) => item.kind === 'wall' && item.heightM === undefined).length })
     const calibration=calibrations[number]
@@ -3766,10 +3943,11 @@ export default function App() {
         <nav className="top-navigation" aria-label="Workspace sections">
           <button aria-pressed={sidebarTab === 'measure'} onClick={() => navigateWorkspace('measure')}><UiIcon name="file" />Drawings</button>
           <button aria-pressed={sidebarTab === 'groups'} onClick={() => navigateWorkspace('groups')}><UiIcon name="work" />Measured Work</button>
-          <button aria-pressed={sidebarTab === 'summary'} onClick={() => navigateWorkspace('summary')}><UiIcon name="summary" />Plot Summary</button>
           <button aria-pressed={sidebarTab === 'contractor-rates'} onClick={() => navigateWorkspace('contractor-rates')}><UiIcon name="summary" />Contractor Rates</button>
           <button aria-pressed={sidebarTab === 'rates'} onClick={() => navigateWorkspace('rates')}><UiIcon name="summary" />Subcontractor Rates</button>
+          <button aria-pressed={sidebarTab === 'summary'} onClick={() => navigateWorkspace('summary')}><UiIcon name="summary" />Plot Summary</button>
           <button aria-pressed={sidebarTab === 'materials'} onClick={() => navigateWorkspace('materials')}><UiIcon name="work" />Materials</button>
+          <button aria-pressed={sidebarTab === 'export'} onClick={() => navigateWorkspace('export')}><UiIcon name="file" />Export</button>
         </nav>
         <div className="file-actions">
           <button className="save-takeoff-button" disabled={!pdf || isFileBusy || hasDraft || hasInvalidHeight}
@@ -3830,7 +4008,7 @@ export default function App() {
 </section>
       </header>
 
-      <main ref={workspaceRef} className={`workspace  ${sidebarTab === 'summary' ? 'is-summary' : ''} ${selectedWork || showingAllWork ? 'has-work-details' : ''}`} inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen}>
+      <main ref={workspaceRef} className={`workspace  ${sidebarTab === 'summary' || sidebarTab === 'materials' || sidebarTab === 'export' ? 'is-summary' : ''} ${selectedWork || showingAllWork ? 'has-work-details' : ''}`} inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen}>
         <aside className="sidebar">
           <div className="sidebar-fixed">
           <nav className="sidebar-tabs" aria-label="Take-off sections">
@@ -3956,7 +4134,7 @@ export default function App() {
 
           <div className={`save-status ${hasUnsavedChanges ? 'unsaved' : ''}`} role="status">
             <strong>{isFileBusy ? 'Opening file…' : hasUnsavedChanges ? 'Changes not saved' : lastSavedAt ? 'Saved file loaded / downloaded' : 'Start a new take-off'}</strong>
-            <p>{hasInvalidRates ? 'Correct or clear the invalid rate before saving.' : hasInvalidHeight ? 'Correct or clear the invalid wall height before saving.' : hasDraft ? 'Finish or cancel your current measurement or calibration to save.'
+            <p>{hasInvalidCoverage ? 'Enter positive material coverage values before saving.' : hasInvalidWaste ? 'Correct or clear the material waste percentage before saving.' : hasInvalidRates ? 'Correct or clear the invalid rate before saving.' : hasInvalidHeight ? 'Correct or clear the invalid wall height before saving.' : hasDraft ? 'Finish or cancel your current measurement or calibration to save.'
               : 'Save Measure downloads one file with your PDF and measurements. Open Measure restores it on any device.'}</p>
             {lastSavedAt && <span>Last saved: {new Date(lastSavedAt).toLocaleString()}</span>}
           </div>
@@ -3989,7 +4167,8 @@ export default function App() {
 
           {ratesPanel('contractor')}
           {ratesPanel('subcontractor')}
-          <div hidden={sidebarTab !== 'materials'} className="materials-panel"><h2>Materials</h2><p>Materials calculations coming next.</p><p className="length-note">This will use your Measured Work to calculate material quantities.</p></div>
+          <div hidden={sidebarTab !== 'export'} className="export-panel"><h2>Export</h2><p className="length-note">Export options will be added here.</p></div>
+          <div hidden={sidebarTab !== 'materials'} className="materials-panel"><h2>Materials</h2><p className="length-note">Exact quantities use your measured areas and each measurement’s board specification. Final quantities add waste and round up to whole boards, rolls or bags.</p><label className="material-waste-label">Default waste allowance (%)<input type="number" min="0" step="any" inputMode="decimal" aria-label="Material waste percentage" aria-invalid={!validWaste(materialWasteText)} value={materialWasteText} onChange={event=>setMaterialWasteText(event.target.value)} /></label><p className="length-note">Each material starts with this allowance. Change its own waste box in the quantities table to adjust it separately.</p>{hasInvalidWaste && <p role="alert" className="calibration-warning">Enter zero or a positive waste percentage for each material.</p>}{(adhesiveCoverageUsed || skimCoverageUsed || usedInsulationThicknesses.size>0) && <fieldset className="material-coverage-settings"><legend>Material coverage</legend>{adhesiveCoverageUsed && <label>Dabbing adhesive (m² per bag)<input type="number" min="0.01" step="any" inputMode="decimal" aria-label="Dabbing adhesive coverage" value={adhesiveCoverageText} aria-invalid={adhesiveCoverageText.trim()==='' || !Number.isFinite(Number(adhesiveCoverageText)) || Number(adhesiveCoverageText)<=0} onChange={event=>setAdhesiveCoverageText(event.target.value)} /></label>}{skimCoverageUsed && <label>Skimming plaster (m² per bag)<input type="number" min="0.01" step="any" inputMode="decimal" aria-label="Skimming plaster coverage" value={skimCoverageText} aria-invalid={skimCoverageText.trim()==='' || !Number.isFinite(Number(skimCoverageText)) || Number(skimCoverageText)<=0} onChange={event=>setSkimCoverageText(event.target.value)} /></label>}{Object.keys(defaultInsulationCoverage).filter(thickness=>usedInsulationThicknesses.has(thickness)).map(thickness=><label key={thickness}>INS {thickness}mm (m² per roll)<input type="number" min="0.01" step="any" inputMode="decimal" aria-label={'INS '+thickness+'mm coverage'} value={insulationCoverageTexts[thickness]} aria-invalid={!insulationCoverageTexts[thickness]?.trim() || !Number.isFinite(Number(insulationCoverageTexts[thickness])) || Number(insulationCoverageTexts[thickness])<=0} onChange={event=>setInsulationCoverageTexts(current=>({...current,[thickness]:event.target.value}))} /></label>)}{hasInvalidCoverage && <p role="alert" className="calibration-warning">Coverage must be greater than zero.</p>}</fieldset>}{materialSummary && <>{materialSummary.issues.length>0 && <details className="materials-issues"><summary>{materialSummary.issues.length} items to check</summary><ul>{materialSummary.issues.map((issue,index)=><li key={index}>{issue}</li>)}</ul></details>}</>}</div>
           <div hidden={sidebarTab !== 'summary'} className="summary-panel">
             <div className="summary-job-heading">{[job.site, job.plot ? 'Plot ' + job.plot : '', job.houseType, job.revision ? (/^rev\b/i.test(job.revision) ? job.revision : 'Rev ' + job.revision) : ''].filter(Boolean).join(' / ') || 'Job details not entered'}</div>
             <h2>Plot summary</h2>
@@ -4009,6 +4188,7 @@ export default function App() {
               {category.wallsWithoutHeight > 0 && <p className="length-note">{category.wallsWithoutHeight} lengths/runs without height are excluded from m².</p>}
             </div>)}
             {!measuredCategorySummaries.length && <p className="length-note">No categories measured yet.</p>}
+            {measuredCategorySummaries.length>0 && priceSubtotals(measuredCategorySummaries,'whole plot')}
             {measuredCategorySummaries.length>0 && <div className="plot-price-total"><span>{unpricedCategories ? 'Priced subcontractor subtotal' : 'Plot subcontractor total'}</span><strong>{pounds(plotPriceTotal)}</strong>{unpricedCategories>0 && <p>{unpricedCategories} categories awaiting a rate or valid quantities.</p>}<p>50p or less rounds down; 51p or more rounds up. Totals add the rounded category values. LM is not charged separately.</p>{measuredCategorySummaries.some(category=>category.wallsWithoutHeight>0) && <p>Lengths without wall heights are excluded from m² pricing.</p>}</div>}
             <p className="length-note">{groups.filter((group) => !group.categoryId).length} work items are uncategorised. Assign categories in Measured Work settings to include them above. Ungrouped geometry is also excluded.</p>
             <details className="category-settings"><summary>Edit category names and colours</summary>
@@ -4145,7 +4325,7 @@ export default function App() {
           </div>
                   <div className="toolbox-body">
           <div className="compact-tool-row"><div className="compact-measure-group"><small>Measure</small><div className="tool-selector-grid" aria-label="Measurement tools">
-            <button className="tool-tile" aria-label="Single Length" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : 'Single Length'} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={lengthMode || readyToolKind === 'length'} aria-disabled={calibrationMode || !!pendingCalibration || !lengthCalibrationValid}
+            <button className="tool-tile" aria-label="Single Length" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : 'Single Length'} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={!toolDoorHead && (lengthMode || readyToolKind === 'length')} aria-disabled={calibrationMode || !!pendingCalibration || !lengthCalibrationValid}
               onClick={() => activateMeasurementTool('length')}>
               <UiIcon name="length" /><span>{'Single Length'}</span>
             </button>
@@ -4153,6 +4333,7 @@ export default function App() {
               onClick={() => activateMeasurementTool('run')}><UiIcon name="run" /><span>Multiple Length</span></button>
             <button className="tool-tile" aria-label="Area" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : 'Area'} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={areaMode || readyToolKind === 'area'} aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
               onClick={() => activateMeasurementTool('area')}><UiIcon name="area" /><span>Area</span></button>
+            <button type="button" className="tool-tile" aria-label="Door Head" aria-pressed={toolDoorHead && currentToolKind()==='length'} title="Door Head - Both Faces" aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration} onClick={activateDoorHead}><UiIcon name="door-head" /><span>Door Head</span></button>
             <button className="tool-tile" aria-label="Point Marker" title={(!lengthCalibrationValid || calibrationMode || pendingCalibration) ? measurementToolHelp() : 'Point Marker'} onMouseEnter={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} onFocus={() => { if (!lengthCalibrationValid || calibrationMode || pendingCalibration) setToolCalibrationNotice(measurementToolHelp()) }} aria-pressed={countMode || readyToolKind === 'point'} aria-disabled={!lengthCalibrationValid || calibrationMode || !!pendingCalibration}
               onClick={() => activateMeasurementTool('point')}><UiIcon name="point" /><span>Point Marker</span></button>
           </div>
@@ -4169,11 +4350,13 @@ export default function App() {
           </div>}
           </div></div>
                   </div>
+          {pointOptionsOpen && <div className="point-marker-options" data-no-drag role="group" aria-label="Point marker options"><label>Point type<select aria-label="Point marker type" value={pointMarkerKind} onChange={event=>selectPointMarker(pointTrade,event.target.value as PointMarkerKind)}>{(Object.keys(pointMarkerLabels) as PointMarkerKind[]).map(kind=><option key={kind} value={kind}>{pointMarkerLabels[kind]}</option>)}</select></label><div className="point-trade-buttons" role="group" aria-label="Point marker trade">{pointTrades.map(trade=><button type="button" key={trade} aria-pressed={pointTrade===trade} onClick={()=>selectPointMarker(trade,pointMarkerKind)}>{trade}</button>)}</div></div>}
 
           <label hidden={currentToolKind()==='area' || currentToolKind()==='point'} className={`toolbox-height panel-wall-height${toolWallHeight==='' && (currentToolKind()==='length' || currentToolKind()==='run') ? ' height-reminder' : ''}`}>Wall Height<div><input type="number" min="0.001" step="0.01" inputMode="decimal" aria-label="Toolbox wall height" value={heightInMm(toolWallHeight)} disabled={areaMode || countMode} onChange={(event) => {
             const value=heightFromMm(event.target.value); setToolWallHeight(value)
             if (value === '' || (Number.isFinite(Number(value)) && Number(value)>0)) setRunHeightM(value === '' ? undefined : Number(value))
           }} /><span>mm</span></div></label>
+          {toolDoorHead && currentToolKind()==='length' && <p className="door-head-note" role="status">Door head · 2000mm opening · 2 faces{!(Number(toolWallHeight)>2) && <strong> — enter wall height above 2000mm.</strong>}</p>}
           <div className={`panel-board-spec${toolBoardSelection()===undefined ? ' board-spec-reminder' : ''}`} data-no-drag><span>Board Specification</span><button type="button" className="board-spec-value" aria-label="Choose board specification" aria-haspopup="dialog" aria-expanded={boardPickerOpen && !boardTarget} data-board-picker onClick={event=>openBoardPicker(null,event.currentTarget)}>{boardSpecLabel(toolBoardSelection())}<span aria-hidden="true"> ▾</span></button>
           {boardHeightMismatch(toolBoardSelection(),currentToolKind()==='area' || currentToolKind()==='point' ? undefined : Number(toolWallHeight)||undefined) && <p className="board-height-warning" role="alert">Board length is shorter than the wall height. <button type="button" onClick={event=>openBoardPicker(null,event.currentTarget)}>Change / override</button></p>}</div>
             <div className={`toolbar-session-status${currentToolKind() ? ' compact-measurement-progress' : ''}`} role="region" aria-label="Measurement progress" hidden={(messagesHidden && !currentToolKind()) || (!currentToolKind() && !toolCalibrationNotice && !toolSwitchNotice && !toolHeightInvalid && !(snapEnabled && (snapSource!=='measure' && pdfSnapInfo!=='PDF lines ready.' || !snapEndpoints && !snapMidpoints)))}>
@@ -4252,7 +4435,7 @@ export default function App() {
             >
               <summary className="length-panel-heading">
                 <strong>
-                  Lengths ({currentLengthMeasurements.length}) · {lengthCalibrationValid ? `${(renderedLengths.reduce((sum, item) => sum + (item.lengthMm ?? 0), 0) / 1000).toFixed(2)} m` : 'Calibration required'}
+                  Lengths ({currentLengthMeasurements.length}) · {lengthCalibrationValid ? `${(renderedLengths.reduce((sum, item) => sum + (item.doorHead ? 0 : item.lengthMm ?? 0), 0) / 1000).toFixed(2)} m` : 'Calibration required'}
                 </strong>
               </summary>
                 <button
@@ -4274,7 +4457,7 @@ export default function App() {
                     className="length-list-item named-length-item measurement-card"
                     key={measurement.id}
                   >
-                    <summary>{measurement.name || measurement.id} · {measurement.lengthMm === null ? '—' : `${(measurement.lengthMm / 1000).toFixed(2)} m`}
+                    <summary>{measurement.doorHead ? 'Door head · ' : ''}{measurement.name || measurement.id} · {measurement.lengthMm === null ? '—' : `${(measurement.lengthMm / 1000).toFixed(2)} m`}
                       <span>{categories.find((category) => category.id === groups.find((group) => group.id === measurement.groupId)?.categoryId)?.name || 'Uncategorised'}</span>
                     </summary>
                     <div>
@@ -4386,7 +4569,7 @@ export default function App() {
         </aside>
 
         <section
-          hidden={sidebarTab === 'summary'}
+          hidden={sidebarTab === 'summary' || sidebarTab === 'materials' || sidebarTab === 'export'}
           ref={stageRef}
           tabIndex={-1}
           className={`drawing-stage${isPanning ? ' is-panning' : ''}${calibrationMode || lengthMode || runMode || areaMode || countMode || readyToolKind ? ' measurement-active' : ''}`}
@@ -4558,10 +4741,12 @@ export default function App() {
                           x2={measurement.line.x2}
                           y2={measurement.line.y2}
                           stroke={measurement.color}
+                          strokeDasharray={measurement.doorHead ? '5 3' : undefined}
+                          aria-label={measurement.doorHead ? 'Door head width ' + measurement.id : undefined}
                           strokeWidth={measurementAppearance(measurement.groupId).width}
                         />
 
-                        <g
+                        {!(measurement.doorHead && overviewDrawing) && <g className={measurement.doorHead ? 'door-head-dimension' : 'length-dimension'}
                           transform={`translate(${
                             (measurement.line.x1 + measurement.line.x2) / 2
                           }, ${
@@ -4591,7 +4776,7 @@ export default function App() {
                               ? `${sidebarTab==='groups' ? '' : measurement.id+' · '}${(measurement.lengthMm / 1000).toFixed(2)} m`
                               : sidebarTab==='groups' ? 'Check calibration' : `${measurement.id} · invalid`}
                           </text>
-                        </g>
+                        </g>}
                       </>
                     )}
 
@@ -4744,6 +4929,8 @@ export default function App() {
             <span className="footer-help">Drag to pan <span>·</span> Scroll to zoom</span>
           </div>}
         </section>
+        {sidebarTab==='export' && <section className="summary-gallery export-workspace" aria-label="Export workspace"><header className="summary-gallery-heading"><h2>Export</h2></header><article className="material-order-card"><h3>Export options</h3><p>Export options will be added here.</p></article></section>}
+        {sidebarTab==='materials' && materialSummary && <section className="summary-gallery materials-workspace" aria-label="Material quantities"><header className="summary-gallery-heading"><h2>Material Quantities</h2><p>All drawings · Exact quantities before waste · Final order rounded up to whole units.</p></header>{!pdf && <p>Import a drawing and measure some work to calculate materials.</p>}{materialSummary.issues.length>0 && <p className="materials-warning" role="status">Some quantities need checking. See the items listed on the left before ordering.</p>}<article className="material-order-card"><h3>Boards</h3>{materialSummary.boards.length ? materialsTable(materialSummary.boards,'Board quantities') : <p>No boards specified yet. Choose a board specification on each relevant measurement, or mark non-board work as Not applicable.</p>}</article><article className="material-order-card"><h3>Insulation rolls</h3>{materialSummary.rolls.length ? materialsTable(materialSummary.rolls,'Insulation roll quantities') : <p>Choose an INS specification to calculate roll quantities.</p>}</article><article className="material-order-card"><h3>Adhesive & plaster</h3>{materialSummary.bags.length ? materialsTable(materialSummary.bags,'Adhesive and plaster quantities') : <p>Measure Dab or Skim work to calculate bag quantities.</p>}</article><p className="length-note material-method-note">Matching specifications are combined before rounding. Insulation rolls use the coverage set on the left. Each material has its own waste allowance. Skim bags use the automatic skim totals and respect skim opt-outs. Board quantities are calculated from the original measurements only.</p></section>}
         {sidebarTab === 'summary' && <section className="summary-gallery" aria-label="All drawings and page quantities">
           <header className="summary-gallery-heading"><h2>All Drawings — Page Breakdown</h2><p>Whole-plot totals are on the left. Each drawing below has its own measurements and quantities.</p></header>
           {!pdf && <p className="summary-empty">Import a drawing to see the page breakdown.</p>}
@@ -4760,6 +4947,7 @@ export default function App() {
                   {row.wallsWithoutHeight>0 && <p className="length-note">{row.wallsWithoutHeight} lengths/runs without height excluded from m².</p>}
                   {row.sourceNote && <p className="skim-source-note">{row.sourceNote}</p>}
                 </div>)}
+                {priceSubtotals(page.rows,page.name)}
               </div>
             </div>
           </article>)}
@@ -4812,6 +5000,7 @@ export default function App() {
               const invalid = value !== '' && (!Number.isFinite(Number(value)) || Number(value) <= 0)
               return <div className="work-height-editor"><label>Wall height on this drawing (mm)<input type="number" min="0.001" step="any" aria-label="Work wall height" aria-invalid={invalid} value={heightInMm(value)} placeholder={heights.length > 1 ? 'Mixed heights' : 'Add wall height'} onChange={(event) => setWorkWallHeight(selectedWork.id, heightFromMm(event.target.value), pageNumber)} /></label><p className="length-note">Applies to this work’s lengths/runs on this drawing only. You can also edit individual heights below.</p>{invalid && <p className="calibration-warning">Enter a height greater than zero, or clear it.</p>}</div>
             })()}
+            {workBoardField(selectedWork.id,pageNumber)}
             <div className="work-visibility-actions">
               <button disabled={hasDraft} aria-pressed={viewGroupId === selectedWork.id} onClick={() => showOnlyMeasuredWork(selectedWork.id)}>Show Only This Measure on Drawing</button>
               <button disabled={hasDraft} onClick={showAllMeasurements}>Show All Measurements</button>
@@ -4825,7 +5014,7 @@ export default function App() {
             <button className="duplicate-work-button" disabled={hasDraft} onClick={()=>requestDuplicate(selectedWorkItems.map(item=>item.id))}>Duplicate This Work</button><h3>Individual measurements</h3>{isolatedMeasurementId && <div className="isolation-notice">Showing {isolatedMeasurementId} only <button onClick={()=>{setIsolatedMeasurementId(null);setOverviewDrawing(false)}}>Show this work item</button></div>}
             <div className="work-member-list">
               {selectedWorkItems.map((item) => <details className="work-member-card" key={item.id}>
-                <summary aria-label={'Show only '+(item.name || item.id)+' on drawing'} onClick={()=>{setIsolatedMeasurementId(item.id);setOverviewDrawing(false)}}><strong>{item.name || item.id}</strong><span>{drawingPageName(item.page)} · {item.kind === 'count' ? '1 no.' : item.kind === 'area'
+                <summary aria-label={'Show only '+(item.name || item.id)+' on drawing'} onClick={()=>{setIsolatedMeasurementId(item.id);setOverviewDrawing(false)}}><strong>{item.doorHead ? 'Door head · ' : ''}{item.name || item.id}</strong><span>{drawingPageName(item.page)} · {item.kind === 'count' ? '1 no.' : item.kind === 'area'
                   ? item.areaM2 === null ? 'Check calibration' : `${item.areaM2.toFixed(2)} m²`
                   : item.lengthMm === null ? 'Check calibration' : `${(item.lengthMm / 1000).toFixed(2)} m`}</span></summary>
                 <p className="length-note">{item.id}{item.heightM !== undefined ? ` · height ${heightInMm(String(item.heightM))} mm` : ''}</p>
@@ -4875,11 +5064,11 @@ export default function App() {
           <button role="menuitem" onClick={() => setMeasurementMenu(null)}>Close</button>
         </div>}
       </main>
-      {boardPickerOpen && <div className="board-spec-popover" data-board-picker role="dialog" aria-label="Board specification selector" style={{left:boardPosition.x,top:boardPosition.y}} onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeBoardPicker()}}}>
-        <div className="board-picker-heading"><strong>Board Specification{boardTarget ? ' · '+boardTarget.id : ''}</strong><button type="button" aria-label="Close board specification" onClick={closeBoardPicker}>✕</button></div>
+      {boardPickerOpen && <div className="board-spec-popover" data-board-picker role="dialog" aria-label="Board specification selector" style={{left:boardPosition.x,top:boardPosition.y,maxHeight:`calc(100dvh - ${boardPosition.y+8}px)`}} onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeBoardPicker()}}}>
+        <div className="board-picker-heading"><strong>Board Specification{boardTarget ? ' · '+('id' in boardTarget ? boardTarget.id : groups.find(group=>group.id===boardTarget.groupId)?.name || 'Selected work')+' · '+drawingPageName(boardTarget.page) : ''}</strong><button type="button" aria-label="Close board specification" onClick={closeBoardPicker}>✕</button></div>
         <div className="board-picker-breadcrumbs"><button type="button" onClick={()=>{setBoardStep('type');setBoardPendingSize(null);setBoardPendingSpec(null)}}>Board Spec</button>{boardStep!=='type' && <span>› {boardDraftType} › {boardStep==='size' ? 'Size' : 'Thickness'}</span>}</div>
         {boardStep==='type' && <div className="board-type-options">{boardTypes.map(type=><button type="button" key={type} onClick={()=>{setBoardDraftType(type);setBoardSizeReordering(false);setBoardDraftOverride(undefined);setBoardPendingSize(null);setBoardPendingSpec(null);setBoardStep(type==='THERMAL' ? 'size' : 'thickness')}}>{type}</button>)}</div>}
-        {boardStep==='thickness' && <><h3>Thickness (mm)</h3>{boardDraftType==='THERMAL' && <p>1200 × 2400mm</p>}<div className="board-thickness-options">{boardThicknessOptions(boardDraftType).map(thickness=><button type="button" key={thickness} onClick={()=>selectBoardThickness(thickness)}>{thickness}mm</button>)}</div></>}
+        {boardStep==='thickness' && <><h3>Thickness (mm)</h3>{(boardDraftType==='THERMAL' || boardDraftType==='CELO') && <p>1200 × 2400mm</p>}{boardDraftType==='INS' && <p>Roll coverage is set in Materials.</p>}<div className="board-thickness-options">{boardThicknessOptions(boardDraftType).map(thickness=><button type="button" key={thickness} onClick={()=>selectBoardThickness(thickness)}>{thickness}mm</button>)}</div></>}
         {boardStep==='size' && <><div className="board-size-heading"><h3>Size (mm)</h3>{boardDraftType!=='THERMAL' && <button type="button" aria-pressed={boardSizeReordering} onClick={()=>{setBoardSizeReordering(value=>!value);setBoardPendingSize(null);setBoardPendingSpec(null)}}>{boardSizeReordering ? 'Done' : 'Reorder'}</button>}</div>{boardDraftType!=='THERMAL' && <p>{boardDraftType} · {boardDraftThickness}mm</p>}<div className="board-size-options">{(boardDraftType==='THERMAL' ? [[1200,2400]] : orderedBoardSizes()).map(([width,length],index,list)=>{const height=boardPickerHeight(),blocked=!!height && height*1000>length+0.001;return <div className="board-size-row" key={width+'x'+length}><button type="button" aria-disabled={blocked} title={blocked ? 'Board length is shorter than the wall height. Override is available.' : undefined} onClick={()=>{if(!boardSizeReordering)selectBoardSize(width,length)}}>{width} × {length}mm{blocked && <small>Wall height too high · override available</small>}</button>{boardSizeReordering && boardDraftType!=='THERMAL' && <div className="board-size-order-actions"><button type="button" aria-label={'Move '+width+' × '+length+'mm up'} disabled={index===0} onClick={()=>moveBoardSize(width+'x'+length,-1)}>↑</button><button type="button" aria-label={'Move '+width+' × '+length+'mm down'} disabled={index===list.length-1} onClick={()=>moveBoardSize(width+'x'+length,1)}>↓</button></div>}</div>})}</div></>}
         {(boardPendingSize || boardPendingSpec) && <div className="board-height-warning" role="alert"><strong>Board length is shorter than the wall height.</strong><p>{boardPendingSpec?.lengthMm ?? boardPendingSize?.[1]}mm board · {Math.round((boardPickerHeight() ?? 0)*1000)}mm wall height.</p><button type="button" onClick={()=>{if(boardPendingSpec)completeBoardSpec(boardPendingSpec,true);else if(boardPendingSize)selectBoardSize(boardPendingSize[0],boardPendingSize[1],true)}}>Override and select anyway</button><button type="button" onClick={()=>{setBoardPendingSize(null);setBoardPendingSpec(null)}}>Choose another size</button></div>}
         <div className="board-picker-footer"><button type="button" onClick={()=>applyBoardChoice(null)}>Not applicable</button><button type="button" onClick={()=>applyBoardChoice(undefined)}>Clear selection</button></div>

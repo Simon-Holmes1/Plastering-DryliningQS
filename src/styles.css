@@ -2508,3 +2508,88 @@ canvas { box-shadow: 0 3px 24px #1b39421c; }
   .topbar > .file-actions { grid-column: 2; grid-row: 1; }
   .topbar > .top-navigation { grid-column: 1 / -1; grid-row: 2; height: 43px; width: max-content; max-width: 100%; justify-content: center; }
 }
+/* Door-head measuring and trade subtotals. */
+.floating-toolbox.compact-floating-panel .door-head-tool { display: block; width: 100%; margin-top: 5px; padding: 4px 3px; border: 1px solid #527586; border-radius: 4px; color: #d9e4ec; background: #ffffff08; font-size: 10px; line-height: 1.4; }
+.floating-toolbox.compact-floating-panel .door-head-tool[aria-pressed="true"] { color: #3ce1d7; border-color: #25d6cb; background: #ffffff0c; }
+.door-head-note { margin: 4px 0; color: #b9dedb; font-size: 10px; line-height: 1.5; }
+.sidebar .door-head-note, .work-details-panel .door-head-note { color: #b9dedb; }
+.door-head-note strong { color: #ffd5bf; }
+.trade-subtotals { margin: 13px 0 9px; border: 1px solid #4d687d; border-radius: 7px; padding: 5px 10px; color: #e4eef5; background: #ffffff04; }
+.trade-subtotal { display: grid; grid-template-columns: 1fr auto; gap: 3px 7px; padding: 8px 0; border-bottom: 1px solid #425b70; font-size: 12px; }
+.trade-subtotal:last-child { border-bottom: 0; }
+.sidebar .trade-subtotal strong, .summary-page-quantities .trade-subtotal strong { color: #63e9d8; font-size: 16px; }
+.trade-subtotal small { grid-column: 1 / -1; color: #c9d6df; font-size: 10px; }
+/* Material quantities retain exact allowances alongside whole-unit order quantities. */
+.material-waste-label { display: block; margin: 15px 0 8px; font-weight: 700; font-size: 12px; }
+.material-waste-label input { display: block; width: 100%; margin-top: 6px; padding: 9px; border-radius: 5px; }
+.material-area-total { margin: 13px 0; padding: 12px; border: 1px solid #4d687d; border-radius: 7px; }
+.material-area-total > span { display: block; color: #d9e4ec; font-size: 11px; }
+.sidebar .material-area-total strong { display: block; margin-top: 6px; color: #63e9d8; font-size: 23px; }
+.materials-issues { padding: 9px; border: 1px solid #a87c62; border-radius: 6px; }
+.materials-issues summary { cursor: pointer; font-size: 12px; }
+.materials-issues ul { padding-left: 16px; font-size: 11px; color: #e2cebf; }
+.materials-issues li { margin-top: 8px; overflow-wrap: anywhere; }
+.material-order-card { margin: 0 0 20px; padding: 17px; border: 1px solid #4d687d; border-radius: 8px; color: #e4eef5; background: var(--workspace-banner-bg); }
+.material-order-card h3 { margin: 0 0 14px; font-size: 18px; }
+.material-order-card > p { color: #bdcedc; font-size: 12px; }
+.material-table-wrap { overflow-x: auto; }
+.material-table { border-collapse: collapse; width: 100%; min-width: 570px; font-size: 12px; text-align: left; }
+.material-table th, .material-table td { padding: 12px 10px; border-bottom: 1px solid #425b70; vertical-align: top; }
+.material-table th { font-weight: 600; }
+.material-table thead { color: #b9cedd; font-size: 11px; }
+.material-table th[scope="row"] { min-width: 210px; }
+.material-table th small { display: block; margin-top: 5px; color: #b9cedd; font-size: 10px; font-weight: 400; }
+.material-table td { font-variant-numeric: tabular-nums; }
+.material-table td strong { color: #63e9d8; font-size: 15px; white-space: nowrap; }
+.materials-warning { padding: 12px; border: 1px solid #ad826a; border-radius: 6px; background: #63432f; color: #ffe4cd; font-size: 12px; }
+.material-method-note { color: #51697d; font-size: 12px; line-height: 1.6; }
+/* Five aligned measuring icons, including the door with its highlighted head. */
+.sidebar .is-sidebar-docked .tool-selector-grid { gap: 2px; }
+.sidebar .is-sidebar-docked .tool-tile { width: 26px; min-width: 26px; }
+.work-board-editor { margin: 15px 0; padding: 12px; border: 1px solid #4d687d; border-radius: 7px; color: #e4eef5; background: #ffffff04; }
+.work-board-editor > label { display: block; margin: 0 0 7px; font-size: 12px; font-weight: 700; }
+.work-details-panel .work-board-editor .board-spec-value { display: block; width: 100%; padding: 8px; color: #63e9d8; background: #ffffff05; border-color: #527586; text-align: left; font-weight: 600; white-space: normal; }
+.material-coverage-settings { margin: 14px 0; padding: 10px; border: 1px solid #4d687d; border-radius: 6px; }
+.material-coverage-settings legend { padding: 0 5px; font-size: 12px; font-weight: 700; }
+.material-coverage-settings label { display: block; margin: 7px 0 12px; font-size: 11px; font-weight: 600; }
+.material-coverage-settings label:last-of-type { margin-bottom: 4px; }
+.material-coverage-settings input { display: block; width: 100%; margin-top: 5px; padding: 8px; border-radius: 5px; }
+.sidebar .material-coverage-settings input[aria-invalid="true"] { border-color: #ee9b84; }
+/* Material ordering: per-item waste controls match the navy workspace. */
+.material-table .material-row-waste {
+  width: 82px;
+  min-width: 65px;
+  padding: 8px;
+  border: 1px solid #3d6077;
+  border-radius: 5px;
+  background: #172e42;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+}
+.material-table .material-row-waste:focus {
+  outline: 2px solid #22d3ce;
+  outline-offset: 1px;
+}
+.material-table .material-row-waste[aria-invalid="true"] { border-color: #ee9b84; }
+.materials-workspace .material-table { min-width: 630px; }
+/* Shared columns keep all material quantity tables vertically aligned. */
+.materials-workspace .material-table { table-layout: fixed; min-width: 740px; }
+.material-table .material-col-spec { width: 36%; }
+.material-table .material-col-area { width: 16%; }
+.material-table .material-col-exact { width: 16%; }
+.material-table .material-col-waste { width: 14%; }
+.material-table .material-col-final { width: 18%; }
+.material-table th[scope="row"] { min-width: 0; overflow-wrap: anywhere; }
+.material-table td { overflow-wrap: anywhere; }
+.work-price-detail { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 9px; }
+.work-price-detail .work-rate { color: #c5d8e6; font-size: 11px; font-weight: 600; white-space: nowrap; }
+/* Keep every board choice inside the viewport, including a docked trigger. */
+.board-spec-popover { box-sizing: border-box; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.board-picker-footer { position: sticky; bottom: 0; padding-bottom: 9px; background: var(--workspace-banner-bg); }
+.point-marker-options { width: 100%; margin: 5px 0; padding: 7px 4px; border-top: 1px solid #527586; border-bottom: 1px solid #527586; }
+.point-marker-options label { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 5px 8px; color: #d9e4ec; font-size: 11px; font-weight: 700; }
+.point-marker-options select { max-width: 100%; padding: 5px; border: 1px solid #527586; border-radius: 4px; background: #193145; color: #3ce1d7; font: inherit; font-size: 13px; font-weight: 700; }
+.point-trade-buttons { display: flex; justify-content: center; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+.floating-toolbox .point-trade-buttons button { padding: 5px 7px; border: 1px solid #527586; border-radius: 4px; color: #d9e4ec; background: #ffffff05; font-size: 11px; }
+.floating-toolbox .point-trade-buttons button[aria-pressed="true"] { color: #3ce1d7; border-color: #25d6cb; background: #ffffff0b; }
