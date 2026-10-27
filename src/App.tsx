@@ -96,6 +96,9 @@ type WorkHeading = 'Tack' | 'Dab' | 'Skim' | 'Insulation' | 'Metal'
 type WorkCategory = { menuOrder?: number; heading?: WorkHeading; id: string; name: string; color: string; mode: 'measure' | 'count' | 'derived'; skimTarget?: 'walls' | 'ceilings' }
 type CountMeasurement = { boardSpec?: BoardSpec | null; id: string; name?: string; groupId?: string; categoryId?: string; point: Point; locked: boolean }
 type BoardTarget = {id:string;page:number} | {groupId:string;page:number}
+type PinchPreview={ratio:number;pan:Point;width:number;height:number;scale:number}
+type TouchOrigin={point:Point;pan:Point;at:number;handle:boolean}
+type TouchPinch={distance:number;scale:number;width:number;height:number;anchor:Point;pan:Point}
 type MaterialTrade='all'|WorkHeading
 function isIpadLandscape(userAgent:string,platform:string,touchPoints:number,width:number,height:number) {return (/iPad/i.test(userAgent) || platform==='MacIntel' && touchPoints>1) && width>=768 && width>height}
 type MaterialCoverage = {adhesive:number;skim:number;insulation:Record<string,number>}
@@ -755,6 +758,12 @@ export default function App() {
   const pdfSnapCache = useRef<{ doc: PdfDoc | null; pages: Map<number, SnapIndex> }>({ doc: null, pages: new Map() })
   const [toolWallHeight, setToolWallHeight] = useState('')
   const [toolDoorHead,setToolDoorHead]=useState(false)
+  const [precisionCrosshair,setPrecisionCrosshair]=useState(false)
+  const [pinchPreview,setPinchPreview]=useState<PinchPreview|null>(null)
+  const touchControlsAvailable=typeof navigator!=='undefined' && (navigator.maxTouchPoints>0 || /iPad|Android/i.test(navigator.userAgent))
+  const touchGestureRef=useRef({pointers:new Map<number,Point>(),origin:null as TouchOrigin|null,pinch:null as TouchPinch|null,preview:null as PinchPreview|null,consumed:false,moved:false,timer:null as number|null,lastTap:null as {at:number;point:Point}|null})
+  const pinchCommitRef=useRef<{width:number;height:number;scale:number}|null>(null)
+  const suppressTouchContextRef=useRef(0)
   const [materialTrade,setMaterialTrade]=useState<MaterialTrade>('all')
   const [materialDrawingKey,setMaterialDrawingKey]=useState('all')
   const [tabletLandscape,setTabletLandscape]=useState(()=>typeof navigator!=='undefined' && typeof window!=='undefined' && isIpadLandscape(navigator.userAgent,navigator.platform,navigator.maxTouchPoints,window.innerWidth,window.innerHeight))
@@ -982,6 +991,7 @@ export default function App() {
   }
 
   function resetDrafts() {
+    cancelTouchView();setPrecisionCrosshair(false)
     setMaterialTrade('all');setMaterialDrawingKey('all');setTabletSidebarOpen(true)
     setContractorUnlocked(false);setContractorLoginId('');setContractorPassword('');setContractorLoginError('');setHoveredMeasurementId(null)
     setDrawingRenderError('');setDrawingRendering(false)
@@ -1411,6 +1421,7 @@ export default function App() {
   }
 
   function handleZoomSlider(value: string) {
+    cancelTouchView()
     const percent = Number(value)
 
     if (!Number.isFinite(percent)) return
@@ -1419,6 +1430,106 @@ export default function App() {
     setScale(percent / 100)
   }
 
+  function clearTouchHold() {const g=touchGestureRef.current;if(g.timer!==null){window.clearTimeout(g.timer);g.timer=null}}
+  function cancelTouchView() {
+    clearTouchHandleDrags();clearTouchHold();const g=touchGestureRef.current
+    for(const id of g.pointers.keys()){try{if(stageRef.current?.hasPointerCapture(id))stageRef.current.releasePointerCapture(id)}catch{}}
+    g.pointers.clear();g.origin=null;g.pinch=null;g.preview=null;g.lastTap=null;g.consumed=false;g.moved=false
+    pinchCommitRef.current=null;setPinchPreview(null);setIsPanning(false)
+  }
+  function togglePrecisionCrosshair() {cancelTouchView();setPrecisionCrosshair(current=>!current);setSnapPreview(null)}
+  function crosshairClientPoint() {const box=stageRef.current?.getBoundingClientRect();return box ? {x:box.left+box.width/2,y:box.top+box.height/2} : null}
+  function confirmCrosshairPoint() {
+    const point=crosshairClientPoint();if(!point)return
+    if(!calibrationMode && !currentToolKind()){setStatus('Choose a measuring tool or start calibration, then double-tap to mark the crosshair point.');return}
+    if(!clientToPdfPoint(point.x,point.y)){setStatus('Pan the drawing under the crosshair before placing a point.');return}
+    placeDrawingPoint(point.x,point.y)
+  }
+  function clearTouchHandleDrags() {
+    calibrationDragRef.current={point:null,pointerId:-1};lengthDragRef.current={point:null,measurementId:null,pointerId:-1}
+    runDragRef.current=null;areaDragRef.current=null;countDragRef.current=null
+  }
+  function showTouchMeasurementMenu(clientX:number,clientY:number) {
+    const hit=measurementAt(clientX,clientY);if(!hit)return
+    const saved=savedMeasurement(hit.id,pageNumber),rect=drawingRef.current?.getBoundingClientRect()
+    let pointIndex:number|undefined
+    if(saved && !saved.item.locked && !hasDraft && rect) {
+      const points=hit.kind==='length' ? (()=>{const line=renderedLengths.find(item=>item.id===hit.id)?.line;return line ? [{x:line.x1,y:line.y1},{x:line.x2,y:line.y2}] : []})() : hit.kind==='run' ? renderedRuns.find(item=>item.id===hit.id)?.handles ?? [] : hit.kind==='area' ? renderedAreas.find(item=>item.id===hit.id)?.handles ?? [] : renderedCounts.filter(item=>item.id===hit.id).map(item=>({x:item.x,y:item.y}))
+      let best=15;points.forEach((point,index)=>{const distance=Math.hypot(point.x+rect.left-clientX,point.y+rect.top-clientY);if(distance<best){best=distance;pointIndex=index}})
+    }
+    clearTouchHandleDrags();setWorkMenu(null)
+    if(pointIndex!==undefined)setSelectedEditPoint({id:hit.id,kind:hit.kind,index:pointIndex,page:pageNumber})
+    const box=workspaceRef.current?.getBoundingClientRect()
+    setMeasurementMenu({...hit,...(pointIndex===undefined ? {} : {pointIndex}),x:Math.max(8,Math.min(clientX-(box?.left ?? 0),(box?.width ?? 1000)-228)),y:Math.max(8,Math.min(clientY-(box?.top ?? 0),(box?.height ?? 700)-270))})
+    suppressTouchContextRef.current=Date.now()+1500
+  }
+  function beginTouchPinch() {
+    const g=touchGestureRef.current,box=drawingRef.current?.getBoundingClientRect();if(!box || !box.width || !box.height)return
+    clearTouchHold();clearTouchHandleDrags();panStartRef.current.active=false;setIsPanning(false);setSnapPreview(null);g.lastTap=null;g.consumed=true;g.moved=true
+    const [a,b]=Array.from(g.pointers.values()),mid={x:(a.x+b.x)/2,y:(a.y+b.y)/2}
+    g.pinch={distance:Math.max(1,Math.hypot(b.x-a.x,b.y-a.y)),scale,width:box.width,height:box.height,anchor:{x:(mid.x-box.left)/box.width,y:(mid.y-box.top)/box.height},pan:{...pan}}
+    g.preview={ratio:1,pan:{...pan},width:box.width,height:box.height,scale};setPinchPreview(g.preview)
+  }
+  function touchStageStart(event:React.PointerEvent<HTMLElement>) {
+    if(event.pointerType!=='touch' || !pdf || (event.target as Element).closest('button,input,select,textarea,label,.drawing-footer,[data-stage-control]'))return
+    const g=touchGestureRef.current;g.pointers.set(event.pointerId,{x:event.clientX,y:event.clientY})
+    event.preventDefault();setDescriptionOpen(false);setSnapPreview(null)
+    if(pinchCommitRef.current){g.consumed=true;event.preventDefault();event.stopPropagation();event.currentTarget.setPointerCapture(event.pointerId);return}
+    if(g.pointers.size>=2){event.preventDefault();event.stopPropagation();event.currentTarget.setPointerCapture(event.pointerId);if(g.pointers.size===2)beginTouchPinch();return}
+    const handle=!precisionCrosshair && (event.target as Element).tagName?.toLowerCase()==='circle'
+    g.origin={point:{x:event.clientX,y:event.clientY},pan:{...pan},at:Date.now(),handle};g.consumed=false;g.moved=false
+    if(!handle){event.preventDefault();setSelectedEditPoint(null);event.stopPropagation();event.currentTarget.setPointerCapture(event.pointerId)}
+    clearTouchHold()
+    if(measurementAt(event.clientX,event.clientY))g.timer=window.setTimeout(()=>{g.timer=null;if(g.pointers.size!==1 || g.moved || g.consumed)return;const point=Array.from(g.pointers.values())[0];g.consumed=true;g.lastTap=null;setIsPanning(false);showTouchMeasurementMenu(point.x,point.y)},550)
+  }
+  function touchStageMove(event:React.PointerEvent<HTMLElement>) {
+    const g=touchGestureRef.current;if(event.pointerType!=='touch' || !g.pointers.has(event.pointerId))return
+    g.pointers.set(event.pointerId,{x:event.clientX,y:event.clientY})
+    if(g.pointers.size>=2 && g.pinch) {
+      event.preventDefault();event.stopPropagation();const [a,b]=Array.from(g.pointers.values()),start=g.pinch,box=stageRef.current?.getBoundingClientRect();if(!box)return
+      const ratio=Math.max(0.25/start.scale,Math.min(15/start.scale,Math.hypot(b.x-a.x,b.y-a.y)/start.distance)),mid={x:(a.x+b.x)/2-box.left,y:(a.y+b.y)/2-box.top}
+      const nextPan={x:mid.x-start.anchor.x*start.width*ratio-(box.width/2-start.width*ratio/2),y:mid.y-start.anchor.y*start.height*ratio-(box.height/2-start.height*ratio/2)}
+      g.preview={ratio,pan:nextPan,width:start.width,height:start.height,scale:start.scale*ratio};setPinchPreview(g.preview);return
+    }
+    if(g.consumed){event.preventDefault();event.stopPropagation();return}
+    const start=g.origin;if(!start)return
+    const dx=event.clientX-start.point.x,dy=event.clientY-start.point.y
+    if(Math.hypot(dx,dy)>8){g.moved=true;g.lastTap=null;clearTouchHold()}
+    if(start.handle){if(!g.moved){event.preventDefault();event.stopPropagation()}return}
+    event.preventDefault();event.stopPropagation()
+    if(g.moved){setIsPanning(true);setPan({x:start.pan.x+dx,y:start.pan.y+dy})}
+  }
+  function finishTouchPinch() {
+    const g=touchGestureRef.current,p=g.preview,start=g.pinch;g.pinch=null
+    if(!p || !start || Math.abs(p.ratio-1)<0.001 && Math.hypot(p.pan.x-start.pan.x,p.pan.y-start.pan.y)<0.5){g.preview=null;setPinchPreview(null);return}
+    pinchCommitRef.current={width:p.width*p.ratio,height:p.height*p.ratio,scale:p.scale};setPan(p.pan);setViewMode('manual');setScale(p.scale)
+  }
+  function touchStageEnd(event:React.PointerEvent<HTMLElement>) {
+    const g=touchGestureRef.current;if(event.pointerType!=='touch' || !g.pointers.has(event.pointerId))return
+    clearTouchHold();const start=g.origin;const wasPinching=!!g.pinch
+    if(wasPinching)finishTouchPinch()
+    g.pointers.delete(event.pointerId)
+    if(g.consumed || !start?.handle){event.preventDefault();event.stopPropagation()}
+    try{if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId)}catch{}
+    if(!g.pointers.size){
+      setIsPanning(false)
+      if(!g.consumed && !g.moved && start && !start.handle) {
+        if(precisionCrosshair){const now=Date.now(),last=g.lastTap;if(now-start.at<400 && last && now-last.at<400 && Math.hypot(event.clientX-last.point.x,event.clientY-last.point.y)<32){g.lastTap=null;confirmCrosshairPoint()}else g.lastTap=now-start.at<400 ? {at:now,point:{x:event.clientX,y:event.clientY}} : null}
+        else placeDrawingPoint(event.clientX,event.clientY)
+      }
+      g.origin=null;g.pinch=null;g.preview=null;g.consumed=false;g.moved=false
+    }
+  }
+  function touchStageCancel(event:React.PointerEvent<HTMLElement>) {if(event.pointerType==='touch' && touchGestureRef.current.pointers.has(event.pointerId)){event.preventDefault();event.stopPropagation();clearTouchHandleDrags();cancelTouchView()}}
+  useEffect(()=>{cancelTouchView()},[pageNumber,sidebarTab,pdf])
+  useEffect(()=>{
+    const cancel=()=>cancelTouchView()
+    const outside=(event:PointerEvent)=>{const g=touchGestureRef.current,target=event.target as Element|null;if(event.pointerType==='touch' && (g.pointers.size || g.lastTap || pinchCommitRef.current) && (!stageRef.current?.contains(target) || target?.closest('button,input,select,textarea,.drawing-footer,[data-stage-control]')))cancelTouchView()}
+    window.addEventListener('blur',cancel);window.addEventListener('resize',cancel);window.addEventListener('pointerdown',outside,true)
+    return ()=>{window.removeEventListener('blur',cancel);window.removeEventListener('resize',cancel);window.removeEventListener('pointerdown',outside,true);clearTouchHold()}
+  },[])
+  useEffect(()=>{const commit=pinchCommitRef.current;if(commit && Math.abs(viewportSize.width-commit.width)<0.5 && Math.abs(viewportSize.height-commit.height)<0.5 && Math.abs(scale-commit.scale)<0.0001){pinchCommitRef.current=null;setPinchPreview(null)}},[viewportSize.width,viewportSize.height,scale,pinchPreview])
+  useEffect(()=>{if(precisionCrosshair && !pinchPreview){const point=crosshairClientPoint();if(point)previewSnap({clientX:point.x,clientY:point.y} as React.PointerEvent<HTMLElement>)}},[precisionCrosshair,pan.x,pan.y,scale,viewportSize.width,viewportSize.height,calibrationMode,runMode,areaMode,countMode,lengthMode,readyToolKind,pinchPreview])
   function startPan(event: React.PointerEvent<HTMLElement>) {
     setSelectedEditPoint(null);setDescriptionOpen(false)
     readShift(event)
@@ -1498,19 +1609,14 @@ export default function App() {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
 
-    if (!wasMoved) {
-      if (calibrationMode) {
-        addCalibrationPoint(event.clientX, event.clientY)
-      } else if (runMode || readyToolKind === 'run') {
-        addRunPoint(event.clientX, event.clientY)
-      } else if (areaMode || readyToolKind === 'area') {
-        addAreaPoint(event.clientX, event.clientY)
-      } else if (countMode || readyToolKind === 'point') {
-        addCountPoint(event.clientX, event.clientY)
-      } else if (lengthMode || readyToolKind === 'length') {
-        addLengthPoint(event.clientX, event.clientY)
-      }
-    }
+    if (!wasMoved) placeDrawingPoint(event.clientX,event.clientY)
+  }
+  function placeDrawingPoint(clientX:number,clientY:number) {
+    if(calibrationMode)addCalibrationPoint(clientX,clientY)
+    else if(runMode || readyToolKind==='run')addRunPoint(clientX,clientY)
+    else if(areaMode || readyToolKind==='area')addAreaPoint(clientX,clientY)
+    else if(countMode || readyToolKind==='point')addCountPoint(clientX,clientY)
+    else if(lengthMode || readyToolKind==='length')addLengthPoint(clientX,clientY)
   }
 
   function clientToPdfPoint(clientX: number, clientY: number): Point | null {
@@ -1833,6 +1939,7 @@ export default function App() {
   }
 
   function handleWheelZoom(event: React.WheelEvent<HTMLElement>) {
+    if(touchGestureRef.current.pointers.size)return
     if (!pdf || !stageRef.current || !drawingRef.current) return
 
     event.preventDefault()
@@ -3864,6 +3971,7 @@ export default function App() {
       setStatus(`${group.name || group.id} and its measurements deleted.`)
     } else if (action === 'lock') setWorkLocked(groupId, workLockState(groupId,scopePage) !== 'locked', scopePage)
     else {
+      cancelTouchView();setPrecisionCrosshair(false)
       const members = allMeasurements.filter((item) => item.groupId === groupId && (scopePage === undefined || item.page === scopePage))
       setWorkLocked(groupId, false, scopePage)
       setSidebarTab('measure')
@@ -3943,6 +4051,8 @@ export default function App() {
   }
   function openPointMenu(event: React.MouseEvent<SVGElement>,id: string,kind: MeasurementKind,index: number) {
     event.preventDefault();event.stopPropagation()
+    if(touchGestureRef.current.pointers.size){clearTouchHold();touchGestureRef.current.consumed=true;touchGestureRef.current.lastTap=null;clearTouchHandleDrags()}
+    if(Date.now()<suppressTouchContextRef.current)return
     if (hasDraft) return
     setSelectedEditPoint({id,kind,index,page:pageNumber});setWorkMenu(null)
     const bounds=workspaceRef.current?.getBoundingClientRect()
@@ -3980,6 +4090,7 @@ export default function App() {
     if (action==='delete-point') {deleteSelectedPoint({id,kind,index:measurementMenu.pointIndex ?? 0,page:pageNumber});return}
     setSelectedEditPoint(null)
     if (action === 'edit' && kind !== 'point' && !hasValidCalibration()) { setStatus('Calibrate and lock this page before editing measurement points.'); return }
+    if(action==='edit'){cancelTouchView();setPrecisionCrosshair(false)}
     setReadyToolKind(null)
     setOverviewDrawing(false)
     setSnapPreview(null)
@@ -4014,6 +4125,7 @@ export default function App() {
   useEffect(() => { setMeasurementMenu(null) }, [pdf,pageNumber,scale,rotation,pan])
 
 
+  const activePinchPreview=pinchPreview && Math.abs(viewportSize.width-pinchPreview.width)<0.5 && Math.abs(viewportSize.height-pinchPreview.height)<0.5 ? pinchPreview : null
   const zoomPercent = Math.max(25, Math.min(1500, Math.round(scale * 100)))
 
   return (
@@ -4668,14 +4780,14 @@ export default function App() {
           ref={stageRef}
           tabIndex={-1}
           className={`drawing-stage${hoveredMeasurementId ? ' measurement-hover' : ''}${isPanning ? ' is-panning' : ''}${calibrationMode || lengthMode || runMode || areaMode || countMode || readyToolKind ? ' measurement-active' : ''}`}
-          onPointerDown={(event) => { setSnapPreview(null); startPan(event) }}
-          onPointerMove={(event) => { movePan(event); previewSnap(event); updateMeasurementHover(event) }}
+          onPointerDownCapture={touchStageStart} onPointerMoveCapture={touchStageMove} onPointerUpCapture={touchStageEnd} onPointerCancelCapture={touchStageCancel}
+          onPointerDown={(event) => { if(event.pointerType!=='touch'){setSnapPreview(null);startPan(event)} }}
+          onPointerMove={(event) => { if(event.pointerType!=='touch'){movePan(event);previewSnap(event);updateMeasurementHover(event)} }}
           onPointerLeave={() => {setSnapPreview(null);setHoveredMeasurementId(null)}}
-          onContextMenu={openMeasurementMenu}
-          onPointerUp={endPan}
+          onContextMenu={event=>{if(touchGestureRef.current.pointers.size){clearTouchHold();touchGestureRef.current.consumed=true;touchGestureRef.current.lastTap=null;clearTouchHandleDrags()}if(Date.now()<suppressTouchContextRef.current){event.preventDefault();return}openMeasurementMenu(event)}}
+          onPointerUp={event=>{if(event.pointerType!=='touch')endPan(event)}}
           onPointerCancel={(event) => {
-            panStartRef.current.moved = true
-            endPan(event)
+            if(event.pointerType!=='touch'){panStartRef.current.moved=true;endPan(event)}
           }}
           onWheel={handleWheelZoom}
         >
@@ -4711,7 +4823,7 @@ export default function App() {
               style={{
                 width: viewportSize.width,
                 height: viewportSize.height,
-                transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px))`,
+                transform: `translate(calc(-50% + ${activePinchPreview?.pan.x ?? pan.x}px), calc(-50% + ${activePinchPreview?.pan.y ?? pan.y}px))${activePinchPreview ? ' scale('+activePinchPreview.ratio+')' : ''}`,
               }}
             >
               <canvas ref={canvasRef} />
@@ -5013,6 +5125,8 @@ export default function App() {
               </svg>
             </div>
           )}
+          {pdf && touchControlsAvailable && <div className="touch-view-tools" data-stage-control><button type="button" aria-label="Precision crosshair" aria-pressed={precisionCrosshair} onClick={togglePrecisionCrosshair}><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="6" fill="none" stroke="currentColor" strokeWidth="1.8" /><path d="M12 1v7m0 8v7M1 12h7m8 0h7" stroke="currentColor" strokeWidth="1.8" /></svg>Crosshair</button>{precisionCrosshair && <span>Pan to aim · Double-tap to mark</span>}</div>}
+          {pdf && touchControlsAvailable && precisionCrosshair && <div className="precision-crosshair" aria-label="Drawing centre crosshair"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M32 3v22m0 14v22M3 32h22m14 0h22" className="crosshair-outline" /><path d="M32 3v22m0 14v22M3 32h22m14 0h22" className="crosshair-stroke" /><circle cx="32" cy="32" r="4" className="crosshair-dot" /></svg></div>}
           {pdf && <div className="drawing-footer" onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
             <div className={`drawing-scale-badge ${lengthCalibrationValid ? 'is-ready' : ''}`}><UiIcon name="lock" /><span>{lengthCalibrationValid ? 'Scale locked' : 'Calibration required'}</span></div>
             <span className="footer-zoom">{Math.round(scale * 100)}%</span>
