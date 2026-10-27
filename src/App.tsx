@@ -40,8 +40,9 @@ const boardSizes: Array<[number,number]> = [[1200,2300],[1200,2400],[1200,2500],
 function boardSpecLabel(spec: BoardChoice) {return spec===null ? 'Not applicable' : spec ? spec.boardType+' · '+spec.thicknessMm+'mm'+(spec.boardType==='INS' ? ' · Roll' : ' · '+spec.widthMm+' × '+spec.lengthMm+'mm') : 'Choose board specification'}
 function boardThicknessOptions(type: BoardType) {return type==='INS' ? [50,65,100,200] : type==='CELO' ? [25,50,90,100,120,150] : type==='THERMAL' ? thermalThicknesses : type==='STD' ? boardThicknesses : [12.5,15]}
 const defaultBoardSizeOrder=boardSizes.map(([w,l])=>w+'x'+l)
+type QuantityPriceRow={id:string;name:string;mode:string;totalAreaM2:number|null;totalMm:number|null;count:number;wallsWithoutHeight?:number}
 type RateBook = Record<string,number>
-function roundWorkValue(value:number) {const pence=Math.round((value+Number.EPSILON)*100);return Math.floor(pence/100)+(pence%100>50 ? 1 : 0)}
+function roundWorkValue(value:number) {const pence=Math.round((value+Number.EPSILON)*100);return Math.floor(pence/100)+(pence%100>=50 ? 1 : 0)}
 function pounds(value:number) {return '£'+value.toLocaleString('en-GB',{maximumFractionDigits:0})}
 function validRateText(text:string) {return text.trim()!=='' && Number.isFinite(Number(text)) && Number(text)>=0}
 function validMaterialWasteKey(id:string) {
@@ -95,6 +96,8 @@ type WorkHeading = 'Tack' | 'Dab' | 'Skim' | 'Insulation' | 'Metal'
 type WorkCategory = { menuOrder?: number; heading?: WorkHeading; id: string; name: string; color: string; mode: 'measure' | 'count' | 'derived'; skimTarget?: 'walls' | 'ceilings' }
 type CountMeasurement = { boardSpec?: BoardSpec | null; id: string; name?: string; groupId?: string; categoryId?: string; point: Point; locked: boolean }
 type BoardTarget = {id:string;page:number} | {groupId:string;page:number}
+type MaterialTrade='all'|WorkHeading
+function isIpadLandscape(userAgent:string,platform:string,touchPoints:number,width:number,height:number) {return (/iPad/i.test(userAgent) || platform==='MacIntel' && touchPoints>1) && width>=768 && width>height}
 type MaterialCoverage = {adhesive:number;skim:number;insulation:Record<string,number>}
 const defaultInsulationCoverage:Record<string,number>={'50':15.6,'65':12,'100':11,'200':6}
 type MeasurementKind = 'length' | 'run' | 'area' | 'point'
@@ -701,6 +704,11 @@ export default function App() {
   const [boardSizeReordering,setBoardSizeReordering]=useState(false)
   const [subcontractorRates,setSubcontractorRates]=useState<RateBook>(()=>defaultSubcontractorRates(initialCategories))
   const [clearedSubcontractorRates,setClearedSubcontractorRates]=useState<string[]>([])
+  const [contractorUnlocked,setContractorUnlocked]=useState(false)
+  const [contractorLoginId,setContractorLoginId]=useState('')
+  const [contractorPassword,setContractorPassword]=useState('')
+  const [contractorLoginError,setContractorLoginError]=useState('')
+  const [hoveredMeasurementId,setHoveredMeasurementId]=useState<string|null>(null)
   const [contractorRates,setContractorRates]=useState<RateBook>({})
   const [rateDrafts,setRateDrafts]=useState<Record<string,string>>({})
   const [boardTarget,setBoardTarget]=useState<BoardTarget | null>(null)
@@ -747,6 +755,10 @@ export default function App() {
   const pdfSnapCache = useRef<{ doc: PdfDoc | null; pages: Map<number, SnapIndex> }>({ doc: null, pages: new Map() })
   const [toolWallHeight, setToolWallHeight] = useState('')
   const [toolDoorHead,setToolDoorHead]=useState(false)
+  const [materialTrade,setMaterialTrade]=useState<MaterialTrade>('all')
+  const [materialDrawingKey,setMaterialDrawingKey]=useState('all')
+  const [tabletLandscape,setTabletLandscape]=useState(()=>typeof navigator!=='undefined' && typeof window!=='undefined' && isIpadLandscape(navigator.userAgent,navigator.platform,navigator.maxTouchPoints,window.innerWidth,window.innerHeight))
+  const [tabletSidebarOpen,setTabletSidebarOpen]=useState(true)
   const [materialWasteText,setMaterialWasteText]=useState('10')
   const [materialWasteDrafts,setMaterialWasteDrafts]=useState<Record<string,string>>({})
   const [insulationCoverageTexts,setInsulationCoverageTexts]=useState<Record<string,string>>({'50':'15.6','65':'12','100':'11','200':'6'})
@@ -866,6 +878,7 @@ export default function App() {
   const [countMode, setCountMode] = useState(false)
   const [hiddenGroupIds, setHiddenGroupIds] = useState<string[]>([])
   const [showUngrouped, setShowUngrouped] = useState(true)
+  const [summaryPresentation,setSummaryPresentation]=useState<'detailed'|'simplified'>('detailed')
   const [sidebarTab, setSidebarTab] = useState<'measure' | 'groups' | 'summary' | 'contractor-rates' | 'rates' | 'materials' | 'export'>('measure')
   const [newCategoryName, setNewCategoryName] = useState('')
   const [newCategoryColor, setNewCategoryColor] = useState('#0891b2')
@@ -969,6 +982,8 @@ export default function App() {
   }
 
   function resetDrafts() {
+    setMaterialTrade('all');setMaterialDrawingKey('all');setTabletSidebarOpen(true)
+    setContractorUnlocked(false);setContractorLoginId('');setContractorPassword('');setContractorLoginError('');setHoveredMeasurementId(null)
     setDrawingRenderError('');setDrawingRendering(false)
     setSelectedWorkId(null)
     setReadyToolKind(null)
@@ -979,6 +994,7 @@ export default function App() {
     setToolCustomName('')
     setToolDoorHead(false);setMaterialWasteText('10');setMaterialWasteDrafts({});setInsulationCoverageTexts({'50':'15.6','65':'12','100':'11','200':'6'});setAdhesiveCoverageText('8.5');setSkimCoverageText('15')
     setSubcontractorRates(defaultSubcontractorRates(initialCategories));setClearedSubcontractorRates([]);setContractorRates({});setRateDrafts({});setBoardSizeOrder([...defaultBoardSizeOrder]);setBoardSizeReordering(false)
+    setSummaryPresentation('detailed')
     setPointTrade('Tack');setPointMarkerKind('marker');setPointOptionsOpen(false)
     setBoardPreferences({});setBoardPickerOpen(false);setBoardTarget(null);setBoardPendingSpec(null);setBoardPendingSize(null)
     setNewDescriptionOpen(false);setHoverHeading(null);setMessagesHidden(true);setDescriptionOpen(false);setReorderDescriptions(false);setSnapEnabled(false);setToolboxDocked(true);setPanelMenu(null);setCalibrationVisible(true)
@@ -3183,7 +3199,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!pdf || (sidebarTab === 'summary' || sidebarTab === 'materials' || sidebarTab === 'export') || viewMode !== 'fit-page') return
+    if (!pdf || (sidebarTab === 'summary' || sidebarTab === 'materials' || sidebarTab === 'export' || sidebarTab === 'rates' || sidebarTab === 'contractor-rates') || viewMode !== 'fit-page') return
 
     let cancelled = false
 
@@ -3229,7 +3245,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!pdf || (sidebarTab === 'summary' || sidebarTab === 'materials' || sidebarTab === 'export') || !canvasRef.current) return
+    if (!pdf || (sidebarTab === 'summary' || sidebarTab === 'materials' || sidebarTab === 'export' || sidebarTab === 'rates' || sidebarTab === 'contractor-rates') || !canvasRef.current) return
 
     const document = pdf
     let disposed = false
@@ -3476,17 +3492,28 @@ export default function App() {
     const result=Math.ceil(Number(value.toPrecision(12)))
     return Number.isSafeInteger(result) ? result : null
   }
-  function calculateMaterials() {
+  const materialScopePage=materialDrawingKey==='all' ? undefined : drawingPages.findIndex(page=>page.source+':'+page.page===materialDrawingKey)+1 || undefined
+  useEffect(()=>{if(materialDrawingKey!=='all' && !drawingPages.some(page=>page.source+':'+page.page===materialDrawingKey))setMaterialDrawingKey('all')},[drawingPages,materialDrawingKey])
+  useEffect(()=>{
+    const update=()=>{if(typeof navigator!=='undefined')setTabletLandscape(isIpadLandscape(navigator.userAgent,navigator.platform,navigator.maxTouchPoints,window.innerWidth,window.innerHeight))}
+    update();window.addEventListener('resize',update);window.visualViewport?.addEventListener('resize',update)
+    return ()=>{window.removeEventListener('resize',update);window.visualViewport?.removeEventListener('resize',update)}
+  },[])
+  function calculateMaterials(trade:MaterialTrade=materialTrade,scopePage:number|undefined=materialScopePage) {
+    const scopedMeasurements=allMeasurements.filter(item=>scopePage===undefined || item.page===scopePage)
+    const scopedGroups=groups.map(group=>summarizeWork(group,scopedMeasurements.filter(item=>item.groupId===group.id))).filter(group=>group.members.length)
+    const scopedCategories=summarizeCategories(scopedGroups,scopePage).filter(category=>category.mode!=='count' && category.sourceGroups.some(group=>group.members.some(item=>category.mode!=='derived' || item.kind==='area' || item.heightM!==undefined)))
+    const matchesTrade=(item:typeof allMeasurements[number])=>trade==='all' || workHeading(groups.find(group=>group.id===item.groupId)?.categoryId ?? item.categoryId ?? '')===trade
     const boards=new Map<string,{id:string;label:string;areaM2:number;incomplete:boolean;boardAreaM2:number}>(),issues:string[]=[]
     let measuredAreaM2=0,unknownAreas=0
-    for(const measurement of allMeasurements) {
-      if(measurement.kind==='count')continue
+    for(const measurement of scopedMeasurements) {
+      if(measurement.kind==='count' || !matchesTrade(measurement))continue
       const quantity=withQuantities(measurement),area=quantity.areaM2,spec=measurement.boardSpec,label=(measurement.name || measurement.id)+' · '+drawingPageName(measurement.page)
       if(area===null){unknownAreas++;issues.push(label+': check calibration and wall height.')}else measuredAreaM2+=area
       if(spec===undefined){issues.push(label+': choose a board specification, or Not applicable.');continue}
       if(spec===null)continue
       const key=spec.boardType+'|'+spec.thicknessMm+'|'+spec.widthMm+'|'+spec.lengthMm,boardAreaM2=spec.boardType==='INS' ? materialCoverage.insulation[String(spec.thicknessMm)] : spec.widthMm*spec.lengthMm/1000000
-      const row=boards.get(key) ?? {id:key,label:boardSpecLabel(spec),areaM2:0,incomplete:false,boardAreaM2}
+      const row=boards.get(key) ?? {id:key,label:boardSpecLabel(spec).replace(spec.boardType,'('+spec.boardType+')'),areaM2:0,incomplete:false,boardAreaM2}
       const mismatch=measurement.kind==='wall' && boardHeightMismatch(spec,measurement.heightM)
       if(mismatch)issues.push(label+': board length is shorter than wall height; confirm an override or change the board.')
       if(area===null || mismatch || boardAreaM2<=0)row.incomplete=true
@@ -3495,7 +3522,7 @@ export default function App() {
     }
     const rows=Array.from(boards.values()).map(row=>{const exact=row.incomplete ? null : row.areaM2/row.boardAreaM2;return {...row,unit:row.id.startsWith('INS|') ? 'rolls' : 'boards',exact,final:finalMaterialQuantity(exact,row.id),coverage:row.boardAreaM2}})
     const bagRows:Array<{id:string;label:string;areaM2:number;incomplete:boolean;coverage:number;exact:number|null;final:number|null;unit:string}>=[]
-    for(const bag of [{id:'adhesive',label:'Dabbing adhesive',coverage:materialCoverage.adhesive,source:measuredCategorySummaries.filter(category=>workHeading(category.id)==='Dab' && category.mode!=='count')},{id:'skim',label:'Skimming plaster',coverage:materialCoverage.skim,source:measuredCategorySummaries.filter(category=>workHeading(category.id)==='Skim' && category.mode!=='count')}]) {
+    for(const bag of [{id:'adhesive',label:'Dabbing adhesive',coverage:materialCoverage.adhesive,source:scopedCategories.filter(category=>(trade==='all' || trade==='Dab') && workHeading(category.id)==='Dab' && category.mode!=='count')},{id:'skim',label:'Skimming plaster',coverage:materialCoverage.skim,source:scopedCategories.filter(category=>(trade==='all' || trade==='Skim') && workHeading(category.id)==='Skim' && category.mode!=='count')}]) {
       if(!bag.source.length)continue
       const incomplete=bag.coverage<=0 || bag.source.some(category=>category.totalAreaM2===null || category.wallsWithoutHeight>0),areaM2=bag.source.reduce((sum,category)=>sum+(category.totalAreaM2 ?? 0),0),exact=incomplete ? null : areaM2/bag.coverage
       bagRows.push({id:bag.id,label:bag.label,areaM2,incomplete,coverage:bag.coverage,exact,final:finalMaterialQuantity(exact,bag.id),unit:'bags'})
@@ -3504,6 +3531,10 @@ export default function App() {
     return {boards:rows.filter(row=>row.unit==='boards'),rolls:rows.filter(row=>row.unit==='rolls'),bags:bagRows,issues,measuredAreaM2,unknownAreas}
   }
   const materialSummary=sidebarTab==='materials' ? calculateMaterials() : null
+  const wholePlotMaterials=materialTrade==='all' && materialScopePage===undefined
+  const materialScopeLabel=(materialTrade==='all' ? 'All trades' : materialTrade)+' · '+(materialScopePage===undefined ? 'All drawings' : drawingPageName(materialScopePage))
+  const shownAdhesiveCoverage=!!materialSummary?.bags.some(row=>row.id==='adhesive'),shownSkimCoverage=!!materialSummary?.bags.some(row=>row.id==='skim')
+  const shownInsulationThicknesses=new Set(materialSummary?.rolls.map(row=>row.id.split('|')[1]) ?? [])
   function materialsTable(rows:Array<{id:string;label:string;areaM2:number;coverage:number;incomplete:boolean;exact:number|null;final:number|null;unit:string}>,label:string) {
     return <div className="material-table-wrap"><table className="material-table" aria-label={label}><colgroup><col className="material-col-spec" /><col className="material-col-area" /><col className="material-col-exact" /><col className="material-col-waste" /><col className="material-col-final" /></colgroup><thead><tr><th>Material / specification</th><th>Measured m²</th><th>Exact</th><th>Waste (%)</th><th>Final order</th></tr></thead><tbody>{rows.map(row=><tr key={row.id}><th scope="row">{row.label}<small>{row.coverage>0 ? row.coverage.toFixed(2)+'m² per '+(row.unit==='boards' ? 'board' : row.unit==='rolls' ? 'roll' : 'bag') : 'Enter positive coverage'}</small></th><td>{row.incomplete ? 'Check quantities' : row.areaM2.toFixed(2)+' m²'}</td><td>{row.exact===null ? 'Check quantities' : row.exact.toFixed(2)+' '+row.unit}</td><td><input className="material-row-waste" type="number" min="0" step="any" inputMode="decimal" aria-label={row.label+' waste percentage'} value={materialWasteDrafts[row.id] ?? materialWasteText} aria-invalid={!validWaste(materialWasteDrafts[row.id] ?? materialWasteText)} onChange={event=>setMaterialWasteDrafts(current=>({...current,[row.id]:event.target.value}))} /></td><td><strong>{row.final===null ? hasInvalidWaste ? 'Check waste %' : 'Check quantities' : row.final+' '+row.unit}</strong></td></tr>)}</tbody></table></div>
   }
@@ -3532,9 +3563,60 @@ export default function App() {
     const rate=subcontractorRates[row.id],draft=rateDrafts['subcontractor:'+row.id],valid=rate!==undefined && (draft===undefined || draft==='' || validRateText(draft))
     return <span className="work-price-detail">{valid && <span className="work-rate" aria-label={'Subcontractor rate for '+row.name}>{'£'+rate.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:6})+(row.mode==='count' ? ' / item' : ' / m²')}</span>}<span className={'work-price'+(price.value===null ? ' is-unpriced' : '')} aria-label={'Subcontractor value for '+row.name} title={price.note}>{price.value===null ? price.note : pounds(price.value)}</span></span>
   }
+  function rateInput(kind:'subcontractor'|'contractor',category:QuantityPriceRow) {
+    const book=kind==='subcontractor' ? subcontractorRates : contractorRates,key=kind+':'+category.id,text=rateDrafts[key] ?? (book[category.id]===undefined ? '' : String(book[category.id])),invalid=text!=='' && !validRateText(text)
+    return <label className="rate-table-field"><span>{category.mode==='count' ? '£ per item' : '£ per m²'}</span><input type="number" min="0" step="any" inputMode="decimal" placeholder="Enter rate" value={text} aria-label={(kind==='subcontractor' ? 'Subcontractor' : 'Contractor')+' rate for '+category.name} aria-invalid={invalid} onChange={event=>setWorkRate(kind,category.id,event.target.value)} />{invalid && <small role="alert">Enter zero or a positive rate, or clear the box.</small>}</label>
+  }
   function ratesPanel(kind:'subcontractor'|'contractor') {
-    const book=kind==='subcontractor' ? subcontractorRates : contractorRates
-    return <div hidden={sidebarTab!==(kind==='subcontractor' ? 'rates' : 'contractor-rates')} className="rates-panel"><h2>{kind==='subcontractor' ? 'Subcontractor Rates' : 'Contractor Rates'}</h2><p className="length-note">{kind==='subcontractor' ? 'Rates apply to measured work across all drawings. These values are used in Plot Summary.' : 'Saved separately for reference. Contractor rates do not affect Plot Summary pricing.'}</p>{measuredCategorySummaries.map(category=>{const key=kind+':'+category.id,text=rateDrafts[key] ?? (book[category.id]===undefined ? '' : String(book[category.id])),invalid=text!=='' && !validRateText(text);return <div className="rate-card" key={category.id}><strong><span className="category-swatch" style={{background:category.color}} />{category.name}</strong><label>{category.mode==='count' ? '£ per item' : '£ per m²'}<input type="number" min="0" step="any" inputMode="decimal" placeholder="Enter rate" value={text} aria-label={(kind==='subcontractor' ? 'Subcontractor' : 'Contractor')+' rate for '+category.name} aria-invalid={invalid} onChange={event=>setWorkRate(kind,category.id,event.target.value)} /></label>{invalid && <p role="alert" className="rate-error">Enter a rate of zero or more, or clear the box.</p>}<p className="length-note">{category.mode==='count' ? category.count+' items' : category.totalAreaM2===null ? 'Check calibration / heights' : category.totalAreaM2.toFixed(2)+' m²'}</p></div>})}{!measuredCategorySummaries.length && <p className="length-note">Measure some work first. Only categories used in Plot Summary appear here.</p>}</div>
+    return <div hidden={sidebarTab!==(kind==='subcontractor' ? 'rates' : 'contractor-rates')} className="rates-panel"><h2>{kind==='subcontractor' ? 'Subcontractor Rates' : 'Contractor Rates'}</h2><p className="length-note">{kind==='subcontractor' ? 'Enter rates in the table. These are used in Plot Summary.' : 'Reference rates, saved separately. These do not change Plot Summary pricing.'}</p><p className="length-note">{measuredCategorySummaries.length} measured categories · all drawings</p></div>
+  }
+  function quantityCells(row:QuantityPriceRow) {
+    return <><td>{row.mode==='count' ? '—' : row.totalAreaM2===null ? 'Check quantities' : row.totalAreaM2.toFixed(2)}</td><td>{row.mode==='count' || row.mode==='derived' ? '—' : row.totalMm===null ? 'Check calibration' : (row.totalMm/1000).toFixed(2)}</td><td>{row.mode==='count' || row.count>0 ? row.count : '—'}</td></>
+  }
+  function quantityName(row:QuantityPriceRow) {
+    return <>{row.name}{row.mode==='derived' && <small>Automatic skim · reuses Tack / Dab areas</small>}{!!row.wallsWithoutHeight && <small className="quantity-table-warning">{row.wallsWithoutHeight} lengths / runs need a wall height for m².</small>}</>
+  }
+  function summaryRateText(row:QuantityPriceRow) {
+    const draft=rateDrafts['subcontractor:'+row.id],rate=subcontractorRates[row.id]
+    return draft!==undefined && draft!=='' && !validRateText(draft) ? 'Correct rate' : rate===undefined ? 'Rate not set' : '£'+rate.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:6})+(row.mode==='count' ? ' / item' : ' / m²')
+  }
+  function summaryBlock(row:QuantityPriceRow) {
+    const category=categories.find(category=>category.id===row.id),heading=category ? categoryWorkHeading(category) : ''
+    return heading==='Tack' || heading==='Insulation' ? 'Tack & Insulation' : heading==='Dab' ? 'Dab' : heading==='Skim' ? 'Skim' : heading==='Metal' ? 'Metal Work' : 'Other Work'
+  }
+  function summaryRank(row:QuantityPriceRow) {
+    const category=categories.find(category=>category.id===row.id),heading=category ? categoryWorkHeading(category) : '',name=row.name.toLowerCase()
+    if(heading==='Tack')return row.mode==='count' ? 50 : row.id==='tack-ceiling' ? 10 : /ceiling/.test(name) ? 11 : ['tack-timber-wall','tack-metal-wall'].includes(row.id) ? 20 : /wall|stud/.test(name) ? 21 : 30
+    if(heading==='Insulation')return 40
+    if(heading==='Dab')return row.mode==='count' ? 80 : row.id==='dabbed-external-wall' ? 60 : /external/.test(name) ? 61 : row.id==='dabbed-internal-wall' ? 70 : /internal/.test(name) ? 71 : 75
+    if(heading==='Skim')return row.mode==='count' ? 110 : row.id==='skimmed-ceiling' ? 90 : /ceiling/.test(name) ? 91 : row.id==='skimmed-walls' ? 100 : /wall/.test(name) ? 101 : 105
+    if(heading==='Metal')return row.mode==='count' ? 210 : 200
+    return 120
+  }
+  function orderedSummaryRows<T extends QuantityPriceRow>(rows:T[]):T[] {return [...rows].sort((a,b)=>summaryRank(a)-summaryRank(b) || a.name.localeCompare(b.name,'en-GB',{numeric:true,sensitivity:'base'}) || a.id.localeCompare(b.id))}
+  function summaryTotals(rows:QuantityPriceRow[],scope:string) {
+    const prices=rows.map(workPrice),missing=prices.filter(price=>price.value===null).length,total=prices.reduce((sum,price)=>sum+(price.value ?? 0),0)
+    return <div className="tabular-summary-totals" aria-label={'Subcontractor totals for '+scope}>{priceSubtotals(rows,scope)}<div className="plot-price-total"><span>{missing ? 'Priced subcontractor subtotal' : scope==='whole plot' ? 'Plot subcontractor total' : 'Drawing subcontractor total'}</span><strong>{pounds(total)}</strong>{missing>0 && <p>{missing} work items awaiting rates or valid quantities.</p>}</div></div>
+  }
+  function loginContractor() {
+    if(contractorLoginId.trim()==='holmes' && contractorPassword==='1234'){setContractorUnlocked(true);setContractorLoginId('');setContractorPassword('');setContractorLoginError('')}
+    else {setContractorLoginError('ID or password is incorrect.');setContractorPassword('')}
+  }
+  function lockContractorRates() {setContractorUnlocked(false);setContractorLoginId('');setContractorPassword('');setContractorLoginError('')}
+  function ratesWorkspace(kind:'subcontractor'|'contractor') {
+    if(kind==='contractor' && !contractorUnlocked)return <section className="summary-gallery rates-workspace" aria-label="Contractor Rates login"><article className="material-order-card contractor-login-card"><h2>Contractor Rates</h2><form onSubmit={event=>{event.preventDefault();loginContractor()}}><label>ID<input autoComplete="username" aria-label="Contractor login ID" value={contractorLoginId} onChange={event=>setContractorLoginId(event.target.value)} /></label><label>Password<input type="password" autoComplete="current-password" aria-label="Contractor login password" value={contractorPassword} onChange={event=>setContractorPassword(event.target.value)} /></label>{contractorLoginError && <p role="alert">{contractorLoginError}</p>}<button type="submit">Log in</button></form></article></section>
+
+    const label=kind==='subcontractor' ? 'Subcontractor Rates' : 'Contractor Rates'
+    return <section className="summary-gallery rates-workspace" aria-label={label+' workspace'}><header className="summary-gallery-heading"><h2>{label}</h2>{kind==='contractor' && <button type="button" className="contractor-lock-button" onClick={lockContractorRates}>Lock Contractor Rates</button>}<p>All measured work · all drawings</p></header><article className="material-order-card"><h3>Work rates</h3>{measuredCategorySummaries.length ? <div className="material-table-wrap"><table className="quantity-table rates-table" aria-label={label+' table'}><colgroup><col className="quantity-col-work" /><col className="quantity-col-area" /><col className="quantity-col-length" /><col className="quantity-col-count" /><col className="quantity-col-rate" />{kind==='subcontractor' && <col className="quantity-col-value" />}</colgroup><thead><tr><th>Work description</th><th>m²</th><th>LM</th><th>Points</th><th>Rate</th>{kind==='subcontractor' && <th>Value</th>}</tr></thead><tbody>{measuredCategorySummaries.map(category=>{const price=workPrice(category);return <tr key={category.id}><th scope="row"><span className="category-swatch" style={{background:category.color}} />{quantityName(category)}</th>{quantityCells(category)}<td>{rateInput(kind,category)}</td>{kind==='subcontractor' && <td><strong>{price.value===null ? price.note : pounds(price.value)}</strong></td>}</tr>})}</tbody></table></div> : <p>Measure some work first. Only categories used in Plot Summary appear here.</p>}</article></section>
+  }
+  function simplifiedQuantityTable(rows:QuantityPriceRow[],label:string) {
+    rows=orderedSummaryRows(rows)
+    return rows.length ? <div className="material-table-wrap"><table className="quantity-table" aria-label={label}><colgroup><col className="quantity-col-work" /><col className="quantity-col-area" /><col className="quantity-col-length" /><col className="quantity-col-count" /><col className="quantity-col-rate" /><col className="quantity-col-value" /></colgroup><thead><tr><th>Work description</th><th>m²</th><th>LM</th><th>Points</th><th>Subcontractor rate</th><th>Value</th></tr></thead>{[...new Set(rows.map(summaryBlock))].flatMap((block,index)=>[...(index>0 ? [<tbody key={block+'-gap'} className="summary-trade-gap" aria-hidden="true"><tr><td colSpan={6} /></tr></tbody>] : []),<tbody key={block} className="summary-trade-box" data-summary-group={block}><tr data-summary-trade={block}><th colSpan={6}>{block}</th></tr>{rows.filter(row=>summaryBlock(row)===block).map(row=>{const price=workPrice(row);return <tr key={row.id} data-summary-item={row.id}><th scope="row">{quantityName(row)}</th>{quantityCells(row)}<td>{summaryRateText(row)}</td><td><strong>{price.value===null ? price.note : pounds(price.value)}</strong></td></tr>})}</tbody>])}</table></div> : <p>No measured work yet.</p>
+  }
+  function simplifiedSummary() {
+    const ungrouped=pageDrawingSummaries.flatMap(page=>page.rows.filter(row=>row.id==='__ungrouped__'))
+    const rows:QuantityPriceRow[]=[...measuredCategorySummaries,...(ungrouped.length ? [{id:'__ungrouped__',name:'Ungrouped Measurements',mode:'mixed',totalAreaM2:ungrouped.some(row=>row.totalAreaM2===null) ? null : ungrouped.reduce((sum,row)=>sum+(row.totalAreaM2 ?? 0),0),totalMm:ungrouped.some(row=>row.totalMm===null) ? null : ungrouped.reduce((sum,row)=>sum+(row.totalMm ?? 0),0),count:ungrouped.reduce((sum,row)=>sum+row.count,0)}] : [])]
+    return <section className="summary-gallery simplified-summary-workspace plot-summary-gallery" aria-label="Simplified Plot Summary"><header className="summary-gallery-heading"><h2>Plot Summary · Simplified</h2><p>{[job.site,job.plot ? 'Plot '+job.plot : '',job.houseType,job.revision].filter(Boolean).join(' / ') || 'Job details not entered'}</p></header><article className="material-order-card"><h3>Whole plot · all drawings</h3>{simplifiedQuantityTable(rows,'Whole plot quantities')}{rows.length>0 && summaryTotals(rows,'whole plot')}</article>{pageDrawingSummaries.map(page=><article key={page.number} className="material-order-card"><h3>{page.name}</h3>{page.needsCalibration && <p className="quantity-table-warning">Calibrate and lock this drawing to show complete quantities.</p>}{simplifiedQuantityTable(page.rows,page.name+' quantities')}{page.rows.length>0 && summaryTotals(page.rows,page.name)}</article>)}<p className="length-note material-method-note">Values use subcontractor rates and the same rounding as Detailed view. Each scope totals its rounded category values. Skim reuses source areas and respects skim opt-outs.</p></section>
   }
   const plotPriceRows=measuredCategorySummaries.map(category=>({category,...workPrice(category)}))
   const plotPriceTotal=plotPriceRows.reduce((sum,row)=>sum+(row.value ?? 0),0)
@@ -3613,6 +3695,7 @@ export default function App() {
     })),
 
   ]
+  function isInsulationArea(groupId?:string) {const category=categories.find(category=>category.id===groups.find(group=>group.id===groupId)?.categoryId);return !!category && categoryWorkHeading(category)==='Insulation'}
   function summaryColorFor(groupId: string | undefined, fallback: string) {
     const group = groups.find((item) => item.id === groupId)
     return group?.appearance?.color ?? categories.find((item) => item.id === group?.categoryId)?.color ?? fallback
@@ -3636,9 +3719,10 @@ export default function App() {
       totalAreaM2:geometry.some((item) => (item.kind === 'area' || item.heightM !== undefined) && item.areaM2 === null) ? null : geometry.reduce((sum,item) => sum+(item.areaM2 ?? 0),0),
       count:0, colors:[...new Set(ungrouped.map((item) => item.kind === 'area' ? '#c2410c' : item.id.startsWith('R') ? '#0f766e' : '#2563eb'))], sourceNote:'Not assigned to a work category.', wallsWithoutHeight:geometry.filter((item) => item.kind === 'wall' && item.heightM === undefined).length })
     const calibration=calibrations[number]
-    return { number, name:drawingPageName(number), rows, measurementCount:members.length,
+    return { number, name:drawingPageName(number), rows:orderedSummaryRows(rows), measurementCount:members.length,
       needsCalibration:members.some((item) => item.kind !== 'count') && (!calibration || !calibration.locked || calibration.needsRecalibration) }
   }
+  const orderedPlotCategories=orderedSummaryRows(measuredCategorySummaries)
   const pageDrawingSummaries = sidebarTab === 'summary' ? drawingPages.map((_,index) => drawingSummary(index+1)) : []
 
   async function prepareSummaryPage(number: number, page: any) {
@@ -3794,10 +3878,10 @@ export default function App() {
   }
 
 
-  function openMeasurementMenu(event: React.MouseEvent<HTMLElement>) {
+  function measurementAt(clientX:number,clientY:number) {
     const drawing = drawingRef.current
-    if (!drawing) return
-    const rect = drawing.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top
+    if (!drawing) return null
+    const rect = drawing.getBoundingClientRect(), x = clientX - rect.left, y = clientY - rect.top
     let best: { id: string; kind: MeasurementKind } | null = null, bestDistance = Infinity
     const distance = (a: Point, b: Point) => {
       const dx=b.x-a.x, dy=b.y-a.y, size=dx*dx+dy*dy
@@ -3818,6 +3902,14 @@ export default function App() {
       const d=Math.hypot(x-item.x,y-item.y)
       if (d<=14 && d<bestDistance) { bestDistance=d; best={id:item.id,kind:'point'} }
     }
+    return best as {id:string;kind:MeasurementKind}|null
+  }
+  function updateMeasurementHover(event: React.PointerEvent<HTMLElement>) {
+    setHoveredMeasurementId(!isPanning && !currentToolKind() && !calibrationMode && !pendingCalibration ? measurementAt(event.clientX,event.clientY)?.id ?? null : null)
+  }
+  useEffect(()=>{setHoveredMeasurementId(null)},[pageNumber,sidebarTab,scale,rotation,isolatedMeasurementId,viewGroupId,viewCategoryId])
+  function openMeasurementMenu(event: React.MouseEvent<HTMLElement>) {
+    const best=measurementAt(event.clientX,event.clientY)
     if (!best) { setMeasurementMenu(null); return }
     setWorkMenu(null)
     event.preventDefault(); event.stopPropagation()
@@ -3925,7 +4017,7 @@ export default function App() {
   const zoomPercent = Math.max(25, Math.min(1500, Math.round(scale * 100)))
 
   return (
-    <div className="app-shell" style={{'--measure-bar-height':toolbarBarHeight+'px'} as React.CSSProperties} aria-busy={isFileBusy}>
+    <div className={`app-shell${tabletLandscape ? ' ipad-landscape' : ''}`} style={{'--measure-bar-height':toolbarBarHeight+'px'} as React.CSSProperties} aria-busy={isFileBusy}>
       <header ref={toolbarHeaderRef} className="topbar" inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen}>
         <div className="brand-and-project">
           <div className="takeoff-brand">
@@ -3948,6 +4040,7 @@ export default function App() {
           <button aria-pressed={sidebarTab === 'summary'} onClick={() => navigateWorkspace('summary')}><UiIcon name="summary" />Plot Summary</button>
           <button aria-pressed={sidebarTab === 'materials'} onClick={() => navigateWorkspace('materials')}><UiIcon name="work" />Materials</button>
           <button aria-pressed={sidebarTab === 'export'} onClick={() => navigateWorkspace('export')}><UiIcon name="file" />Export</button>
+          {tabletLandscape && <button className="tablet-controls-toggle" aria-expanded={tabletSidebarOpen} aria-controls="workspace-controls" onClick={()=>setTabletSidebarOpen(open=>!open)}>{tabletSidebarOpen ? 'Hide controls' : 'Show controls'}</button>}
         </nav>
         <div className="file-actions">
           <button className="save-takeoff-button" disabled={!pdf || isFileBusy || hasDraft || hasInvalidHeight}
@@ -4008,8 +4101,8 @@ export default function App() {
 </section>
       </header>
 
-      <main ref={workspaceRef} className={`workspace  ${sidebarTab === 'summary' || sidebarTab === 'materials' || sidebarTab === 'export' ? 'is-summary' : ''} ${selectedWork || showingAllWork ? 'has-work-details' : ''}`} inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen}>
-        <aside className="sidebar">
+      <main ref={workspaceRef} className={`workspace${tabletLandscape && !tabletSidebarOpen ? ' tablet-controls-hidden' : ''}  ${sidebarTab === 'summary' || sidebarTab === 'materials' || sidebarTab === 'export' || sidebarTab === 'rates' || sidebarTab === 'contractor-rates' ? 'is-summary' : ''} ${selectedWork || showingAllWork ? 'has-work-details' : ''}`} inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen}>
+        <aside className="sidebar" id="workspace-controls">
           <div className="sidebar-fixed">
           <nav className="sidebar-tabs" aria-label="Take-off sections">
             {(['measure', 'groups', 'summary'] as const).map((tab) => <button key={tab}
@@ -4168,13 +4261,15 @@ export default function App() {
           {ratesPanel('contractor')}
           {ratesPanel('subcontractor')}
           <div hidden={sidebarTab !== 'export'} className="export-panel"><h2>Export</h2><p className="length-note">Export options will be added here.</p></div>
-          <div hidden={sidebarTab !== 'materials'} className="materials-panel"><h2>Materials</h2><p className="length-note">Exact quantities use your measured areas and each measurement’s board specification. Final quantities add waste and round up to whole boards, rolls or bags.</p><label className="material-waste-label">Default waste allowance (%)<input type="number" min="0" step="any" inputMode="decimal" aria-label="Material waste percentage" aria-invalid={!validWaste(materialWasteText)} value={materialWasteText} onChange={event=>setMaterialWasteText(event.target.value)} /></label><p className="length-note">Each material starts with this allowance. Change its own waste box in the quantities table to adjust it separately.</p>{hasInvalidWaste && <p role="alert" className="calibration-warning">Enter zero or a positive waste percentage for each material.</p>}{(adhesiveCoverageUsed || skimCoverageUsed || usedInsulationThicknesses.size>0) && <fieldset className="material-coverage-settings"><legend>Material coverage</legend>{adhesiveCoverageUsed && <label>Dabbing adhesive (m² per bag)<input type="number" min="0.01" step="any" inputMode="decimal" aria-label="Dabbing adhesive coverage" value={adhesiveCoverageText} aria-invalid={adhesiveCoverageText.trim()==='' || !Number.isFinite(Number(adhesiveCoverageText)) || Number(adhesiveCoverageText)<=0} onChange={event=>setAdhesiveCoverageText(event.target.value)} /></label>}{skimCoverageUsed && <label>Skimming plaster (m² per bag)<input type="number" min="0.01" step="any" inputMode="decimal" aria-label="Skimming plaster coverage" value={skimCoverageText} aria-invalid={skimCoverageText.trim()==='' || !Number.isFinite(Number(skimCoverageText)) || Number(skimCoverageText)<=0} onChange={event=>setSkimCoverageText(event.target.value)} /></label>}{Object.keys(defaultInsulationCoverage).filter(thickness=>usedInsulationThicknesses.has(thickness)).map(thickness=><label key={thickness}>INS {thickness}mm (m² per roll)<input type="number" min="0.01" step="any" inputMode="decimal" aria-label={'INS '+thickness+'mm coverage'} value={insulationCoverageTexts[thickness]} aria-invalid={!insulationCoverageTexts[thickness]?.trim() || !Number.isFinite(Number(insulationCoverageTexts[thickness])) || Number(insulationCoverageTexts[thickness])<=0} onChange={event=>setInsulationCoverageTexts(current=>({...current,[thickness]:event.target.value}))} /></label>)}{hasInvalidCoverage && <p role="alert" className="calibration-warning">Coverage must be greater than zero.</p>}</fieldset>}{materialSummary && <>{materialSummary.issues.length>0 && <details className="materials-issues"><summary>{materialSummary.issues.length} items to check</summary><ul>{materialSummary.issues.map((issue,index)=><li key={index}>{issue}</li>)}</ul></details>}</>}</div>
+          <div hidden={sidebarTab !== 'materials'} className="materials-panel"><h2>Materials</h2><fieldset className="material-scope-filters"><legend>Order materials for</legend><label>Trade<select aria-label="Materials trade" value={materialTrade} onChange={event=>setMaterialTrade(event.target.value as MaterialTrade)}><option value="all">All trades</option>{(['Tack','Dab','Skim','Insulation','Metal'] as WorkHeading[]).map(trade=><option key={trade} value={trade}>{trade}</option>)}</select></label><label>Drawing / floor<select aria-label="Materials drawing" value={materialDrawingKey} onChange={event=>setMaterialDrawingKey(event.target.value)}><option value="all">All drawings</option>{drawingPages.map((page,index)=><option key={page.source+':'+page.page} value={page.source+':'+page.page}>{drawingPageName(index+1)}</option>)}</select></label>{(materialTrade!=='all' || materialDrawingKey!=='all') && <button type="button" onClick={()=>{setMaterialTrade('all');setMaterialDrawingKey('all')}}>Show entire plot</button>}</fieldset><p className="length-note">Exact quantities use your measured areas and each measurement’s board specification. Final quantities add waste and round up to whole boards, rolls or bags.</p><label className="material-waste-label">Default waste allowance (%)<input type="number" min="0" step="any" inputMode="decimal" aria-label="Material waste percentage" aria-invalid={!validWaste(materialWasteText)} value={materialWasteText} onChange={event=>setMaterialWasteText(event.target.value)} /></label><p className="length-note">Each material starts with this allowance. Change its own waste box in the quantities table to adjust it separately.</p>{hasInvalidWaste && <p role="alert" className="calibration-warning">Enter zero or a positive waste percentage for each material. Select All trades and All drawings to check every item.</p>}{(shownAdhesiveCoverage || shownSkimCoverage || shownInsulationThicknesses.size>0) && <fieldset className="material-coverage-settings"><legend>Material coverage</legend>{shownAdhesiveCoverage && <label>Dabbing adhesive (m² per bag)<input type="number" min="0.01" step="any" inputMode="decimal" aria-label="Dabbing adhesive coverage" value={adhesiveCoverageText} aria-invalid={adhesiveCoverageText.trim()==='' || !Number.isFinite(Number(adhesiveCoverageText)) || Number(adhesiveCoverageText)<=0} onChange={event=>setAdhesiveCoverageText(event.target.value)} /></label>}{shownSkimCoverage && <label>Skimming plaster (m² per bag)<input type="number" min="0.01" step="any" inputMode="decimal" aria-label="Skimming plaster coverage" value={skimCoverageText} aria-invalid={skimCoverageText.trim()==='' || !Number.isFinite(Number(skimCoverageText)) || Number(skimCoverageText)<=0} onChange={event=>setSkimCoverageText(event.target.value)} /></label>}{Object.keys(defaultInsulationCoverage).filter(thickness=>shownInsulationThicknesses.has(thickness)).map(thickness=><label key={thickness}>INS {thickness}mm (m² per roll)<input type="number" min="0.01" step="any" inputMode="decimal" aria-label={'INS '+thickness+'mm coverage'} value={insulationCoverageTexts[thickness]} aria-invalid={!insulationCoverageTexts[thickness]?.trim() || !Number.isFinite(Number(insulationCoverageTexts[thickness])) || Number(insulationCoverageTexts[thickness])<=0} onChange={event=>setInsulationCoverageTexts(current=>({...current,[thickness]:event.target.value}))} /></label>)}</fieldset>}{hasInvalidCoverage && <p role="alert" className="calibration-warning">Coverage must be greater than zero. Select All trades and All drawings to check all material settings.</p>}{materialSummary && <>{materialSummary.issues.length>0 && <details className="materials-issues"><summary>{materialSummary.issues.length} items to check</summary><ul>{materialSummary.issues.map((issue,index)=><li key={index}>{issue}</li>)}</ul></details>}</>}</div>
           <div hidden={sidebarTab !== 'summary'} className="summary-panel">
             <div className="summary-job-heading">{[job.site, job.plot ? 'Plot ' + job.plot : '', job.houseType, job.revision ? (/^rev\b/i.test(job.revision) ? job.revision : 'Rev ' + job.revision) : ''].filter(Boolean).join(' / ') || 'Job details not entered'}</div>
             <h2>Plot summary</h2>
+            <div className="summary-view-switch" role="group" aria-label="Plot Summary view"><button type="button" aria-pressed={summaryPresentation==='detailed'} onClick={()=>setSummaryPresentation('detailed')}>Detailed</button><button type="button" aria-pressed={summaryPresentation==='simplified'} onClick={()=>setSummaryPresentation('simplified')}>Simplified</button></div>
             <div className="panel-subtitle">{measuredCategorySummaries.length} measured categories · all pages</div>
             <p className="length-note">Drawing visibility does not change these totals. Skim rows reuse the source areas and represent separate work.</p>
-            {measuredCategorySummaries.map((category) => <div className="category-summary" key={category.id}>
+            {summaryPresentation==='detailed' && <>{orderedPlotCategories.map((category,index) => <div className="category-summary" key={category.id}>
+              {(index===0 || summaryBlock(category)!==summaryBlock(orderedPlotCategories[index-1])) && <h3 className="summary-trade-heading">{summaryBlock(category)}</h3>}
               <strong><span className="category-swatch" style={{ background: category.color }} />{category.name || category.id}</strong>
               {category.mode === 'count' ? <div className="summary-values">{category.count} no.{workPriceLabel(category)}</div> : <div className="summary-values">
                 <span>{category.totalAreaM2 === null ? 'Check calibration / heights' : `${category.totalAreaM2.toFixed(2)} m²`}</span>
@@ -4189,7 +4284,7 @@ export default function App() {
             </div>)}
             {!measuredCategorySummaries.length && <p className="length-note">No categories measured yet.</p>}
             {measuredCategorySummaries.length>0 && priceSubtotals(measuredCategorySummaries,'whole plot')}
-            {measuredCategorySummaries.length>0 && <div className="plot-price-total"><span>{unpricedCategories ? 'Priced subcontractor subtotal' : 'Plot subcontractor total'}</span><strong>{pounds(plotPriceTotal)}</strong>{unpricedCategories>0 && <p>{unpricedCategories} categories awaiting a rate or valid quantities.</p>}<p>50p or less rounds down; 51p or more rounds up. Totals add the rounded category values. LM is not charged separately.</p>{measuredCategorySummaries.some(category=>category.wallsWithoutHeight>0) && <p>Lengths without wall heights are excluded from m² pricing.</p>}</div>}
+            {measuredCategorySummaries.length>0 && <div className="plot-price-total"><span>{unpricedCategories ? 'Priced subcontractor subtotal' : 'Plot subcontractor total'}</span><strong>{pounds(plotPriceTotal)}</strong>{unpricedCategories>0 && <p>{unpricedCategories} categories awaiting a rate or valid quantities.</p>}<p>49p or less rounds down; 50p or more rounds up. Totals add the rounded category values. LM is not charged separately.</p>{measuredCategorySummaries.some(category=>category.wallsWithoutHeight>0) && <p>Lengths without wall heights are excluded from m² pricing.</p>}</div>}</>}{summaryPresentation==='simplified' && <p className="length-note">Whole-plot figures and drawing / floor breakdowns are shown in the tables.</p>}
             <p className="length-note">{groups.filter((group) => !group.categoryId).length} work items are uncategorised. Assign categories in Measured Work settings to include them above. Ungrouped geometry is also excluded.</p>
             <details className="category-settings"><summary>Edit category names and colours</summary>
               {categories.map((category) => <div className="category-editor" key={category.id}>
@@ -4569,13 +4664,13 @@ export default function App() {
         </aside>
 
         <section
-          hidden={sidebarTab === 'summary' || sidebarTab === 'materials' || sidebarTab === 'export'}
+          hidden={sidebarTab === 'summary' || sidebarTab === 'materials' || sidebarTab === 'export' || sidebarTab === 'rates' || sidebarTab === 'contractor-rates'}
           ref={stageRef}
           tabIndex={-1}
-          className={`drawing-stage${isPanning ? ' is-panning' : ''}${calibrationMode || lengthMode || runMode || areaMode || countMode || readyToolKind ? ' measurement-active' : ''}`}
+          className={`drawing-stage${hoveredMeasurementId ? ' measurement-hover' : ''}${isPanning ? ' is-panning' : ''}${calibrationMode || lengthMode || runMode || areaMode || countMode || readyToolKind ? ' measurement-active' : ''}`}
           onPointerDown={(event) => { setSnapPreview(null); startPan(event) }}
-          onPointerMove={(event) => { movePan(event); previewSnap(event) }}
-          onPointerLeave={() => setSnapPreview(null)}
+          onPointerMove={(event) => { movePan(event); previewSnap(event); updateMeasurementHover(event) }}
+          onPointerLeave={() => {setSnapPreview(null);setHoveredMeasurementId(null)}}
           onContextMenu={openMeasurementMenu}
           onPointerUp={endPan}
           onPointerCancel={(event) => {
@@ -4622,7 +4717,7 @@ export default function App() {
               <canvas ref={canvasRef} />
 
               <svg
-                className={`measurement-overlay${overviewDrawing ? ' overview-drawing' : ''}${sidebarTab==='groups' ? ' work-drawing' : ''}`}
+                className={`measurement-overlay${overviewDrawing ? ' overview-drawing' : ''}${sidebarTab==='groups' ? ' work-drawing' : ''}${isolatedMeasurementId ? ' has-isolated-measurement' : ''}`}
                 width={viewportSize.width}
                 height={viewportSize.height}
                 style={{
@@ -4630,7 +4725,7 @@ export default function App() {
                 }}
               >
                 {renderedAreas.map((area) => (
-                  <g key={area.id} opacity={measurementAppearance(area.groupId).opacity}>
+                  <g key={area.id} className={sidebarTab==='groups' && isInsulationArea(area.groupId) && isolatedMeasurementId!==area.id ? 'insulation-area-overview' : undefined} opacity={measurementAppearance(area.groupId).opacity}>
                     {area.handles.length > 1 && (area.id === 'Draft area'
                       ? <polyline points={area.handles.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke={area.color} strokeWidth={measurementAppearance(area.groupId).width} strokeDasharray="7 4" />
                       : <polygon points={area.handles.map((p) => `${p.x},${p.y}`).join(' ')} fill={`${area.color}22`} stroke={area.color} strokeWidth={measurementAppearance(area.groupId).width} />)}
@@ -4929,9 +5024,12 @@ export default function App() {
             <span className="footer-help">Drag to pan <span>·</span> Scroll to zoom</span>
           </div>}
         </section>
+        {sidebarTab==='rates' && ratesWorkspace('subcontractor')}
+        {sidebarTab==='contractor-rates' && ratesWorkspace('contractor')}
+        {sidebarTab==='summary' && summaryPresentation==='simplified' && simplifiedSummary()}
         {sidebarTab==='export' && <section className="summary-gallery export-workspace" aria-label="Export workspace"><header className="summary-gallery-heading"><h2>Export</h2></header><article className="material-order-card"><h3>Export options</h3><p>Export options will be added here.</p></article></section>}
-        {sidebarTab==='materials' && materialSummary && <section className="summary-gallery materials-workspace" aria-label="Material quantities"><header className="summary-gallery-heading"><h2>Material Quantities</h2><p>All drawings · Exact quantities before waste · Final order rounded up to whole units.</p></header>{!pdf && <p>Import a drawing and measure some work to calculate materials.</p>}{materialSummary.issues.length>0 && <p className="materials-warning" role="status">Some quantities need checking. See the items listed on the left before ordering.</p>}<article className="material-order-card"><h3>Boards</h3>{materialSummary.boards.length ? materialsTable(materialSummary.boards,'Board quantities') : <p>No boards specified yet. Choose a board specification on each relevant measurement, or mark non-board work as Not applicable.</p>}</article><article className="material-order-card"><h3>Insulation rolls</h3>{materialSummary.rolls.length ? materialsTable(materialSummary.rolls,'Insulation roll quantities') : <p>Choose an INS specification to calculate roll quantities.</p>}</article><article className="material-order-card"><h3>Adhesive & plaster</h3>{materialSummary.bags.length ? materialsTable(materialSummary.bags,'Adhesive and plaster quantities') : <p>Measure Dab or Skim work to calculate bag quantities.</p>}</article><p className="length-note material-method-note">Matching specifications are combined before rounding. Insulation rolls use the coverage set on the left. Each material has its own waste allowance. Skim bags use the automatic skim totals and respect skim opt-outs. Board quantities are calculated from the original measurements only.</p></section>}
-        {sidebarTab === 'summary' && <section className="summary-gallery" aria-label="All drawings and page quantities">
+        {sidebarTab==='materials' && materialSummary && <section className="summary-gallery materials-workspace" aria-label="Material quantities"><header className="summary-gallery-heading"><h2>Material Quantities</h2><strong className="material-scope-title">{materialScopeLabel}</strong><p>Exact quantities before waste · Final order rounded up to whole units.</p></header>{!pdf && <p>Import a drawing and measure some work to calculate materials.</p>}{materialSummary.issues.length>0 && <p className="materials-warning" role="status">Some quantities need checking. See the items listed on the left before ordering.</p>}{(wholePlotMaterials || materialSummary.boards.length>0) && <article className="material-order-card"><h3>Boards</h3>{materialSummary.boards.length ? materialsTable(materialSummary.boards,'Board quantities') : <p>No boards specified yet. Choose a board specification on each relevant measurement, or mark non-board work as Not applicable.</p>}</article>}{(wholePlotMaterials || materialSummary.rolls.length>0) && <article className="material-order-card"><h3>Insulation rolls</h3>{materialSummary.rolls.length ? materialsTable(materialSummary.rolls,'Insulation roll quantities') : <p>Choose an INS specification to calculate roll quantities.</p>}</article>}{(wholePlotMaterials || materialSummary.bags.length>0) && <article className="material-order-card"><h3>Adhesive & plaster</h3>{materialSummary.bags.length ? materialsTable(materialSummary.bags,'Adhesive and plaster quantities') : <p>Measure Dab or Skim work to calculate bag quantities.</p>}</article>}{!wholePlotMaterials && !materialSummary.boards.length && !materialSummary.rolls.length && !materialSummary.bags.length && <article className="material-order-card"><h3>No materials for this selection</h3><p>Check the measured work, material specifications and selected filters.</p></article>}<p className="length-note material-method-note">Matching specifications are combined before rounding. Insulation rolls use the coverage set on the left. Each material has its own waste allowance. Skim bags use the automatic skim totals and respect skim opt-outs. Board quantities are calculated from the original measurements only.</p></section>}
+        {sidebarTab === 'summary' && summaryPresentation==='detailed' && <section className="summary-gallery plot-summary-gallery" aria-label="All drawings and page quantities">
           <header className="summary-gallery-heading"><h2>All Drawings — Page Breakdown</h2><p>Whole-plot totals are on the left. Each drawing below has its own measurements and quantities.</p></header>
           {!pdf && <p className="summary-empty">Import a drawing to see the page breakdown.</p>}
           {pdf && pageDrawingSummaries.map((page) => <article className="summary-page-card" key={page.number}>
@@ -4941,7 +5039,8 @@ export default function App() {
               <div className="summary-page-quantities"><h4>{page.name} quantities</h4>
                 {page.needsCalibration && <p className="calibration-warning">Calibrate and lock this drawing to show complete quantities.</p>}
                 {!page.rows.length && <p className="length-note">No measured work on this drawing yet.</p>}
-                {page.rows.map((row) => <div className="summary-page-quantity" key={row.id}>
+                {page.rows.map((row,index) => <div className="summary-page-quantity" key={row.id}>
+                  {(index===0 || summaryBlock(row)!==summaryBlock(page.rows[index-1])) && <h4 className="summary-trade-heading">{summaryBlock(row)}</h4>}
                   <h5><span className="work-legend-swatches">{row.colors.map((color) => <span className="work-legend-swatch" key={color} style={{background:color}} />)}</span>{row.name}</h5>
                   <div className="summary-page-values">{row.mode !== 'count' && <><strong>{row.totalAreaM2 === null ? 'Check calibration / heights' : row.totalAreaM2.toFixed(2) + ' m²'}</strong>{row.mode !== 'derived' && <span>{row.totalMm === null ? 'Check calibration' : (row.totalMm/1000).toFixed(2) + ' LM'}</span>}</>}{(row.mode === 'count' || row.count>0) && <strong>{row.count} no.</strong>}{row.id!=='__ungrouped__' && workPriceLabel(row)}</div>
                   {row.wallsWithoutHeight>0 && <p className="length-note">{row.wallsWithoutHeight} lengths/runs without height excluded from m².</p>}
