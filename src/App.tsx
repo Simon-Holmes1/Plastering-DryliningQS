@@ -607,6 +607,17 @@ function polygonLabelPoint(points: Point[]): Point {
 }
 
 
+function ImportPagePreview({source,number}:{source:DrawingSource;number:number}) {
+  const host=useRef<HTMLDivElement|null>(null),canvas=useRef<HTMLCanvasElement|null>(null)
+  const [visible,setVisible]=useState(false),[state,setState]=useState('Preview loading…')
+  useEffect(()=>{if(!host.current)return;if(typeof IntersectionObserver==='undefined'){setVisible(true);return}const observer=new IntersectionObserver(entries=>setVisible(entries.some(entry=>entry.isIntersecting)),{rootMargin:'200px'});observer.observe(host.current);return()=>observer.disconnect()},[])
+  useEffect(()=>{if(!visible)return;let cancelled=false,task:any=null
+    void (async()=>{try{const page=await source.doc.getPage(number);if(cancelled || !canvas.current)return;const base=page.getViewport({scale:1}),view=page.getViewport({scale:Math.min(180/base.width,180/base.height)}),density=1.5;const context=canvas.current.getContext('2d');if(!context)throw Error();canvas.current.width=Math.ceil(view.width*density);canvas.current.height=Math.ceil(view.height*density);task=page.render({canvas:canvas.current,canvasContext:context,viewport:view,transform:[density,0,0,density,0,0]});await task.promise;if(!cancelled)setState('')}catch(error:any){if(!cancelled && error?.name!=='RenderingCancelledException')setState('Preview unavailable — page can still be selected')}})()
+    return()=>{cancelled=true;task?.cancel();if(canvas.current){canvas.current.width=0;canvas.current.height=0}}
+  },[visible,source,number])
+  return <div ref={host} className="import-page-preview"><canvas ref={canvas} aria-label={`Preview of page ${number}`} />{state && <span>{state}</span>}</div>
+}
+
 function SummaryDrawingPreview({ pdf, number, rotation, lengths, runs, areas, counts, colorFor, appearanceFor, preparePage }: {
   pdf: PdfDoc; number: number; rotation: number; lengths: LengthMeasurement[]; runs: RunMeasurement[];
   areas: AreaMeasurement[]; counts: Array<CountMeasurement & { previewColor?: string }>; colorFor: (groupId: string | undefined, fallback: string) => string;
@@ -748,6 +759,12 @@ export default function App() {
   const duplicateBusyRef=useRef(false)
   const toolboxRef = useRef<HTMLDivElement | null>(null)
   const workspaceRef = useRef<HTMLElement | null>(null)
+  const [pendingImport,setPendingImport]=useState<{sources:DrawingSource[];append:boolean}|null>(null)
+  const pendingImportRef=useRef< typeof pendingImport >(null)
+  const [importSelection,setImportSelection]=useState<string[]>([])
+  const panelHoldRef=useRef<number|null>(null)
+  const panelHeldRef=useRef(false)
+  const suppressPanelContextRef=useRef(0)
   const toolboxDragRef = useRef<{ id: number; x: number; y: number; origin: Point; moved: boolean } | null>(null)
   const [snapEnabled, setSnapEnabled] = useState(false)
   const [snapSource, setSnapSource] = useState<'both' | 'pdf' | 'measure'>('both')
@@ -1166,25 +1183,23 @@ export default function App() {
     }
   }
 
-  async function openPdf(file: File) {
-    if (fileBusyRef.current || !allowReplacingTakeoff()) return
-    fileBusyRef.current = true
-    setIsFileBusy(true)
-    try {
-      setStatus('Loading drawing…')
-
-      const bytes = new Uint8Array(await file.arrayBuffer())
-      const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise
-      const sources = [{ name: file.name, bytes, doc }]
-      const pages = defaultDrawingPages(sources[0])
-      const loadedPdf = drawingSet(sources, pages)
-
-      pdfBytesRef.current = bytes
+  function commitImportedPages(sources:DrawingSource[],pages:DrawingPage[],append:boolean) {
+    if(append) {
+      const nextPdf=drawingSet(sources,pages)
+      const cachedPages=pdfSnapCache.current.doc===pdf ? pdfSnapCache.current.pages : new Map<number,SnapIndex>()
+      pdfSnapCache.current={doc:nextPdf,pages:new Map(cachedPages)}
+      setDrawingSources(sources);setDrawingPages(pages);setPdf(nextPdf)
+      setDescriptionOpen(false);setHoverHeading(null);setReorderDescriptions(false);setMessagesHidden(true);setSnapEnabled(false);setToolboxDocked(true);setPanelMenu(null)
+      setPageNumber(drawingPages.length+1);setViewMode('fit-page');setPan({x:0,y:0})
+      setStatus(`Added ${pages.length-drawingPages.length} drawing pages. Existing measurements and calibration have been kept.`)
+    } else {
+      const loadedPdf=drawingSet(sources,pages)
+      pdfBytesRef.current = sources[0].bytes
       setDrawingSources(sources)
       setDrawingPages(pages)
       resetDrafts()
       setPdf(loadedPdf)
-      setFileName(file.name)
+      setFileName(sources[0].name)
       setJob({ ...emptyJob })
       setAreaMeasurements({})
       setCountMeasurements({})
@@ -1226,45 +1241,46 @@ export default function App() {
       setStatus(
         `Loaded ${loadedPdf.numPages} page${loadedPdf.numPages === 1 ? '' : 's'}.`
       )
-    } catch (error) {
-      console.error(error)
-      setStatus('Could not open that PDF. Try another file.')
-    } finally {
-      fileBusyRef.current = false
-      setIsFileBusy(false)
-    }
-  }
 
-  async function importDrawingPages(files: File[]) {
-    if (!files.length || !pdf || fileBusyRef.current) return
-    stopMeasurement()
-    fileBusyRef.current = true; setIsFileBusy(true)
-    const additions: DrawingSource[] = []
-    try {
-      setStatus('Importing drawing pages…')
-      for (const file of files) {
-        const bytes = new Uint8Array(await file.arrayBuffer())
-        const doc = await pdfjsLib.getDocument({ data: bytes.slice() }).promise
-        additions.push({ name: file.name, bytes, doc })
-      }
-      const sources = [...drawingSources, ...additions]
-      const pages = [...drawingPages, ...additions.flatMap((source, i) => defaultDrawingPages(source, drawingSources.length + i))]
-      const nextPdf = drawingSet(sources, pages)
-      const cachedPages = pdfSnapCache.current.doc === pdf ? pdfSnapCache.current.pages : new Map<number, SnapIndex>()
-      pdfSnapCache.current = { doc: nextPdf, pages: new Map(cachedPages) }
-      setDrawingSources(sources); setDrawingPages(pages); setPdf(nextPdf)
-      setDescriptionOpen(false);setHoverHeading(null);setReorderDescriptions(false);setMessagesHidden(true);setSnapEnabled(false);setToolboxDocked(true);setPanelMenu(null)
-      setPageNumber(drawingPages.length + 1); setViewMode('fit-page'); setPan({ x: 0, y: 0 })
-      setStatus(`Added ${pages.length - drawingPages.length} drawing pages. Existing measurements and calibration have been kept.`)
-      additions.length = 0
-    } catch (error) {
-      console.error(error)
-      setStatus('Could not import those drawing pages. Existing drawings and measurements have been kept.')
-    } finally {
-      if (additions.length) void Promise.all(additions.map((source) => source.doc.destroy()))
-      fileBusyRef.current = false; setIsFileBusy(false)
     }
   }
+  function cancelPageImport() {
+    const pending=pendingImportRef.current;if(!pending)return
+    pendingImportRef.current=null;setPendingImport(null);setImportSelection([])
+    void Promise.all(pending.sources.map(source=>source.doc.destroy())).catch(()=>{})
+    fileBusyRef.current=false;setIsFileBusy(false);setStatus('Import cancelled. Your current drawings and measurements have been kept.')
+  }
+  function confirmPageImport() {
+    const pending=pendingImportRef.current;if(!pending || !importSelection.length)return
+    const chosen=new Set(importSelection),used=pending.sources.map((source,index)=>({source,index,pages:defaultDrawingPages(source,(pending.append ? drawingSources.length : 0)+index).filter(page=>chosen.has(index+':'+page.page))})).filter(entry=>entry.pages.length)
+    const offset=pending.append ? drawingSources.length : 0
+    const sources=[...(pending.append ? drawingSources : []),...used.map(entry=>entry.source)]
+    const pages=[...(pending.append ? drawingPages : []),...used.flatMap((entry,index)=>entry.pages.map(page=>({...page,source:offset+index})))]
+    commitImportedPages(sources,pages,pending.append)
+    void Promise.all(pending.sources.filter(source=>!used.some(entry=>entry.source===source)).map(source=>source.doc.destroy())).catch(()=>{})
+    pendingImportRef.current=null;setPendingImport(null);setImportSelection([]);fileBusyRef.current=false;setIsFileBusy(false)
+  }
+  async function preparePdfImport(files:File[],append:boolean) {
+    if(!files.length || fileBusyRef.current || (append ? !pdf : !allowReplacingTakeoff()))return
+    if(append)stopMeasurement()
+    fileBusyRef.current=true;setIsFileBusy(true);setStatus('Loading PDF previews…')
+    const additions:DrawingSource[]=[];let awaitingSelection=false
+    try {
+      for(const file of files){const bytes=new Uint8Array(await file.arrayBuffer());const doc=await pdfjsLib.getDocument({data:bytes.slice()}).promise;additions.push({name:file.name,bytes,doc})}
+      if(additions.some(source=>source.doc.numPages>1)) {
+        const pending={sources:additions.slice(),append};pendingImportRef.current=pending;setPendingImport(pending);setImportSelection([]);awaitingSelection=true
+        setStatus('Select the PDF pages to import. Your current work is kept until you confirm.')
+      } else {
+        const offset=append ? drawingSources.length : 0
+        commitImportedPages([...(append ? drawingSources : []),...additions],[...(append ? drawingPages : []),...additions.flatMap((source,index)=>defaultDrawingPages(source,offset+index))],append)
+      }
+      additions.length=0
+    } catch(error){console.error(error);setStatus('Could not open that PDF. Your current drawings and measurements have been kept.')}
+    finally{if(additions.length)void Promise.all(additions.map(source=>source.doc.destroy())).catch(()=>{});if(!awaitingSelection){fileBusyRef.current=false;setIsFileBusy(false)}}
+  }
+  async function openPdf(file:File){await preparePdfImport([file],false)}
+  async function importDrawingPages(files:File[]){await preparePdfImport(files,true)}
+  useEffect(()=>()=>{const pending=pendingImportRef.current;pendingImportRef.current=null;if(pending)void Promise.all(pending.sources.map(source=>source.doc.destroy())).catch(()=>{})},[])
 
   function renameDrawingPage(number: number, name: string) {
     const trimmed = name.trim().slice(0, 80)
@@ -1439,8 +1455,43 @@ export default function App() {
   }
   function togglePrecisionCrosshair() {cancelTouchView();setPrecisionCrosshair(current=>!current);setSnapPreview(null)}
   function crosshairClientPoint() {const box=stageRef.current?.getBoundingClientRect();return box ? {x:box.left+box.width/2,y:box.top+box.height/2} : null}
+  function selectCrosshairEditPoint(clientX:number,clientY:number) {
+    if(hasDraft || calibrationMode)return false
+    const box=drawingRef.current?.getBoundingClientRect();if(!box)return false
+    let best:SelectedEditPoint|null=null,distance=18
+    for(const kind of ['length','run','area','point'] as MeasurementKind[]) {
+      const items=kind==='length' ? renderedLengths : kind==='run' ? renderedRuns : kind==='area' ? renderedAreas : renderedCounts
+      for(const item of items){if(item.locked)continue;const points='points' in item ? item.points : 'pointA' in item ? [item.pointA,item.pointB] : [item.point]
+        points.forEach((point,index)=>{const screen=viewportRef.current?.convertToViewportPoint(point.x,point.y);if(!screen)return;const d=Math.hypot(box.left+screen[0]-clientX,box.top+screen[1]-clientY);if(d<distance){distance=d;best={id:item.id,kind,index,page:pageNumber}}})
+      }
+    }
+    if(!best)return false
+    setSelectedEditPoint(best);setReadyToolKind(null);setStatus('Point selected. Pan to aim, then double-tap to move this point to the crosshair.');return true
+  }
+  function moveSelectedPointToCrosshair(point:Point) {
+    const selection=selectedEditPoint;if(!selection || selection.page!==pageNumber || hasDraft)return false
+    const saved=savedMeasurement(selection.id,pageNumber);if(!saved || saved.item.locked){setSelectedEditPoint(null);setStatus('Unlock the measurement and select a point before editing.');return true}
+    if(selection.kind!=='point' && !hasValidCalibration()){setStatus('Calibrate and lock this page before editing.');return true}
+    const {id,index,kind}=selection
+    if(kind==='run' || kind==='area') {
+      if(!('points' in saved.item) || index<0 || index>=saved.item.points.length)return true
+      const points=saved.item.points.map((p,i)=>i===index ? point : p)
+      const problem=kind==='area' ? polygonProblem(points) : points.some((p,i)=>i>0 && Math.hypot(p.x-points[i-1].x,p.y-points[i-1].y)<0.001) ? 'This would create a zero-length segment.' : null
+      if(problem){setStatus(problem+' Choose a different position.');return true}
+      if(kind==='run')setRunMeasurements(current=>({...current,[pageNumber]:(current[pageNumber] ?? []).map(item=>item.id===id ? {...item,points} : item)}))
+      else setAreaMeasurements(current=>({...current,[pageNumber]:(current[pageNumber] ?? []).map(item=>item.id===id ? {...item,points} : item)}))
+    } else if(kind==='length') {
+      if(!('pointA' in saved.item) || index<0 || index>1)return true
+      const other=index===0 ? saved.item.pointB : saved.item.pointA
+      if(Math.hypot(other.x-point.x,other.y-point.y)<0.001){setStatus('A length needs two different endpoints.');return true}
+      setLengthMeasurements(current=>({...current,[pageNumber]:(current[pageNumber] ?? []).map(item=>item.id===id ? {...item,[index===0 ? 'pointA' : 'pointB']:point} : item)}))
+    } else setCountMeasurements(current=>({...current,[pageNumber]:(current[pageNumber] ?? []).map(item=>item.id===id ? {...item,point} : item)}))
+    setStatus(id+' point moved. Select another point or lock the measurement when finished.');return true
+  }
   function confirmCrosshairPoint() {
     const point=crosshairClientPoint();if(!point)return
+    const target=clientToPdfPoint(point.x,point.y)
+    if(selectedEditPoint && !calibrationMode){if(!target){setStatus('Pan the drawing under the crosshair before moving this point.');return}if(moveSelectedPointToCrosshair(target))return}
     if(!calibrationMode && !currentToolKind()){setStatus('Choose a measuring tool or start calibration, then double-tap to mark the crosshair point.');return}
     if(!clientToPdfPoint(point.x,point.y)){setStatus('Pan the drawing under the crosshair before placing a point.');return}
     placeDrawingPoint(point.x,point.y)
@@ -1478,7 +1529,7 @@ export default function App() {
     if(g.pointers.size>=2){event.preventDefault();event.stopPropagation();event.currentTarget.setPointerCapture(event.pointerId);if(g.pointers.size===2)beginTouchPinch();return}
     const handle=!precisionCrosshair && (event.target as Element).tagName?.toLowerCase()==='circle'
     g.origin={point:{x:event.clientX,y:event.clientY},pan:{...pan},at:Date.now(),handle};g.consumed=false;g.moved=false
-    if(!handle){event.preventDefault();setSelectedEditPoint(null);event.stopPropagation();event.currentTarget.setPointerCapture(event.pointerId)}
+    if(!handle){event.preventDefault();if(!precisionCrosshair)setSelectedEditPoint(null);event.stopPropagation();event.currentTarget.setPointerCapture(event.pointerId)}
     clearTouchHold()
     if(measurementAt(event.clientX,event.clientY))g.timer=window.setTimeout(()=>{g.timer=null;if(g.pointers.size!==1 || g.moved || g.consumed)return;const point=Array.from(g.pointers.values())[0];g.consumed=true;g.lastTap=null;setIsPanning(false);showTouchMeasurementMenu(point.x,point.y)},550)
   }
@@ -1514,7 +1565,7 @@ export default function App() {
     if(!g.pointers.size){
       setIsPanning(false)
       if(!g.consumed && !g.moved && start && !start.handle) {
-        if(precisionCrosshair){const now=Date.now(),last=g.lastTap;if(now-start.at<400 && last && now-last.at<400 && Math.hypot(event.clientX-last.point.x,event.clientY-last.point.y)<32){g.lastTap=null;confirmCrosshairPoint()}else g.lastTap=now-start.at<400 ? {at:now,point:{x:event.clientX,y:event.clientY}} : null}
+        if(precisionCrosshair){if(selectCrosshairEditPoint(event.clientX,event.clientY)){g.lastTap=null;g.origin=null;g.pinch=null;g.preview=null;g.consumed=false;g.moved=false;return}const now=Date.now(),last=g.lastTap;if(now-start.at<400 && last && now-last.at<400 && Math.hypot(event.clientX-last.point.x,event.clientY-last.point.y)<32){g.lastTap=null;confirmCrosshairPoint()}else g.lastTap=now-start.at<400 ? {at:now,point:{x:event.clientX,y:event.clientY}} : null}
         else placeDrawingPoint(event.clientX,event.clientY)
       }
       g.origin=null;g.pinch=null;g.preview=null;g.consumed=false;g.moved=false
@@ -1529,7 +1580,7 @@ export default function App() {
     return ()=>{window.removeEventListener('blur',cancel);window.removeEventListener('resize',cancel);window.removeEventListener('pointerdown',outside,true);clearTouchHold()}
   },[])
   useEffect(()=>{const commit=pinchCommitRef.current;if(commit && Math.abs(viewportSize.width-commit.width)<0.5 && Math.abs(viewportSize.height-commit.height)<0.5 && Math.abs(scale-commit.scale)<0.0001){pinchCommitRef.current=null;setPinchPreview(null)}},[viewportSize.width,viewportSize.height,scale,pinchPreview])
-  useEffect(()=>{if(precisionCrosshair && !pinchPreview){const point=crosshairClientPoint();if(point)previewSnap({clientX:point.x,clientY:point.y} as React.PointerEvent<HTMLElement>)}},[precisionCrosshair,pan.x,pan.y,scale,viewportSize.width,viewportSize.height,calibrationMode,runMode,areaMode,countMode,lengthMode,readyToolKind,pinchPreview])
+  useEffect(()=>{if(precisionCrosshair && !pinchPreview){const point=crosshairClientPoint();if(point)previewSnap({clientX:point.x,clientY:point.y} as React.PointerEvent<HTMLElement>)}},[precisionCrosshair,pan.x,pan.y,scale,viewportSize.width,viewportSize.height,calibrationMode,runMode,areaMode,countMode,lengthMode,readyToolKind,pinchPreview,selectedEditPoint])
   function startPan(event: React.PointerEvent<HTMLElement>) {
     setSelectedEditPoint(null);setDescriptionOpen(false)
     readShift(event)
@@ -1648,12 +1699,12 @@ export default function App() {
       for (let i=1; i<points.length; i++) segments.push({ a: points[i-1], b: points[i] })
       if (closed && points.length > 2) segments.push({ a: points[points.length-1], b: points[0] })
     }
-    const editingId = lengthDragRef.current.measurementId ?? runDragRef.current?.runId ?? areaDragRef.current?.areaId
+    const editingId = lengthDragRef.current.measurementId ?? runDragRef.current?.runId ?? areaDragRef.current?.areaId ?? (precisionCrosshair && selectedEditPoint?.page===pageNumber ? selectedEditPoint.id : undefined)
     for (const item of lengthMeasurements[pageNumber] ?? []) if (item.id !== editingId && isMeasurementVisible(item.groupId, undefined, true, item.heightM)) chain([item.pointA,item.pointB])
     for (const item of runMeasurements[pageNumber] ?? []) if (item.id !== editingId && isMeasurementVisible(item.groupId, undefined, true, item.heightM)) chain(item.points)
     for (const item of areaMeasurements[pageNumber] ?? []) if (item.id !== editingId && isMeasurementVisible(item.groupId)) chain(item.points,true)
     return makeSnapIndex(segments, 'Measure')
-  }, [lengthMeasurements, runMeasurements, areaMeasurements, pageNumber, viewGroupId, viewCategoryId, hiddenGroupIds, showUngrouped, groups])
+  }, [lengthMeasurements, runMeasurements, areaMeasurements, pageNumber, viewGroupId, viewCategoryId, hiddenGroupIds, showUngrouped, groups,precisionCrosshair,selectedEditPoint])
 
   function snapForPoint(point: Point) {
     if (calibrationDragRef.current.point || lengthDragRef.current.point || runDragRef.current || areaDragRef.current || countDragRef.current) return null
@@ -1671,6 +1722,7 @@ export default function App() {
     const areaDrag=areaDragRef.current
     if (areaDrag) {const item=(areaMeasurements[pageNumber] ?? []).find(item=>item.id===areaDrag.areaId);return item?.points[areaDrag.pointIndex>0 ? areaDrag.pointIndex-1 : 1] ?? null}
     if (calibrationDragRef.current.point) { const item=pendingCalibration ?? calibrations[pageNumber];return item ? calibrationDragRef.current.point==='A' ? item.pointB : item.pointA : null }
+    if(precisionCrosshair && selectedEditPoint?.page===pageNumber){const saved=savedMeasurement(selectedEditPoint.id,pageNumber);if(saved){if('pointA' in saved.item)return selectedEditPoint.index===0 ? saved.item.pointB : saved.item.pointA;if('points' in saved.item)return saved.item.points[selectedEditPoint.index>0 ? selectedEditPoint.index-1 : 1] ?? null}}
     if (runMode) return runPoints.at(-1) ?? null
     if (areaMode) return areaPoints.at(-1) ?? null
     if (lengthMode) return lengthPoints[0] ?? null
@@ -1728,15 +1780,17 @@ export default function App() {
     update();const observer=new ResizeObserver(update);observer.observe(toolboxRef.current)
     return ()=>observer.disconnect()
   },[sidebarTab])
+  function clearPanelHold(){if(panelHoldRef.current!==null){window.clearTimeout(panelHoldRef.current);panelHoldRef.current=null}}
+  function showPanelMenu(clientX:number,clientY:number){setDescriptionOpen(false);setMeasurementMenu(null);setWorkMenu(null);setPanelMenu({x:Math.max(8,Math.min(clientX,(window.innerWidth || 1200)-180)),y:Math.max(8,Math.min(clientY,(window.innerHeight || 800)-96))})}
+  useEffect(()=>{clearPanelHold();toolboxDragRef.current=null;return()=>clearPanelHold()},[sidebarTab])
   function dockMeasurementPanel() {
-    setBoardSizeReordering(false);setBoardPickerOpen(false);setToolboxDocked(true);setPanelMenu(null);setDescriptionOpen(false);setHoverHeading(null);setReorderDescriptions(false);setMessagesHidden(true);setSnapEnabled(false);toolboxDragRef.current=null
+    clearPanelHold();setBoardSizeReordering(false);setBoardPickerOpen(false);setToolboxDocked(true);setPanelMenu(null);setDescriptionOpen(false);setHoverHeading(null);setReorderDescriptions(false);setMessagesHidden(true);setSnapEnabled(false);toolboxDragRef.current=null
     const workspace=workspaceRef.current?.getBoundingClientRect(),box=toolboxRef.current?.getBoundingClientRect()
     setToolboxPosition({x:Math.max(0,((workspace?.width ?? window.innerWidth ?? 1200)-(box?.width ?? 342))/2),y:0})
   }
   function openPanelMenu(event: React.MouseEvent<HTMLDivElement>) {
     if((event.target as Element).closest('input,textarea,[contenteditable="true"]')) return
-    event.preventDefault();event.stopPropagation();setDescriptionOpen(false);setMeasurementMenu(null);setWorkMenu(null)
-    setPanelMenu({x:Math.max(8,Math.min(event.clientX,(window.innerWidth || 1200)-180)),y:Math.max(8,Math.min(event.clientY,(window.innerHeight || 800)-96))})
+    event.preventDefault();event.stopPropagation();if(Date.now()<suppressPanelContextRef.current)return;clearPanelHold();panelHeldRef.current=true;showPanelMenu(event.clientX,event.clientY)
   }
   useEffect(()=>{
     if(!panelMenu) return
@@ -1748,21 +1802,24 @@ export default function App() {
   },[panelMenu])
   function startToolboxDrag(event: React.PointerEvent<HTMLDivElement>) {
     if(event.button!==0 || (event.target as Element).closest('button,summary,input,select,textarea,a,[contenteditable="true"],[data-no-drag]')) return
+    clearPanelHold();panelHeldRef.current=false
     const workspace=workspaceRef.current?.getBoundingClientRect(),box=toolboxRef.current?.getBoundingClientRect()
     const origin=toolboxDocked && workspace && box ? {x:box.left-workspace.left,y:box.top-workspace.top} : toolboxPosition
     if(workspace)setToolbarOrigin({x:workspace.left ?? 0,y:workspace.top ?? 0})
     setPanelMenu(null);setDescriptionOpen(false)
     toolboxDragRef.current={id:event.pointerId,x:event.clientX,y:event.clientY,origin,moved:false}
+    if(event.pointerType==='touch'){const x=event.clientX,y=event.clientY;panelHoldRef.current=window.setTimeout(()=>{panelHoldRef.current=null;if(!toolboxDragRef.current || toolboxDragRef.current.moved)return;panelHeldRef.current=true;suppressPanelContextRef.current=Date.now()+1500;showPanelMenu(x,y)},550)}
     event.currentTarget.setPointerCapture(event.pointerId);event.preventDefault()
   }
   function moveToolboxDrag(event: React.PointerEvent<HTMLDivElement>) {
     const drag=toolboxDragRef.current
-    if(!drag || drag.id!==event.pointerId) return
+    if(!drag || drag.id!==event.pointerId || panelHeldRef.current) return
     if(!drag.moved && Math.hypot(event.clientX-drag.x,event.clientY-drag.y)<4) return
-    drag.moved=true;setToolboxDocked(false)
+    clearPanelHold();drag.moved=true;setToolboxDocked(false)
     setToolboxPosition(clampToolbox({x:drag.origin.x+event.clientX-drag.x,y:drag.origin.y+event.clientY-drag.y}))
   }
   function endToolboxDrag(event: React.PointerEvent<HTMLDivElement>) {
+    clearPanelHold()
     const drag=toolboxDragRef.current
     if(!drag || drag.id!==event.pointerId) return
     toolboxDragRef.current=null
@@ -4090,7 +4147,7 @@ export default function App() {
     if (action==='delete-point') {deleteSelectedPoint({id,kind,index:measurementMenu.pointIndex ?? 0,page:pageNumber});return}
     setSelectedEditPoint(null)
     if (action === 'edit' && kind !== 'point' && !hasValidCalibration()) { setStatus('Calibrate and lock this page before editing measurement points.'); return }
-    if(action==='edit'){cancelTouchView();setPrecisionCrosshair(false)}
+    if(action==='edit'){cancelTouchView();setPrecisionCrosshair(false);if(measurementMenu?.pointIndex!==undefined)setSelectedEditPoint({id,kind,index:measurementMenu.pointIndex,page:pageNumber})}
     setReadyToolKind(null)
     setOverviewDrawing(false)
     setSnapPreview(null)
@@ -5125,7 +5182,7 @@ export default function App() {
               </svg>
             </div>
           )}
-          {pdf && touchControlsAvailable && <div className="touch-view-tools" data-stage-control><button type="button" aria-label="Precision crosshair" aria-pressed={precisionCrosshair} onClick={togglePrecisionCrosshair}><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="6" fill="none" stroke="currentColor" strokeWidth="1.8" /><path d="M12 1v7m0 8v7M1 12h7m8 0h7" stroke="currentColor" strokeWidth="1.8" /></svg>Crosshair</button>{precisionCrosshair && <span>Pan to aim · Double-tap to mark</span>}</div>}
+          {pdf && touchControlsAvailable && <div className="touch-view-tools" data-stage-control><button type="button" aria-label="Precision crosshair" aria-pressed={precisionCrosshair} onClick={togglePrecisionCrosshair}><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="6" fill="none" stroke="currentColor" strokeWidth="1.8" /><path d="M12 1v7m0 8v7M1 12h7m8 0h7" stroke="currentColor" strokeWidth="1.8" /></svg>Crosshair</button>{precisionCrosshair && <span>{selectedEditPoint ? 'Point selected · Pan to aim · Double-tap to move' : 'Pan to aim · Double-tap to mark'}</span>}</div>}
           {pdf && touchControlsAvailable && precisionCrosshair && <div className="precision-crosshair" aria-label="Drawing centre crosshair"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M32 3v22m0 14v22M3 32h22m14 0h22" className="crosshair-outline" /><path d="M32 3v22m0 14v22M3 32h22m14 0h22" className="crosshair-stroke" /><circle cx="32" cy="32" r="4" className="crosshair-dot" /></svg></div>}
           {pdf && <div className="drawing-footer" onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
             <div className={`drawing-scale-badge ${lengthCalibrationValid ? 'is-ready' : ''}`}><UiIcon name="lock" /><span>{lengthCalibrationValid ? 'Scale locked' : 'Calibration required'}</span></div>
@@ -5285,6 +5342,14 @@ export default function App() {
         {boardStep==='size' && <><div className="board-size-heading"><h3>Size (mm)</h3>{boardDraftType!=='THERMAL' && <button type="button" aria-pressed={boardSizeReordering} onClick={()=>{setBoardSizeReordering(value=>!value);setBoardPendingSize(null);setBoardPendingSpec(null)}}>{boardSizeReordering ? 'Done' : 'Reorder'}</button>}</div>{boardDraftType!=='THERMAL' && <p>{boardDraftType} · {boardDraftThickness}mm</p>}<div className="board-size-options">{(boardDraftType==='THERMAL' ? [[1200,2400]] : orderedBoardSizes()).map(([width,length],index,list)=>{const height=boardPickerHeight(),blocked=!!height && height*1000>length+0.001;return <div className="board-size-row" key={width+'x'+length}><button type="button" aria-disabled={blocked} title={blocked ? 'Board length is shorter than the wall height. Override is available.' : undefined} onClick={()=>{if(!boardSizeReordering)selectBoardSize(width,length)}}>{width} × {length}mm{blocked && <small>Wall height too high · override available</small>}</button>{boardSizeReordering && boardDraftType!=='THERMAL' && <div className="board-size-order-actions"><button type="button" aria-label={'Move '+width+' × '+length+'mm up'} disabled={index===0} onClick={()=>moveBoardSize(width+'x'+length,-1)}>↑</button><button type="button" aria-label={'Move '+width+' × '+length+'mm down'} disabled={index===list.length-1} onClick={()=>moveBoardSize(width+'x'+length,1)}>↓</button></div>}</div>})}</div></>}
         {(boardPendingSize || boardPendingSpec) && <div className="board-height-warning" role="alert"><strong>Board length is shorter than the wall height.</strong><p>{boardPendingSpec?.lengthMm ?? boardPendingSize?.[1]}mm board · {Math.round((boardPickerHeight() ?? 0)*1000)}mm wall height.</p><button type="button" onClick={()=>{if(boardPendingSpec)completeBoardSpec(boardPendingSpec,true);else if(boardPendingSize)selectBoardSize(boardPendingSize[0],boardPendingSize[1],true)}}>Override and select anyway</button><button type="button" onClick={()=>{setBoardPendingSize(null);setBoardPendingSpec(null)}}>Choose another size</button></div>}
         <div className="board-picker-footer"><button type="button" onClick={()=>applyBoardChoice(null)}>Not applicable</button><button type="button" onClick={()=>applyBoardChoice(undefined)}>Clear selection</button></div>
+      </div>}
+      {pendingImport && <div className="measurement-dialog-backdrop pdf-import-backdrop" onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();cancelPageImport()}else if(event.key==='Tab'){const nodes=Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled)'));const first=nodes[0],last=nodes.at(-1);if(event.shiftKey && document.activeElement===first){event.preventDefault();last?.focus()}else if(!event.shiftKey && document.activeElement===last){event.preventDefault();first?.focus()}}}}>
+        <section className="pdf-import-dialog" role="dialog" aria-modal="true" aria-labelledby="pdf-import-title">
+          <header><div><h2 id="pdf-import-title">Choose pages to import</h2><p>Tick the drawings you want to keep.</p></div><button type="button" autoFocus aria-label="Cancel page import" onClick={cancelPageImport}>×</button></header>
+          <div className="pdf-import-actions"><button type="button" onClick={()=>setImportSelection(pendingImport.sources.flatMap((source,index)=>defaultDrawingPages(source).map(page=>index+':'+page.page)))}>Select All</button><button type="button" onClick={()=>setImportSelection([])}>Clear All</button><strong aria-live="polite">{importSelection.length} selected</strong></div>
+          <div className="pdf-import-scroll">{pendingImport.sources.map((source,index)=><section key={index}><h3>{source.name}</h3><div className="pdf-import-grid">{defaultDrawingPages(source).map(page=>{const key=index+':'+page.page;return <label key={key} className={importSelection.includes(key) ? 'import-page-card is-selected' : 'import-page-card'}><ImportPagePreview source={source} number={page.page} /><span><input type="checkbox" aria-label={source.name+' page '+page.page} checked={importSelection.includes(key)} onChange={event=>setImportSelection(current=>event.target.checked ? [...current,key] : current.filter(item=>item!==key))} />Page {page.page}</span></label>})}</div></section>)}</div>
+          <footer><button type="button" onClick={cancelPageImport}>Cancel</button><button type="button" className="primary-button" disabled={!importSelection.length} onClick={confirmPageImport}>Import Selected Pages ({importSelection.length})</button></footer>
+        </section>
       </div>}
       {newDescriptionOpen && <div className="measurement-dialog-backdrop" onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setNewDescriptionOpen(false)}}}>
         <form className="measurement-dialog new-description-dialog" role="dialog" aria-modal="true" aria-labelledby="new-description-title" onSubmit={event=>{event.preventDefault();saveNewDescription()}}>
