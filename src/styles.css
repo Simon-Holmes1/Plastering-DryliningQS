@@ -2876,3 +2876,128 @@ canvas { box-shadow: 0 3px 24px #1b39421c; }
 .phone-layout .topbar > .brand-and-project { flex:0 0 32px; order:1; }
 .phone-layout .topbar > .file-actions { flex:0 0 auto; order:2; }
 .phone-layout .touch-view-tools { left:auto; right:8px; align-items:flex-end; flex-direction:column; max-width:min(230px,calc(100% - 16px)); }
+/* Site projects wrap the existing take-off workspace. */
+.projects-shell { height:100dvh; overflow:auto; background:#eef2f5; color:#173246; }
+.projects-banner { position:sticky; top:0; z-index:5; display:flex; align-items:center; gap:20px; padding:14px 24px; background:#192e40; color:#e2eef4; }
+.projects-banner strong { color:#36d8cf; font-size:21px; }
+.projects-banner button { margin-left:auto; }
+.projects-main { max-width:1560px; margin:auto; padding:24px; }
+.projects-shell button,.project-file-button { border:1px solid #4d7a8b; border-radius:6px; padding:9px 13px; min-height:40px; font-weight:700; color:#ddf1f4; background:#213d51; cursor:pointer; }
+.projects-shell button:hover,.project-file-button:hover { border-color:#26cfc2; }
+.projects-shell button:disabled { opacity:.5; cursor:default; }
+.projects-shell input { width:100%; min-height:42px; padding:8px; border:1px solid #5f8194; background:#102739; color:#e6f1f5; border-radius:5px; font-size:16px; }
+.projects-shell h1 { margin:0 0 8px; font-size:28px; }
+.project-page-heading,.project-section-title { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+.project-page-heading p { margin:0; }
+.project-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.project-file-button input { display:none; }
+.project-storage-note { font-size:13px; color:#496173; margin:16px 0 24px; }
+.project-error,.project-warning { padding:12px; border-radius:5px; background:#fff1dd; border:1px solid #c58230; color:#6e3c09; }
+.project-create,.house-editor { padding:20px; background:#192e40; color:#dfeaf2; border:1px solid #36ccc1; border-radius:8px; margin:18px 0; display:flex; align-items:end; flex-wrap:wrap; gap:14px; }
+.projects-shell label { display:block; font-size:13px; font-weight:700; }
+.projects-shell label input { display:block; margin-top:7px; }
+.project-create label { flex:1; min-width:200px; }
+.project-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:16px; }
+.projects-shell .project-card { padding:22px; display:flex; flex-direction:column; gap:12px; text-align:left; border-color:#36ccc1; }
+.project-card strong { font-size:21px; color:#3ce1d7; }
+.project-meta-actions { display:flex; gap:15px; justify-content:space-between; flex-wrap:wrap; margin:10px 0 20px; }
+.project-meta-actions form { display:flex; gap:7px; }
+.tender-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin:20px 0; }
+.tender-kpis article { display:flex; flex-direction:column; gap:10px; padding:18px; border:1px solid #477489; border-radius:8px; background:#192e40; color:#e4edf3; }
+.tender-kpis strong { font-size:23px; color:#3ce1d7; overflow-wrap:anywhere; }
+.tender-kpis span { font-size:13px; }
+.house-editor h3,.house-editor p { flex-basis:100%; margin:0; }
+.house-editor label { flex:1; min-width:190px; }
+.project-table-wrap { overflow:auto; border:1px solid #3e7186; border-radius:8px; background:#192e40; color:#e1edf3; }
+.project-house-table { border-collapse:collapse; width:100%; min-width:920px; }
+.project-house-table th,.project-house-table td { padding:15px 12px; text-align:left; vertical-align:top; border-bottom:1px solid #416276; font-size:13px; }
+.project-house-table thead { color:#41d7ce; background:#213c50; }
+.project-house-table small { display:block; margin-top:8px; color:#bdd0db; font-weight:400; }
+.project-house-table td:last-child { display:flex; flex-direction:column; gap:7px; }
+.projects-shell .house-open { padding:0; min-height:30px; border:0; color:#3ce1d7; font-size:18px; background:none; }
+.project-workspace-strip { flex:0 0 auto; display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:6px 10px; background:#102638; color:#d9e9ef; border-bottom:1px solid #3c6c80; z-index:60; font-size:12px; }
+.project-workspace-strip button,.contractor-section-tabs button { padding:7px 10px; min-height:36px; background:#1f4055; color:#dff3f2; border:1px solid #4f8092; border-radius:4px; font-weight:700; }
+.project-workspace-strip strong { flex:1; }
+.project-workspace-strip [role=status] { flex-basis:100%; color:#53e1cf; }
+.contractor-section-tabs { display:flex; gap:8px; margin-top:14px; }
+.contractor-section-tabs button[aria-pressed=true] { background:#17635f; border-color:#38d3c6; color:#5cf4e4; }
+@media(max-width:1000px) { .projects-main { padding:16px; } .projects-banner { padding:12px 16px; } .tender-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); } .projects-shell button,.project-file-button { min-height:44px; } .project-workspace-strip button { min-height:40px; } }
+.projects-shell .project-file-button input { display:none; }
+.projects-shell .project-file-button { display:inline-flex; align-items:center; }
+.tender-kpis { grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); }
+.material-cost-table { min-width:680px; table-layout:fixed; }
+.material-cost-table th:first-child { width:30%; }
+.material-cost-table input { display:block; width:100%; min-width:0; min-height:40px; padding:7px; background:#102739; color:#dfeef3; border:1px solid #547487; border-radius:4px; font-size:16px; }
+.material-cost-table td:last-child { color:#3ce1d7; font-weight:700; }
+@media(max-width:700px) { .tender-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+/* Cost-plus charging and the navy Projects entry pages. */
+.projects-shell { background:#142a3c; color:#e3eef5; }
+.projects-banner { background:#102536; border-bottom:1px solid #31566b; }
+.projects-shell .project-brand-home { margin:0; padding:3px 0; border:0; background:none; color:#41ddd0; font-size:24px; font-weight:800; }
+.projects-shell .project-brand-home:hover { color:#82f8ec; }
+.projects-shell h1,.projects-shell h2 { color:#dcebf4; }
+.projects-shell .project-storage-note,.projects-shell .project-calculation-note { color:#afc6d6; line-height:1.6; }
+.project-page-heading { margin-bottom:24px; }
+.project-page-heading p { color:#afc6d6; }
+.project-cards { margin-top:24px; }
+.projects-shell .project-card { min-height:170px; border-radius:13px; background:#1a3449; box-shadow:0 6px 18px #07162455; }
+.projects-shell .project-card:hover { background:#214459; transform:translateY(-2px); }
+.projects-shell .project-card small { color:#abc5d5; }
+.projects-shell .project-meta-actions { margin:0 0 16px; justify-content:flex-end; }
+.projects-shell .project-meta-actions button { font-size:12px; min-height:34px; padding:5px 9px; color:#ddc5c5; border-color:#6e5964; }
+.projects-welcome .projects-banner { display:none; }
+.projects-welcome .projects-main { max-width:1200px; text-align:center; padding-top:clamp(45px,12vh,115px); }
+.project-welcome-panel h1 { font-size:clamp(44px,5vw,66px); font-weight:800; color:#53e1d5; letter-spacing:-1.8px; margin:0 0 48px; }
+.welcome-kicker { color:#b5cfdf; font-size:16px; letter-spacing:.6px; margin:0 0 15px; }
+.welcome-actions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:24px; margin-bottom:40px; }
+.projects-shell .welcome-actions button { min-height:220px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; border:1px solid #43bcb6; border-radius:18px; padding:28px 16px; background:#1d3c52; color:#e9f7fa; box-shadow:0 9px 30px #06172488; transition:background .15s,border-color .15s,transform .15s; }
+.projects-shell .welcome-actions button:hover:not(:disabled) { background:#245269; border-color:#63efdf; transform:translateY(-4px); }
+.welcome-actions strong { font-size:22px; }
+.welcome-actions small { font-size:13px; color:#bfd3e0; font-weight:400; }
+.welcome-action-symbol { color:#48e2d2; font-size:36px; line-height:1; }
+.projects-welcome .project-storage-note { max-width:700px; margin:30px auto; font-size:12px; }
+.project-modal-backdrop { position:fixed; inset:0; z-index:300; background:#071523b8; display:grid; place-items:center; padding:16px; }
+.project-rename-dialog { width:min(420px,100%); background:#1c3549; border:1px solid #48cfc6; padding:24px; border-radius:12px; box-shadow:0 15px 50px #0008; }
+.project-rename-dialog h2 { margin:0 0 20px; color:#55ddd0; }
+.project-rename-dialog .dialog-actions { display:flex; gap:8px; margin-top:18px; }
+.charge-totals { display:flex; flex-wrap:wrap; gap:18px; margin-top:20px; padding:14px; border:1px solid #3a8b91; border-radius:6px; }
+.charge-totals span { display:flex; flex-direction:column; gap:7px; min-width:160px; }
+.charge-totals strong { color:#46e4d1; font-size:19px; }
+.charge-cost-table { min-width:1140px; }
+.charge-cost-table th:first-child { width:24%; }
+.charge-cost-table select,.contractor-work-table input { width:100%; min-width:0; padding:8px; min-height:42px; font-size:16px; color:#e2f2f5; background:#102739; border:1px solid #547487; border-radius:5px; }
+.charge-cost-table label { display:block; font-size:11px; color:#b6cddb; }
+.charge-cost-table input { margin-top:5px; }
+.contractor-work-table { min-width:920px; table-layout:fixed; }
+.contractor-work-table th:first-child { width:30%; }
+.contractor-work-table td:last-child { color:#41dacd; font-weight:700; }
+.rate-transfer-toolbar { display:flex; gap:8px; margin:14px 0; }
+.rate-transfer-toolbar button,.rate-transfer-report button { padding:8px 12px; min-height:40px; color:#dceff3; background:#21465c; border:1px solid #55949d; border-radius:5px; font-weight:700; }
+.rate-transfer-report { margin:12px 0; padding:14px; border:1px solid #b8a15a; border-radius:6px; background:#18394d; color:#e5edf0; max-height:260px; overflow:auto; }
+.rate-transfer-report strong { color:#5be8d8; }
+.rate-transfer-report li { margin:7px 0; font-size:12px; }
+.rate-transfer-dialog { width:min(680px,calc(100vw - 24px)); }
+.rate-transfer-dialog textarea { width:100%; max-width:100%; min-height:180px; background:#102536; color:#dcedf4; border:1px solid #547487; padding:12px; border-radius:5px; font-size:14px; }
+.project-house-table { min-width:1100px; }
+.project-house-table th:first-child { min-width:230px; }
+@media(max-width:1000px) { .welcome-actions { gap:16px; } .welcome-actions strong { font-size:20px; } }
+@media(max-width:700px) { .welcome-actions { grid-template-columns:1fr; } .projects-shell .welcome-actions button { min-height:140px; gap:10px; } .project-welcome-panel h1 { margin-bottom:28px; } }
+.ipad-landscape .charge-cost-table { min-width:1140px; }
+.ipad-landscape .contractor-work-table { min-width:920px; }
+.charge-cost-table select { min-width:88px; }
+.projects-shell .project-brand-home,.projects-shell .project-brand-home:hover { background:transparent; }
+.rate-transfer-dialog { background:#1c3549; color:#e1eff5; border:1px solid #43c8be; }
+.rate-transfer-dialog h2 { color:#4edfd0; }
+.rate-transfer-dialog button { padding:8px 12px; min-height:40px; color:#e2f2f5; background:#21465c; border:1px solid #55949d; border-radius:5px; font-weight:700; }
+.contractor-work-table .contractor-confirm-row td { border:0; padding-top:18px; padding-bottom:8px; }
+.contractor-work-table .contractor-confirm-row td:last-child { text-align:center; }
+.contractor-confirm-button { display:inline-block; max-width:100%; min-height:42px; padding:10px 15px; border:1px solid #43dfce; border-radius:6px; background:#146d68; color:#e4fffb; font:inherit; font-size:13px; font-weight:700; cursor:pointer; }
+.contractor-confirm-button:hover { background:#18817a; }
+.contractor-confirm-button:focus-visible { outline:2px solid #81fff0; outline-offset:3px; }
+/* Whole-project costs and consistent cost/charge/margin totals. */
+.tender-kpis { grid-template-columns:repeat(6,minmax(0,1fr)); }
+.project-house-table { min-width:1220px; }
+.welcome-action-symbol { height:44px; display:flex; align-items:center; justify-content:center; }
+.welcome-houses-icon svg { display:block; width:74px; height:44px; }
+@media(max-width:1100px) { .tender-kpis { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media(max-width:700px) { .tender-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); } }

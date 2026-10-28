@@ -43,7 +43,7 @@ const defaultBoardSizeOrder=boardSizes.map(([w,l])=>w+'x'+l)
 type QuantityPriceRow={id:string;name:string;mode:string;totalAreaM2:number|null;totalMm:number|null;count:number;wallsWithoutHeight?:number}
 type RateBook = Record<string,number>
 function roundWorkValue(value:number) {const pence=Math.round((value+Number.EPSILON)*100);return Math.floor(pence/100)+(pence%100>=50 ? 1 : 0)}
-function pounds(value:number) {return '£'+value.toLocaleString('en-GB',{maximumFractionDigits:0})}
+function pounds(value:number) {return '£'+value.toLocaleString('en-GB',{minimumFractionDigits:Number.isInteger(value) ? 0 : 2,maximumFractionDigits:2})}
 function validRateText(text:string) {return text.trim()!=='' && Number.isFinite(Number(text)) && Number(text)>=0}
 function validMaterialWasteKey(id:string) {
   if(id==='adhesive' || id==='skim')return true
@@ -268,6 +268,11 @@ function removePageRecord<T>(record: Record<number, T>, removedPage: number): Re
 }
 
 
+type CostBasis='m2'|'lm'|'item'
+type ChargeSettings={workMargins:RateBook;materialMargins:RateBook;materialBases:Record<string,CostBasis>;materialLengths:RateBook}
+const emptyChargeSettings=():ChargeSettings=>({workMargins:{},materialMargins:{},materialBases:{},materialLengths:{}})
+function combinedMargin(cost:number,charge:number,incomplete=false):number|null {return incomplete || cost<=0 ? null : (charge-cost)/cost*100}
+function chargeAmount(cost:number|null,margin:number):number|null{if(cost===null || !Number.isFinite(margin) || margin<0)return null;const raw=cost*(1+margin/100);return Number.isFinite(raw) && Number.isSafeInteger(Math.round(raw*100)) ? Math.round((raw+Number.EPSILON)*100)/100 : null}
 type TakeoffFile = {
   format: 'drylining-takeoff'
   version: 8
@@ -283,6 +288,10 @@ type TakeoffFile = {
   clearedSubcontractorRates: string[]
   subcontractorRates: RateBook
   contractorRates: RateBook
+  materialRates: RateBook
+  chargeSettings: ChargeSettings
+  pricingModel?: 2
+  pricingReviewRequired?: boolean
   boardSizeOrder: string[]
   materialWastePercent: number
   materialWasteOverrides: Record<string,number>
@@ -400,6 +409,13 @@ function readTakeoff(value: unknown): TakeoffFile {
   const savedRates=rates(value.subcontractorRates)
   const subcontractorRates={...defaults,...savedRates},contractorRates=rates(value.contractorRates)
   clearedSubcontractorRates.forEach((id:string)=>{if(savedRates[id]!==undefined)invalid();delete subcontractorRates[id]})
+  const materialRates=value.materialRates ?? {}
+  if(!object(materialRates) || Object.entries(materialRates).some(([key,rate])=>!key || !finite(rate) || (rate as number)<0))invalid()
+  const chargeSettings=value.chargeSettings ?? emptyChargeSettings()
+  if(value.pricingModel!==undefined && value.pricingModel!==2 || value.pricingReviewRequired!==undefined && typeof value.pricingReviewRequired!=='boolean')invalid()
+  if(!object(chargeSettings) || ['workMargins','materialMargins','materialBases','materialLengths'].some(key=>!object(chargeSettings[key])))invalid()
+  for(const key of ['workMargins','materialMargins','materialLengths'])if(Object.entries(chargeSettings[key]).some(([id,rate])=>!id || !finite(rate) || (rate as number)<0))invalid()
+  if(Object.entries(chargeSettings.materialBases).some(([id,basis])=>!id || !['m2','lm','item'].includes(basis as string)))invalid()
   const materialWastePercent=value.materialWastePercent ?? 10
   if(!finite(materialWastePercent) || materialWastePercent<0)invalid()
   const rawCoverage=value.materialCoverage===undefined ? {adhesive:8.5,skim:15} : value.materialCoverage
@@ -472,7 +488,7 @@ function readTakeoff(value: unknown): TakeoffFile {
   if (view.showUngrouped !== undefined && typeof view.showUngrouped !== 'boolean') invalid()
   if (view.categoryId !== undefined && (typeof view.categoryId !== 'string' || (view.categoryId !== '' && !categoryIds.has(view.categoryId)))) invalid()
   if (view.groupId !== undefined && (typeof view.groupId !== 'string' || (view.groupId !== '' && !groupIds.has(view.groupId)))) invalid()
-  return { ...value, subcontractorRates, clearedSubcontractorRates, contractorRates, boardSizeOrder, materialWastePercent, materialWasteOverrides, materialCoverage, version: 8, drawing: { ...value.drawing, additionalPdfs: value.version >= 6 ? value.drawing.additionalPdfs : [], pages: value.version >= 6 ? value.drawing.pages : undefined }, groups, nextGroupNumber, areas, nextAreaNumber, categories: [...categories.map(category=>({...category,name:category.id==='tack-timber-wall' && category.name==='Tack Timber Wall' ? 'Tack Timber Studs' : category.id==='tack-metal-wall' && category.name==='Tack Metal Wall' ? 'Tack Metal Studs' : category.name})),...initialCategories.filter(category=>!categoryIds.has(category.id)).map(category=>({...category}))], counts, nextCountNumber } as TakeoffFile
+  return { ...value, subcontractorRates, clearedSubcontractorRates, contractorRates, materialRates, chargeSettings, pricingReviewRequired:!!value.pricingReviewRequired, boardSizeOrder, materialWastePercent, materialWasteOverrides, materialCoverage, version: 8, drawing: { ...value.drawing, additionalPdfs: value.version >= 6 ? value.drawing.additionalPdfs : [], pages: value.version >= 6 ? value.drawing.pages : undefined }, groups, nextGroupNumber, areas, nextAreaNumber, categories: [...categories.map(category=>({...category,name:category.id==='tack-timber-wall' && category.name==='Tack Timber Wall' ? 'Tack Timber Studs' : category.id==='tack-metal-wall' && category.name==='Tack Metal Wall' ? 'Tack Metal Studs' : category.name})),...initialCategories.filter(category=>!categoryIds.has(category.id)).map(category=>({...category}))], counts, nextCountNumber } as TakeoffFile
 }
 
 type SnapSegment = { a: Point; b: Point }
@@ -695,7 +711,7 @@ function SummaryDrawingPreview({ pdf, number, rotation, lengths, runs, areas, co
 }
 
 
-export default function App() {
+export function TakeoffWorkspace({initialTakeoff,projectContext,onProjectSave,onLeave}:{initialTakeoff?:TakeoffFile;projectContext?:{site:string;houseType:string};onProjectSave?:(snapshot:HouseSnapshot,download:boolean)=>Promise<void>;onLeave?:(snapshot:HouseSnapshot|null)=>Promise<void>}={}) {
   useEffect(() => { document.title = 'Holmes QS' }, [])
   const [jobPanelOpen, setJobPanelOpen] = useState(false)
   const [toolboxOpen, setToolboxOpen] = useState(true)
@@ -725,6 +741,17 @@ export default function App() {
   const [contractorLoginError,setContractorLoginError]=useState('')
   const [hoveredMeasurementId,setHoveredMeasurementId]=useState<string|null>(null)
   const [contractorRates,setContractorRates]=useState<RateBook>({})
+  const [materialRates,setMaterialRates]=useState<RateBook>({})
+  const [chargeSettings,setChargeSettings]=useState<ChargeSettings>(emptyChargeSettings)
+  const [chargeDrafts,setChargeDrafts]=useState<Record<string,string>>({})
+  const [legacyPricingNotice,setLegacyPricingNotice]=useState(false)
+  const [rateTransfer,setRateTransfer]=useState<{kind:'subcontractor'|'contractor';mode:'copy'|'import';text:string}|null>(null)
+  const [rateTransferMessages,setRateTransferMessages]=useState<string[]>([])
+  const [materialRateDrafts,setMaterialRateDrafts]=useState<Record<string,string>>({})
+  const [contractorSection,setContractorSection]=useState<'work'|'materials'>('work')
+  const [projectSaving,setProjectSaving]=useState(false)
+  const [projectSaveMessage,setProjectSaveMessage]=useState('')
+  const initialLoaded=useRef(false)
   const [rateDrafts,setRateDrafts]=useState<Record<string,string>>({})
   const [boardTarget,setBoardTarget]=useState<BoardTarget | null>(null)
   const [boardStep,setBoardStep]=useState<'type'|'thickness'|'size'>('type')
@@ -857,6 +884,9 @@ export default function App() {
   })
 
   const [drawingSources, setDrawingSources] = useState<DrawingSource[]>([])
+  const ownedDrawingDocs=useRef(new Set<PdfDoc>())
+  useEffect(()=>{drawingSources.forEach(source=>ownedDrawingDocs.current.add(source.doc))},[drawingSources])
+  useEffect(()=>()=>{void Promise.allSettled([...ownedDrawingDocs.current].map(doc=>doc.destroy()));ownedDrawingDocs.current.clear()},[])
   const [drawingPages, setDrawingPages] = useState<DrawingPage[]>([])
   const [toolCalibrationNotice, setToolCalibrationNotice] = useState('')
   const [pdf, setPdf] = useState<PdfDoc | null>(null)
@@ -961,14 +991,14 @@ export default function App() {
   const hasInvalidCoverage=[...(adhesiveCoverageUsed ? [adhesiveCoverageText] : []),...(skimCoverageUsed ? [skimCoverageText] : []),...Array.from(usedInsulationThicknesses,thickness=>insulationCoverageTexts[thickness])].some(text=>text.trim()==='' || !Number.isFinite(Number(text)) || Number(text)<=0)
   const coverageValue=(text:string,fallback:number,used:boolean)=>!used && (!Number.isFinite(Number(text)) || Number(text)<=0) ? fallback : Number.isFinite(Number(text)) ? Number(text) : 0
   const materialCoverage:MaterialCoverage={adhesive:coverageValue(adhesiveCoverageText,8.5,adhesiveCoverageUsed),skim:coverageValue(skimCoverageText,15,skimCoverageUsed),insulation:Object.fromEntries(Object.entries(insulationCoverageTexts).map(([key,text])=>[key,coverageValue(text,defaultInsulationCoverage[key],usedInsulationThicknesses.has(key))]))}
-  const hasInvalidRates=Object.values(rateDrafts).some(text=>text!=='' && !validRateText(text))
+  const hasInvalidRates=[...Object.values(rateDrafts),...Object.values(materialRateDrafts),...Object.values(chargeDrafts)].some(text=>text!=='' && !validRateText(text))
 
   // View changes do not mark measurements as changed, but the view is saved too.
   const dataSignature = JSON.stringify({ job, drawingPages, calibrations, lengths: lengthMeasurements,
     runs: runMeasurements, nextLengthNumber: nextLengthNumberRef.current,
     nextRunNumber: nextRunNumberRef.current, groups, nextGroupNumber: nextGroupNumberRef.current,
     areas: areaMeasurements, nextAreaNumber: nextAreaNumberRef.current,
-    counts: countMeasurements, nextCountNumber: nextCountNumberRef.current, categories, subcontractorRates, clearedSubcontractorRates, contractorRates, boardSizeOrder, materialWastePercent, materialWasteOverrides, materialCoverage })
+    counts: countMeasurements, nextCountNumber: nextCountNumberRef.current, categories, subcontractorRates, clearedSubcontractorRates, contractorRates, materialRates, chargeSettings, pricingReviewRequired:legacyPricingNotice, boardSizeOrder, materialWastePercent, materialWasteOverrides, materialCoverage })
   const hasDraft = runMode || lengthMode || areaMode || countMode || calibrationMode || !!pendingCalibration
   const hasUnsavedChanges = (savedSignature === null
     ? !!pdf || Object.values(job).some(Boolean)
@@ -1026,7 +1056,7 @@ export default function App() {
     setWorkMenu(null)
     setToolCustomName('')
     setToolDoorHead(false);setMaterialWasteText('10');setMaterialWasteDrafts({});setInsulationCoverageTexts({'50':'15.6','65':'12','100':'11','200':'6'});setAdhesiveCoverageText('8.5');setSkimCoverageText('15')
-    setSubcontractorRates(defaultSubcontractorRates(initialCategories));setClearedSubcontractorRates([]);setContractorRates({});setRateDrafts({});setBoardSizeOrder([...defaultBoardSizeOrder]);setBoardSizeReordering(false)
+    setSubcontractorRates(defaultSubcontractorRates(initialCategories));setClearedSubcontractorRates([]);setContractorRates({});setMaterialRates({});setChargeSettings(emptyChargeSettings());setChargeDrafts({});setRateTransfer(null);setRateTransferMessages([]);setLegacyPricingNotice(false);setMaterialRateDrafts({});setContractorSection('work');setRateDrafts({});setBoardSizeOrder([...defaultBoardSizeOrder]);setBoardSizeReordering(false)
     setSummaryPresentation('detailed')
     setPointTrade('Tack');setPointMarkerKind('marker');setPointOptionsOpen(false)
     setBoardPreferences({});setBoardPickerOpen(false);setBoardTarget(null);setBoardPendingSpec(null);setBoardPendingSize(null)
@@ -1063,6 +1093,18 @@ export default function App() {
     setIsPanning(false)
   }
 
+  function buildTakeoff():TakeoffFile {
+    return {
+        format: 'drylining-takeoff', version: 8, pricingModel:2, savedAt:new Date().toISOString(),
+        drawing: { name: fileName, pdfBase64: encodePdf(pdfBytesRef.current!), additionalPdfs: drawingSources.slice(1).map((source) => ({ name: source.name, pdfBase64: encodePdf(source.bytes) })), pages: drawingPages },
+        job: { ...job }, calibrations, lengths: lengthMeasurements, runs: runMeasurements,
+        nextLengthNumber: nextLengthNumberRef.current, nextRunNumber: nextRunNumberRef.current,
+        groups, nextGroupNumber: nextGroupNumberRef.current,
+        areas: areaMeasurements, nextAreaNumber: nextAreaNumberRef.current,
+        counts: countMeasurements, nextCountNumber: nextCountNumberRef.current, categories, subcontractorRates, clearedSubcontractorRates, contractorRates, materialRates, chargeSettings, pricingReviewRequired:legacyPricingNotice, boardSizeOrder, materialWastePercent, materialWasteOverrides, materialCoverage,
+        view: { page: pageNumber, rotation, mode: viewMode, scale, pan, hiddenGroupIds, showUngrouped, categoryId: viewCategoryId, groupId: viewGroupId },
+      }
+  }
   function saveTakeoff() {
     if (!pdf || !pdfBytesRef.current || fileBusyRef.current) return
     if(hasInvalidCoverage){setStatus('Enter positive material coverage values before saving.');return}
@@ -1078,16 +1120,7 @@ export default function App() {
     }
     try {
       const savedAt = new Date().toISOString()
-      const takeoff: TakeoffFile = {
-        format: 'drylining-takeoff', version: 8, savedAt,
-        drawing: { name: fileName, pdfBase64: encodePdf(pdfBytesRef.current), additionalPdfs: drawingSources.slice(1).map((source) => ({ name: source.name, pdfBase64: encodePdf(source.bytes) })), pages: drawingPages },
-        job: { ...job }, calibrations, lengths: lengthMeasurements, runs: runMeasurements,
-        nextLengthNumber: nextLengthNumberRef.current, nextRunNumber: nextRunNumberRef.current,
-        groups, nextGroupNumber: nextGroupNumberRef.current,
-        areas: areaMeasurements, nextAreaNumber: nextAreaNumberRef.current,
-        counts: countMeasurements, nextCountNumber: nextCountNumberRef.current, categories, subcontractorRates, clearedSubcontractorRates, contractorRates, boardSizeOrder, materialWastePercent, materialWasteOverrides, materialCoverage,
-        view: { page: pageNumber, rotation, mode: viewMode, scale, pan, hiddenGroupIds, showUngrouped, categoryId: viewCategoryId, groupId: viewGroupId },
-      }
+      const takeoff = buildTakeoff()
       const blob = new Blob([JSON.stringify(takeoff)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
@@ -1141,13 +1174,13 @@ export default function App() {
       setDrawingSources(loadedSources)
       setDrawingPages(restoredPages)
       setFileName(saved.drawing.name)
-      setJob(saved.job)
+      setJob(projectContext ? {...saved.job,site:projectContext.site,houseType:projectContext.houseType} : saved.job)
       setCalibrations(saved.calibrations)
       setLengthMeasurements(saved.lengths)
       setRunMeasurements(saved.runs)
       setAreaMeasurements(saved.areas)
       setCategories(saved.categories)
-      setSubcontractorRates(saved.subcontractorRates);setClearedSubcontractorRates(saved.clearedSubcontractorRates);setContractorRates(saved.contractorRates);setBoardSizeOrder(saved.boardSizeOrder);setMaterialWasteText(String(saved.materialWastePercent));setMaterialWasteDrafts(Object.fromEntries(Object.entries(saved.materialWasteOverrides).map(([key,value])=>[key,String(value)])));setInsulationCoverageTexts(Object.fromEntries(Object.entries(saved.materialCoverage.insulation).map(([key,value])=>[key,String(value)])));setAdhesiveCoverageText(String(saved.materialCoverage.adhesive));setSkimCoverageText(String(saved.materialCoverage.skim))
+      setSubcontractorRates(saved.subcontractorRates);setClearedSubcontractorRates(saved.clearedSubcontractorRates);setContractorRates(saved.contractorRates);setMaterialRates(saved.materialRates);setChargeSettings(saved.chargeSettings);setLegacyPricingNotice(!!saved.pricingReviewRequired || saved.pricingModel!==2 && Object.keys(saved.contractorRates).length>0);setBoardSizeOrder(saved.boardSizeOrder);setMaterialWasteText(String(saved.materialWastePercent));setMaterialWasteDrafts(Object.fromEntries(Object.entries(saved.materialWasteOverrides).map(([key,value])=>[key,String(value)])));setInsulationCoverageTexts(Object.fromEntries(Object.entries(saved.materialCoverage.insulation).map(([key,value])=>[key,String(value)])));setAdhesiveCoverageText(String(saved.materialCoverage.adhesive));setSkimCoverageText(String(saved.materialCoverage.skim))
       setCountMeasurements(saved.counts)
       nextCountNumberRef.current = saved.nextCountNumber
       setHiddenGroupIds([])
@@ -1174,7 +1207,7 @@ export default function App() {
         lengths: saved.lengths, runs: saved.runs, nextLengthNumber: saved.nextLengthNumber,
         nextRunNumber: saved.nextRunNumber, groups: saved.groups, nextGroupNumber: saved.nextGroupNumber,
         areas: saved.areas, nextAreaNumber: saved.nextAreaNumber,
-        counts: saved.counts, nextCountNumber: saved.nextCountNumber, categories: saved.categories, subcontractorRates:saved.subcontractorRates, clearedSubcontractorRates:saved.clearedSubcontractorRates, contractorRates:saved.contractorRates, boardSizeOrder:saved.boardSizeOrder, materialWastePercent:saved.materialWastePercent, materialWasteOverrides:saved.materialWasteOverrides, materialCoverage:saved.materialCoverage }))
+        counts: saved.counts, nextCountNumber: saved.nextCountNumber, categories: saved.categories, subcontractorRates:saved.subcontractorRates, clearedSubcontractorRates:saved.clearedSubcontractorRates, contractorRates:saved.contractorRates, materialRates:saved.materialRates, chargeSettings:saved.chargeSettings, pricingReviewRequired:!!saved.pricingReviewRequired, boardSizeOrder:saved.boardSizeOrder, materialWastePercent:saved.materialWastePercent, materialWasteOverrides:saved.materialWasteOverrides, materialCoverage:saved.materialCoverage }))
       setLastSavedAt(saved.savedAt)
       setStatus(`Opened ${file.name}. Your drawing, job details and measurements are restored.`)
       loadedPdf = null // Ownership has passed to the viewer.
@@ -1206,7 +1239,7 @@ export default function App() {
       resetDrafts()
       setPdf(loadedPdf)
       setFileName(sources[0].name)
-      setJob({ ...emptyJob })
+      setJob(projectContext ? {...emptyJob,site:projectContext.site,houseType:projectContext.houseType} : {...emptyJob})
       setAreaMeasurements({})
       setCountMeasurements({})
       nextCountNumberRef.current = 1
@@ -1284,6 +1317,7 @@ export default function App() {
     } catch(error){console.error(error);setStatus('Could not open that PDF. Your current drawings and measurements have been kept.')}
     finally{if(additions.length)void Promise.all(additions.map(source=>source.doc.destroy())).catch(()=>{});if(!awaitingSelection){fileBusyRef.current=false;setIsFileBusy(false)}}
   }
+  useEffect(()=>{if(initialTakeoff && !initialLoaded.current){initialLoaded.current=true;void openTakeoff({name:'House type.takeoff.json',text:async()=>JSON.stringify(initialTakeoff)} as File)}},[])
   async function openPdf(file:File){await preparePdfImport([file],false)}
   async function importDrawingPages(files:File[]){await preparePdfImport(files,true)}
   useEffect(()=>()=>{const pending=pendingImportRef.current;pendingImportRef.current=null;if(pending)void Promise.all(pending.sources.map(source=>source.doc.destroy())).catch(()=>{})},[])
@@ -3653,7 +3687,7 @@ export default function App() {
   }
   function priceSubtotals(rows:Array<{id:string;mode:string;totalAreaM2:number|null;count:number}>,scope:string) {
     const sections=[{name:'Tack & Ins Total',headings:['Tack','Insulation']},{name:'Dab Total',headings:['Dab']},{name:'Skim Total',headings:['Skim']}]
-    return <div className="trade-subtotals" aria-label={'Trade subtotals for '+scope}>{sections.map(section=>{const matching=rows.filter(row=>section.headings.includes(workHeading(row.id))),prices=matching.map(workPrice),missing=prices.filter(price=>price.value===null).length,total=prices.reduce((sum,price)=>sum+(price.value ?? 0),0);return <div className="trade-subtotal" key={section.name}><span>{section.name}</span><strong>{pounds(total)}</strong>{missing>0 && <small>{missing} awaiting pricing / quantities</small>}</div>})}</div>
+    return <div className="trade-subtotals" aria-label={'Trade subtotals for '+scope}>{sections.map(section=>{const matching=rows.filter(row=>section.headings.includes(workHeading(row.id))),prices=matching.map(row=>workPrice(row)),missing=prices.filter(price=>price.value===null).length,total=prices.reduce((sum,price)=>Math.round((sum+(price.value ?? 0))*100)/100,0);return <div className="trade-subtotal" key={section.name}><span>{section.name}</span><strong>{pounds(total)}</strong>{missing>0 && <small>{missing} awaiting pricing / quantities</small>}</div>})}</div>
   }
   function finalMaterialQuantity(exact:number|null,id?:string) {
     if(exact===null || !(id && materialWasteDrafts[id]!==undefined ? validWaste(materialWasteDrafts[id]) : validWaste(materialWasteText)))return null
@@ -3669,7 +3703,8 @@ export default function App() {
     update();window.addEventListener('resize',update);window.visualViewport?.addEventListener('resize',update)
     return ()=>{window.removeEventListener('resize',update);window.visualViewport?.removeEventListener('resize',update)}
   },[])
-  function calculateMaterials(trade:MaterialTrade=materialTrade,scopePage:number|undefined=materialScopePage) {
+  function calculateMaterials(trade:MaterialTrade=materialTrade,scopePage:number|undefined=materialScopePage,wholeHouse=false) {
+    if(wholeHouse)scopePage=undefined
     const scopedMeasurements=allMeasurements.filter(item=>scopePage===undefined || item.page===scopePage)
     const scopedGroups=groups.map(group=>summarizeWork(group,scopedMeasurements.filter(item=>item.groupId===group.id))).filter(group=>group.members.length)
     const scopedCategories=summarizeCategories(scopedGroups,scopePage).filter(category=>category.mode!=='count' && category.sourceGroups.some(group=>group.members.some(item=>category.mode!=='derived' || item.kind==='area' || item.heightM!==undefined)))
@@ -3717,16 +3752,18 @@ export default function App() {
     if(text==='')setter(current=>{const next={...current};delete next[id];return next})
     else if(validRateText(text))setter(current=>({...current,[id]:Number(text)}))
   }
-  function workPrice(row:{id:string;mode:string;totalAreaM2:number|null;count:number}) {
+  function workPrice(row:{id:string;mode:string;totalAreaM2:number|null;count:number;wallsWithoutHeight?:number},kind:'subcontractor'|'contractor'='subcontractor'):{value:number|null;note:string} {
+    if(kind==='contractor')return contractorWorkPrice(row)
     const draft=rateDrafts['subcontractor:'+row.id]
     if(draft!==undefined && draft!=='' && !validRateText(draft))return {value:null,note:'Correct rate'}
     const rate=subcontractorRates[row.id]
+    if(row.wallsWithoutHeight)return {value:null,note:'Enter missing wall heights'}
     if(rate===undefined)return {value:null,note:'Rate not set'}
     const quantity=row.mode==='count' ? row.count : row.totalAreaM2
     if(quantity===null)return {value:null,note:'Check calibration / heights'}
     const raw=quantity*rate
     if(!Number.isFinite(raw) || !Number.isSafeInteger(Math.round(raw*100)))return {value:null,note:'Value too large'}
-    return {value:roundWorkValue(raw),note:quantity.toFixed(row.mode==='count' ? 0 : 2)+(row.mode==='count' ? ' items' : ' m²')+' × £'+rate.toLocaleString('en-GB',{maximumFractionDigits:6})+(row.mode==='count' ? ' per item' : '/m²')}
+    return {value:row.mode==='count' ? Math.round((raw+Number.EPSILON)*100)/100 : roundWorkValue(raw),note:quantity.toFixed(row.mode==='count' ? 0 : 2)+(row.mode==='count' ? ' items' : ' m²')+' × £'+rate.toLocaleString('en-GB',{maximumFractionDigits:6})+(row.mode==='count' ? ' per item' : '/m²')}
   }
   function workPriceLabel(row:{id:string;name:string;mode:string;totalAreaM2:number|null;count:number}) {
     const price=workPrice(row)
@@ -3738,7 +3775,7 @@ export default function App() {
     return <label className="rate-table-field"><span>{category.mode==='count' ? '£ per item' : '£ per m²'}</span><input type="number" min="0" step="any" inputMode="decimal" placeholder="Enter rate" value={text} aria-label={(kind==='subcontractor' ? 'Subcontractor' : 'Contractor')+' rate for '+category.name} aria-invalid={invalid} onChange={event=>setWorkRate(kind,category.id,event.target.value)} />{invalid && <small role="alert">Enter zero or a positive rate, or clear the box.</small>}</label>
   }
   function ratesPanel(kind:'subcontractor'|'contractor') {
-    return <div hidden={sidebarTab!==(kind==='subcontractor' ? 'rates' : 'contractor-rates')} className="rates-panel"><h2>{kind==='subcontractor' ? 'Subcontractor Rates' : 'Contractor Rates'}</h2><p className="length-note">{kind==='subcontractor' ? 'Enter rates in the table. These are used in Plot Summary.' : 'Reference rates, saved separately. These do not change Plot Summary pricing.'}</p><p className="length-note">{measuredCategorySummaries.length} measured categories · all drawings</p></div>
+    return <div hidden={sidebarTab!==(kind==='subcontractor' ? 'rates' : 'contractor-rates')} className="rates-panel"><h2>{kind==='subcontractor' ? 'Subcontractor Rates' : 'Contractor Rates'}</h2><p className="length-note">{kind==='subcontractor' ? 'Enter rates in the table. These are used in Plot Summary.' : 'Client charges use subcontractor and material costs plus Margin %. Plot Summary keeps its subcontractor breakdown.'}</p><p className="length-note">{measuredCategorySummaries.length} measured categories · all drawings</p></div>
   }
   function quantityCells(row:QuantityPriceRow) {
     return <><td>{row.mode==='count' ? '—' : row.totalAreaM2===null ? 'Check quantities' : row.totalAreaM2.toFixed(2)}</td><td>{row.mode==='count' || row.mode==='derived' ? '—' : row.totalMm===null ? 'Check calibration' : (row.totalMm/1000).toFixed(2)}</td><td>{row.mode==='count' || row.count>0 ? row.count : '—'}</td></>
@@ -3765,7 +3802,7 @@ export default function App() {
   }
   function orderedSummaryRows<T extends QuantityPriceRow>(rows:T[]):T[] {return [...rows].sort((a,b)=>summaryRank(a)-summaryRank(b) || a.name.localeCompare(b.name,'en-GB',{numeric:true,sensitivity:'base'}) || a.id.localeCompare(b.id))}
   function summaryTotals(rows:QuantityPriceRow[],scope:string) {
-    const prices=rows.map(workPrice),missing=prices.filter(price=>price.value===null).length,total=prices.reduce((sum,price)=>sum+(price.value ?? 0),0)
+    const prices=rows.map(row=>workPrice(row)),missing=prices.filter(price=>price.value===null).length,total=prices.reduce((sum,price)=>Math.round((sum+(price.value ?? 0))*100)/100,0)
     return <div className="tabular-summary-totals" aria-label={'Subcontractor totals for '+scope}>{priceSubtotals(rows,scope)}<div className="plot-price-total"><span>{missing ? 'Priced subcontractor subtotal' : scope==='whole plot' ? 'Plot subcontractor total' : 'Drawing subcontractor total'}</span><strong>{pounds(total)}</strong>{missing>0 && <p>{missing} work items awaiting rates or valid quantities.</p>}</div></div>
   }
   function loginContractor() {
@@ -3773,11 +3810,65 @@ export default function App() {
     else {setContractorLoginError('ID or password is incorrect.');setContractorPassword('')}
   }
   function lockContractorRates() {setContractorUnlocked(false);setContractorLoginId('');setContractorPassword('');setContractorLoginError('')}
+  function setMaterialRate(id:string,text:string){setMaterialRateDrafts(current=>({...current,[id]:text}));setMaterialRates(current=>{const next={...current};if(text==='')delete next[id];else if(validRateText(text))next[id]=Number(text);return next})}
+  function setChargeSetting(section:'workMargins'|'materialMargins'|'materialLengths',id:string,text:string){const key=section+':'+id;setChargeDrafts(current=>({...current,[key]:text}));setChargeSettings(current=>{const book={...current[section]};if(text==='')delete book[id];else if(validRateText(text))book[id]=Number(text);return {...current,[section]:book}})}
+  function setMaterialBasis(id:string,basis:CostBasis){setChargeSettings(current=>({...current,materialBases:{...current.materialBases,[id]:basis}}));if(basis!=='lm')setChargeDrafts(current=>{const next={...current};delete next['materialLengths:'+id];return next})}
+  function marginField(section:'workMargins'|'materialMargins',id:string,name:string){const text=chargeDrafts[section+':'+id] ?? String(chargeSettings[section][id] ?? 0);return <input type="number" min="0" step="any" inputMode="decimal" aria-label={name+' Margin %'} value={text} aria-invalid={text!=='' && !validRateText(text)} onChange={event=>setChargeSetting(section,id,event.target.value)} />}
+  function contractorWorkPrice(row:{id:string;mode:string;totalAreaM2:number|null;count:number;wallsWithoutHeight?:number}):{value:number|null;note:string}{const cost=workPrice(row),draft=chargeDrafts['workMargins:'+row.id],margin=chargeSettings.workMargins[row.id] ?? 0;const value=draft!==undefined && draft!=='' && !validRateText(draft) ? null : chargeAmount(cost.value,margin);return {value,note:cost.value===null ? cost.note : value===null ? 'Check margin / value' : 'Subcontractor cost + '+margin+'%'}}
+  function wholeHouseMaterialCosts(){const quantities=calculateMaterials('all',undefined,true);const rows=[...quantities.boards,...quantities.rolls,...quantities.bags].map(row=>{
+    const rate=materialRates[row.id],draft=materialRateDrafts[row.id],basis=chargeSettings.materialBases[row.id] ?? 'm2',orderedArea=row.final===null ? null : row.final*row.coverage
+    const length=chargeSettings.materialLengths[row.id],lengthDraft=chargeDrafts['materialLengths:'+row.id],lengthValid=length!==undefined && length>0 && !(lengthDraft!==undefined && lengthDraft!=='' && !validRateText(lengthDraft))
+    const pricingQuantity=basis==='item' ? row.final : basis==='lm' ? lengthValid ? length : null : orderedArea
+    const raw=pricingQuantity===null || row.incomplete || row.final===null || rate===undefined || draft!==undefined && draft!=='' && !validRateText(draft) ? null : pricingQuantity*rate
+    const cost=raw!==null && Number.isFinite(raw) && Number.isSafeInteger(Math.round(raw*100)) ? Math.round((raw+Number.EPSILON)*100)/100 : null
+    const margin=chargeSettings.materialMargins[row.id] ?? 0,marginDraft=chargeDrafts['materialMargins:'+row.id],charge=marginDraft!==undefined && marginDraft!=='' && !validRateText(marginDraft) ? null : chargeAmount(cost,margin)
+    return {...row,rate,basis,pricingQuantity,orderedArea,cost,margin,charge}
+   });return {rows,issues:quantities.issues,total:rows.reduce((sum,row)=>Math.round((sum+(row.cost ?? 0))*100)/100,0),totalCharge:rows.reduce((sum,row)=>Math.round((sum+(row.charge ?? 0))*100)/100,0),missing:quantities.issues.length+rows.filter(row=>row.cost===null || row.charge===null).length}}
+  function materialCostEditor(){const costs=wholeHouseMaterialCosts();return <article className="material-order-card"><h3>Material Costs · complete house</h3><p>Choose £/m², £/LM or £/item. Item costs use final whole boards, rolls or bags. For LM, enter the ordered length including waste; area is not converted to length.</p>{costs.issues.length>0 && <p className="quantity-table-warning">{costs.issues.length} material quantities need checking in Materials.</p>}<div className="material-table-wrap"><table className="quantity-table material-cost-table charge-cost-table" aria-label="Material costs"><thead><tr><th>Specification</th><th>Final order</th><th>Cost Basis</th><th>Pricing Quantity</th><th>Cost Rate</th><th>Total Cost</th><th>Margin %</th><th>Total Charge</th></tr></thead><tbody>{costs.rows.map(row=><tr key={row.id}><th>{row.label}</th><td>{row.final===null ? 'Check quantities' : row.final+' '+row.unit}</td><td><select aria-label={'Cost basis for '+row.label} value={row.basis} onChange={event=>setMaterialBasis(row.id,event.target.value as CostBasis)}><option value="m2">£/m²</option><option value="lm">£/LM</option><option value="item">£/item</option></select></td><td>{row.basis==='lm' ? <label>Ordered LM incl. waste<input type="number" min="0.001" step="any" inputMode="decimal" aria-label={'Ordered LM for '+row.label} value={chargeDrafts['materialLengths:'+row.id] ?? (chargeSettings.materialLengths[row.id]===undefined ? '' : String(chargeSettings.materialLengths[row.id]))} onChange={event=>setChargeSetting('materialLengths',row.id,event.target.value)} />{row.pricingQuantity===null && <small>Enter ordered LM</small>}</label> : row.pricingQuantity===null ? '—' : row.pricingQuantity.toFixed(2)+(row.basis==='m2' ? ' m²' : ' items')}</td><td><label>{row.basis==='m2' ? '£/m²' : row.basis==='lm' ? '£/LM' : '£/item'}<input type="number" min="0" step="any" inputMode="decimal" aria-label={'Material cost rate for '+row.label} value={materialRateDrafts[row.id] ?? (row.rate===undefined ? '' : String(row.rate))} aria-invalid={materialRateDrafts[row.id]!==undefined && materialRateDrafts[row.id]!=='' && !validRateText(materialRateDrafts[row.id])} onChange={event=>setMaterialRate(row.id,event.target.value)} /></label></td><td>{row.cost===null ? 'Not priced' : pounds(row.cost)}</td><td>{marginField('materialMargins',row.id,row.label)}</td><td>{row.charge===null ? 'Not priced' : pounds(row.charge)}</td></tr>)}</tbody></table></div>{!costs.rows.length && <p>Choose material specifications on your measurements first.</p>}<div className="charge-totals" aria-label="Material Costs totals"><span>Total Cost <strong>{pounds(costs.total)}</strong></span><span>Total Charge <strong>{pounds(costs.totalCharge)}</strong></span><span>Combined Margin % <strong>{costs.missing ? 'Awaiting pricing' : combinedMargin(costs.total,costs.totalCharge)===null ? '—' : combinedMargin(costs.total,costs.totalCharge)!.toFixed(2)+'%'}</strong></span></div>{costs.missing>0 && <p className="quantity-table-warning">Complete missing specifications, quantities, rates and margins before treating these subtotals as final.</p>}</article>}
+  function ratePageTotals(kind:'subcontractor'|'contractor') {
+    const rows=measuredCategorySummaries.map(row=>({cost:workPrice(row),charge:contractorWorkPrice(row)})),cost=rows.reduce((sum,row)=>moneyAmount(sum+(row.cost.value ?? 0)),0),charge=rows.reduce((sum,row)=>moneyAmount(sum+(row.charge.value ?? 0)),0)
+    const missing=rows.some(row=>row.cost.value===null || kind==='contractor' && row.charge.value===null),margin=combinedMargin(cost,charge,missing)
+    return <><div className="charge-totals" aria-label={kind==='subcontractor' ? 'Subcontractor Rates totals' : 'Contractor Work Rates totals'}><span>{missing ? 'Priced cost subtotal' : kind==='subcontractor' ? 'Total Cost Subcontractor' : 'Total Cost'}<strong>{pounds(cost)}</strong></span>{kind==='contractor' && <><span>{missing ? 'Priced charge subtotal' : 'Total Charge'}<strong>{pounds(charge)}</strong></span><span>Combined Margin %<strong>{missing ? 'Awaiting pricing' : margin===null ? '—' : margin.toFixed(2)+'%'}</strong></span></>}</div>{missing && <p className="quantity-table-warning">Some work has missing rates, quantities or percentages. Figures above are priced subtotals.</p>}</>
+  }
+  function contractorWorkEditor(){return <article className="material-order-card"><h3>Work Rates</h3><p>Costs are linked to Subcontractor Rates. Total Charge = Total Cost + the entered percentage.</p><div className="material-table-wrap"><table className="quantity-table contractor-work-table" aria-label="Contractor Rates table"><thead><tr><th>Work description</th><th>Quantity</th><th>Cost Rate</th><th>Total Cost</th><th>Margin %</th><th>Total Charge</th></tr></thead><tbody>{measuredCategorySummaries.map(row=>{const cost=workPrice(row),charge=contractorWorkPrice(row);return <tr key={row.id}><th>{quantityName(row)}</th><td>{row.mode==='count' ? row.count+' items' : row.totalAreaM2===null ? 'Check quantities' : row.totalAreaM2.toFixed(2)+' m²'}</td><td>{subcontractorRates[row.id]===undefined ? 'Not set' : '£'+subcontractorRates[row.id].toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:6})+(row.mode==='count' ? ' / item' : ' / m²')}</td><td>{cost.value===null ? cost.note : pounds(cost.value)}</td><td>{marginField('workMargins',row.id,row.name)}</td><td>{charge.value===null ? charge.note : pounds(charge.value)}</td></tr>})}</tbody>{legacyPricingNotice && <tfoot><tr className="contractor-confirm-row"><td colSpan={4} /><td colSpan={2}><button type="button" className="contractor-confirm-button" onClick={()=>setLegacyPricingNotice(false)}>Confirm cost + margin pricing</button></td></tr></tfoot>}</table></div>{!measuredCategorySummaries.length && <p>Measure some work first.</p>}{ratePageTotals('contractor')}</article>}
+  function captureHouseSnapshot():HouseSnapshot|null {
+    if(!pdf)return null
+    if(fileBusyRef.current || hasDraft || hasInvalidHeight || hasInvalidRates || hasInvalidWaste || hasInvalidCoverage){setProjectSaveMessage('Finish the current measurement and correct any invalid heights, rates, waste or coverage before saving the house type.');return null}
+    const materials=wholeHouseMaterialCosts(),rows=measuredCategorySummaries
+    const contractor=rows.map(row=>workPrice(row,'contractor')),subcontractor=rows.map(row=>workPrice(row))
+    const ungrouped=allMeasurements.filter(item=>!item.groupId && !item.categoryId).length
+    return {takeoff:buildTakeoff(),pricing:{pricingModel:2,workCharge:contractor.reduce((sum,row)=>Math.round((sum+(row.value ?? 0))*100)/100,0),materialCharge:materials.totalCharge,contractor:moneyAmount(contractor.reduce((sum,row)=>Math.round((sum+(row.value ?? 0))*100)/100,0)+materials.totalCharge),subcontractor:subcontractor.reduce((sum,row)=>Math.round((sum+(row.value ?? 0))*100)/100,0),materials:materials.total,contractorMissing:contractor.filter(row=>row.value===null).length+ungrouped+(legacyPricingNotice ? 1 : 0),subcontractorMissing:subcontractor.filter(row=>row.value===null).length+ungrouped,materialMissing:materials.missing,measured:allMeasurements.length>0,calculatedAt:new Date().toISOString()}}
+  }
+  async function saveHouseToProject(leave=false,download=false){if(projectSaving || fileBusyRef.current)return;let snapshot:HouseSnapshot|null;try{snapshot=captureHouseSnapshot()}catch(error){setProjectSaveMessage(error instanceof Error ? error.message : 'Check pricing values before saving.');return}if(pdf && !snapshot)return;if(!snapshot && !leave){setProjectSaveMessage('Import a drawing and measure this house type first.');return}setProjectSaving(true);setProjectSaveMessage('');try{if(leave)await onLeave?.(snapshot);else if(snapshot)await onProjectSave?.(snapshot,download);if(snapshot){setSavedSignature(dataSignature);setLastSavedAt(new Date().toISOString())}setProjectSaveMessage(download ? 'Project backup downloaded.' : 'House type saved to project.')}catch(error){setProjectSaveMessage(error instanceof Error ? error.message : 'Project could not be saved. Your work is still open; download a backup.')}finally{setProjectSaving(false)}}
+  function rateTemplate(kind:'subcontractor'|'contractor') {return {format:'holmes-qs-rates',version:1,kind,work:measuredCategorySummaries.map(row=>({name:row.name,id:row.id,mode:row.mode,rate:kind==='subcontractor' ? subcontractorRates[row.id] ?? null : undefined,margin:kind==='contractor' ? chargeSettings.workMargins[row.id] ?? 0 : undefined})),materials:kind==='contractor' ? wholeHouseMaterialCosts().rows.map(row=>({id:row.id,name:row.label,rate:row.rate ?? null,basis:row.basis,margin:row.margin})) : []}}
+  async function copyRateTemplate(kind:'subcontractor'|'contractor'){if(kind==='contractor' && legacyPricingNotice){setRateTransferMessages(['Review and confirm cost + margin pricing before copying contractor settings.']);return}if(hasInvalidRates){setRateTransferMessages(['Correct invalid rates, lengths or percentages before copying.']);return}const text=JSON.stringify(rateTemplate(kind),null,2);try{if(!navigator.clipboard?.writeText)throw Error();await navigator.clipboard.writeText(text);setRateTransferMessages([kind==='contractor' ? 'Copied work percentages and material rates, bases and percentages. Subcontractor cost rates remain linked to the destination house type.' : 'Copied all measured subcontractor rates.'])}catch{setRateTransfer({kind,mode:'copy',text});setRateTransferMessages(['Select and copy the rates below, then use Import Rates in another house type.'])}}
+  function importRateTemplate(){if(!rateTransfer || rateTransfer.mode!=='import')return;try{
+    const raw=JSON.parse(rateTransfer.text);if(!raw || raw.format!=='holmes-qs-rates' || raw.version!==1 || raw.kind!==rateTransfer.kind || !Array.isArray(raw.work) || !Array.isArray(raw.materials) || raw.work.length+raw.materials.length>5000)throw Error('Paste a matching '+rateTransfer.kind+' rates set copied from Holmes QS.')
+    const warnings:string[]=[],matchedWork=new Set<string>(),matchedMaterials=new Set<string>(),normal=(name:string)=>name.trim().replace(/\s+/g,' ').toLocaleLowerCase('en-GB'),numeric=(value:any)=>typeof value==='number' && Number.isFinite(value) && value>=0
+    let imported=0;const counts=new Map<string,number>();for(const entry of raw.work){if(entry && typeof entry.name==='string'){const key=normal(entry.name)+'|'+entry.mode;counts.set(key,(counts.get(key) ?? 0)+1)}}
+    for(const entry of raw.work){if(!entry || typeof entry.name!=='string' || !['count','measure','derived'].includes(entry.mode)){warnings.push('Skipped an invalid work-rate entry.');continue}const candidates=measuredCategorySummaries.filter(row=>normal(row.name)===normal(entry.name) && row.mode===entry.mode),key=normal(entry.name)+'|'+entry.mode
+      if(candidates.length!==1 || counts.get(key)!==1){warnings.push(entry.name+': no unique matching measured work / measurement type; skipped.');continue}const row=candidates[0]
+      if(rateTransfer.kind==='subcontractor'){if(entry.rate===null){warnings.push(entry.name+': no cost rate in the copied set; existing rate kept.');matchedWork.add(row.id);continue}if(!numeric(entry.rate)){warnings.push(entry.name+': invalid cost rate; skipped.');continue}setWorkRate('subcontractor',row.id,entry.rate===null ? '' : String(entry.rate))}
+      else {if(!numeric(entry.margin)){warnings.push(entry.name+': invalid Margin %; skipped.');continue}setChargeSetting('workMargins',row.id,String(entry.margin))}
+      matchedWork.add(row.id);imported++
+    }
+    if(rateTransfer.kind==='contractor'){const targets=wholeHouseMaterialCosts().rows,duplicates=new Map<string,number>();for(const entry of raw.materials)if(entry && typeof entry.id==='string')duplicates.set(entry.id,(duplicates.get(entry.id) ?? 0)+1)
+      for(const entry of raw.materials){const row=targets.find(row=>row.id===entry?.id);if(!row || duplicates.get(entry.id)!==1){warnings.push((entry?.name || entry?.id || 'Material')+': specification not selected in this house type, or duplicated; skipped.');continue}
+        if(entry.rate===null){warnings.push(row.label+': no cost rate in the copied set; existing material settings kept.');matchedMaterials.add(row.id);continue}if(!numeric(entry.rate) || !numeric(entry.margin) || !['m2','lm','item'].includes(entry.basis)){warnings.push(row.label+': invalid rate, cost basis or Margin %; skipped.');continue}
+        setMaterialRate(row.id,entry.rate===null ? '' : String(entry.rate));setChargeSetting('materialMargins',row.id,String(entry.margin));setMaterialBasis(row.id,entry.basis);matchedMaterials.add(row.id);imported++
+        if(entry.basis==='lm' && !(chargeSettings.materialLengths[row.id]>0))warnings.push(row.label+': enter this house type’s ordered LM, including waste. Quantities are not copied.')
+      }
+      for(const row of targets)if(!matchedMaterials.has(row.id))warnings.push(row.label+': no imported material match; existing settings kept.')
+    }
+    for(const row of measuredCategorySummaries)if(!matchedWork.has(row.id))warnings.push(row.name+': no imported work match; existing settings kept.')
+    setRateTransferMessages(['Imported '+imported+' matching entries.',...warnings]);setRateTransfer(null)
+   }catch(error){setRateTransferMessages([error instanceof Error ? error.message : 'Could not read these rates. No changes made.'])}}
+  function rateTransferToolbar(kind:'subcontractor'|'contractor'){return <><div className="rate-transfer-toolbar"><button type="button" onClick={()=>void copyRateTemplate(kind)}>Copy Rates</button><button type="button" onClick={()=>{setRateTransfer({kind,mode:'import',text:''});setRateTransferMessages([])}}>Import Rates</button></div>{rateTransferMessages.length>0 && <div className="rate-transfer-report" role="status"><strong>{rateTransferMessages[0]}</strong>{rateTransferMessages.length>1 && <><p>Check these unmatched or incomplete entries:</p><ul>{rateTransferMessages.slice(1).map((message,index)=><li key={index}>{message}</li>)}</ul></>}<button type="button" onClick={()=>setRateTransferMessages([])}>Dismiss</button></div>}</>}
   function ratesWorkspace(kind:'subcontractor'|'contractor') {
     if(kind==='contractor' && !contractorUnlocked)return <section className="summary-gallery rates-workspace" aria-label="Contractor Rates login"><article className="material-order-card contractor-login-card"><h2>Contractor Rates</h2><form onSubmit={event=>{event.preventDefault();loginContractor()}}><label>ID<input autoComplete="username" aria-label="Contractor login ID" value={contractorLoginId} onChange={event=>setContractorLoginId(event.target.value)} /></label><label>Password<input type="password" autoComplete="current-password" aria-label="Contractor login password" value={contractorPassword} onChange={event=>setContractorPassword(event.target.value)} /></label>{contractorLoginError && <p role="alert">{contractorLoginError}</p>}<button type="submit">Log in</button></form></article></section>
 
     const label=kind==='subcontractor' ? 'Subcontractor Rates' : 'Contractor Rates'
-    return <section className="summary-gallery rates-workspace" aria-label={label+' workspace'}><header className="summary-gallery-heading"><h2>{label}</h2>{kind==='contractor' && <button type="button" className="contractor-lock-button" onClick={lockContractorRates}>Lock Contractor Rates</button>}<p>All measured work · all drawings</p></header><article className="material-order-card"><h3>Work rates</h3>{measuredCategorySummaries.length ? <div className="material-table-wrap"><table className="quantity-table rates-table" aria-label={label+' table'}><colgroup><col className="quantity-col-work" /><col className="quantity-col-area" /><col className="quantity-col-length" /><col className="quantity-col-count" /><col className="quantity-col-rate" />{kind==='subcontractor' && <col className="quantity-col-value" />}</colgroup><thead><tr><th>Work description</th><th>m²</th><th>LM</th><th>Points</th><th>Rate</th>{kind==='subcontractor' && <th>Value</th>}</tr></thead><tbody>{measuredCategorySummaries.map(category=>{const price=workPrice(category);return <tr key={category.id}><th scope="row"><span className="category-swatch" style={{background:category.color}} />{quantityName(category)}</th>{quantityCells(category)}<td>{rateInput(kind,category)}</td>{kind==='subcontractor' && <td><strong>{price.value===null ? price.note : pounds(price.value)}</strong></td>}</tr>})}</tbody></table></div> : <p>Measure some work first. Only categories used in Plot Summary appear here.</p>}</article></section>
+    return <section className="summary-gallery rates-workspace" aria-label={label+' workspace'}><header className="summary-gallery-heading"><h2>{label}</h2>{kind==='contractor' && <button type="button" className="contractor-lock-button" onClick={lockContractorRates}>Lock Contractor Rates</button>}<p>All measured work · all drawings</p>{kind==='contractor' && legacyPricingNotice && <p className="quantity-table-warning">Previous contractor rates have been kept in the saved data. Client charges now use subcontractor cost plus Margin % and material charges. Review these percentages, then use the confirmation below the Work Rates table and save the house type.</p>}{rateTransferToolbar(kind)}{kind==='contractor' && <div className="contractor-section-tabs"><button aria-pressed={contractorSection==='work'} onClick={()=>setContractorSection('work')}>Work Rates</button><button aria-pressed={contractorSection==='materials'} onClick={()=>setContractorSection('materials')}>Material Costs</button></div>}</header>{kind==='contractor' ? contractorSection==='materials' ? materialCostEditor() : contractorWorkEditor() : <article className="material-order-card"><h3>Work rates</h3>{measuredCategorySummaries.length ? <div className="material-table-wrap"><table className="quantity-table rates-table" aria-label={label+' table'}><colgroup><col className="quantity-col-work" /><col className="quantity-col-area" /><col className="quantity-col-length" /><col className="quantity-col-count" /><col className="quantity-col-rate" />{kind==='subcontractor' && <col className="quantity-col-value" />}</colgroup><thead><tr><th>Work description</th><th>m²</th><th>LM</th><th>Points</th><th>Rate</th>{kind==='subcontractor' && <th>Value</th>}</tr></thead><tbody>{measuredCategorySummaries.map(category=>{const price=workPrice(category);return <tr key={category.id}><th scope="row"><span className="category-swatch" style={{background:category.color}} />{quantityName(category)}</th>{quantityCells(category)}<td>{rateInput(kind,category)}</td>{kind==='subcontractor' && <td><strong>{price.value===null ? price.note : pounds(price.value)}</strong></td>}</tr>})}</tbody></table></div> : <p>Measure some work first. Only categories used in Plot Summary appear here.</p>}{ratePageTotals('subcontractor')}</article>}</section>
   }
   function simplifiedQuantityTable(rows:QuantityPriceRow[],label:string) {
     rows=orderedSummaryRows(rows)
@@ -3786,10 +3877,10 @@ export default function App() {
   function simplifiedSummary() {
     const ungrouped=pageDrawingSummaries.flatMap(page=>page.rows.filter(row=>row.id==='__ungrouped__'))
     const rows:QuantityPriceRow[]=[...measuredCategorySummaries,...(ungrouped.length ? [{id:'__ungrouped__',name:'Ungrouped Measurements',mode:'mixed',totalAreaM2:ungrouped.some(row=>row.totalAreaM2===null) ? null : ungrouped.reduce((sum,row)=>sum+(row.totalAreaM2 ?? 0),0),totalMm:ungrouped.some(row=>row.totalMm===null) ? null : ungrouped.reduce((sum,row)=>sum+(row.totalMm ?? 0),0),count:ungrouped.reduce((sum,row)=>sum+row.count,0)}] : [])]
-    return <section className="summary-gallery simplified-summary-workspace plot-summary-gallery" aria-label="Simplified Plot Summary"><header className="summary-gallery-heading"><h2>Plot Summary · Simplified</h2><p>{[job.site,job.plot ? 'Plot '+job.plot : '',job.houseType,job.revision].filter(Boolean).join(' / ') || 'Job details not entered'}</p></header><article className="material-order-card"><h3>Whole plot · all drawings</h3>{simplifiedQuantityTable(rows,'Whole plot quantities')}{rows.length>0 && summaryTotals(rows,'whole plot')}</article>{pageDrawingSummaries.map(page=><article key={page.number} className="material-order-card"><h3>{page.name}</h3>{page.needsCalibration && <p className="quantity-table-warning">Calibrate and lock this drawing to show complete quantities.</p>}{simplifiedQuantityTable(page.rows,page.name+' quantities')}{page.rows.length>0 && summaryTotals(page.rows,page.name)}</article>)}<p className="length-note material-method-note">Values use subcontractor rates and the same rounding as Detailed view. Each scope totals its rounded category values. Skim reuses source areas and respects skim opt-outs.</p></section>
+    return <section className="summary-gallery simplified-summary-workspace plot-summary-gallery" aria-label="Simplified Plot Summary"><header className="summary-gallery-heading"><h2>Plot Summary · Simplified</h2><p>{[job.site,job.plot ? 'Plot '+job.plot : '',job.houseType,job.revision].filter(Boolean).join(' / ') || 'Job details not entered'}</p></header><article className="material-order-card"><h3>Whole plot · all drawings</h3>{simplifiedQuantityTable(rows,'Whole plot quantities')}{rows.length>0 && summaryTotals(rows,'whole plot')}</article>{pageDrawingSummaries.map(page=><article key={page.number} className="material-order-card"><h3>{page.name}</h3>{page.needsCalibration && <p className="quantity-table-warning">Calibrate and lock this drawing to show complete quantities.</p>}{simplifiedQuantityTable(page.rows,page.name+' quantities')}{page.rows.length>0 && summaryTotals(page.rows,page.name)}</article>)}<p className="length-note material-method-note">Values use subcontractor rates and the same rounding as Detailed view. Each scope totals its category values; point markers keep pounds and pence. Skim reuses source areas and respects skim opt-outs.</p></section>
   }
   const plotPriceRows=measuredCategorySummaries.map(category=>({category,...workPrice(category)}))
-  const plotPriceTotal=plotPriceRows.reduce((sum,row)=>sum+(row.value ?? 0),0)
+  const plotPriceTotal=plotPriceRows.reduce((sum,row)=>Math.round((sum+(row.value ?? 0))*100)/100,0)
   const unpricedCategories=plotPriceRows.filter(row=>row.value===null).length
   const selectedWork = currentPageGroupSummaries.find((group) => group.id === selectedWorkId)
   const showingAllWork = selectedWorkId === '__all__'
@@ -4193,8 +4284,9 @@ export default function App() {
 
   return (
     <div className={`app-shell${tabletLandscape ? ' ipad-landscape' : ''}${phoneLayout ? ' phone-layout'+(phoneBannerHidden ? ' phone-banner-hidden' : '')+(phoneFooterHidden ? ' phone-footer-hidden' : '')+(phoneToolsOpen ? '' : ' phone-tools-hidden') : ''}`} style={{'--measure-bar-height':toolbarBarHeight+'px'} as React.CSSProperties} aria-busy={isFileBusy}>
-      {phoneLayout && <button type="button" className="phone-banner-toggle" aria-expanded={!phoneBannerHidden} aria-controls="main-banner" disabled={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen} onClick={()=>{cancelTouchView();setPhoneBannerHidden(value=>!value)}}>{phoneBannerHidden ? 'Show banner' : 'Hide banner'}</button>}
-      <header id="main-banner" ref={toolbarHeaderRef} className="topbar" inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen}>
+      {phoneLayout && <button type="button" className="phone-banner-toggle" aria-expanded={!phoneBannerHidden} aria-controls="main-banner" disabled={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen || !!rateTransfer} onClick={()=>{cancelTouchView();setPhoneBannerHidden(value=>!value)}}>{phoneBannerHidden ? 'Show banner' : 'Hide banner'}</button>}
+      {onLeave && <div className="project-workspace-strip"><button disabled={projectSaving || isFileBusy} onClick={()=>void saveHouseToProject(true)}>← Projects</button><strong>{projectContext ? projectContext.site+' / '+projectContext.houseType : 'Standalone take-off'}</strong>{projectContext && <><button disabled={projectSaving || isFileBusy} onClick={()=>void saveHouseToProject()}>Save House Type</button><button disabled={projectSaving || isFileBusy} onClick={()=>void saveHouseToProject(false,true)}>Download Project</button></>}{projectSaveMessage && <span role="status">{projectSaveMessage}</span>}</div>}
+      <header id="main-banner" ref={toolbarHeaderRef} className="topbar" inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen || !!rateTransfer}>
         <div className="brand-and-project">
           <div className="takeoff-brand">
             <svg className="brand-mark" viewBox="0 0 34 38" aria-hidden="true"><path fill="#21d4ce" d="M17 1 32 9 17 18 2 10z" /><path fill="#00a8a4" d="m2 13 12 7v14L2 27z" /><path fill="#19d1c7" d="m19 20 13-8v15l-13 9z" /><path fill="#6ce8df" d="m8 17 7 4-7 12z" /></svg>
@@ -4277,7 +4369,7 @@ export default function App() {
 </section>
       </header>
 
-      <main ref={workspaceRef} className={`workspace${tabletLandscape && !tabletSidebarOpen ? ' tablet-controls-hidden' : ''}${phoneLayout && !phoneSidebarOpen ? ' phone-controls-hidden' : ''}  ${sidebarTab === 'summary' || sidebarTab === 'materials' || sidebarTab === 'export' || sidebarTab === 'rates' || sidebarTab === 'contractor-rates' ? 'is-summary' : ''} ${selectedWork || showingAllWork ? 'has-work-details' : ''}`} inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen}>
+      <main ref={workspaceRef} className={`workspace${tabletLandscape && !tabletSidebarOpen ? ' tablet-controls-hidden' : ''}${phoneLayout && !phoneSidebarOpen ? ' phone-controls-hidden' : ''}  ${sidebarTab === 'summary' || sidebarTab === 'materials' || sidebarTab === 'export' || sidebarTab === 'rates' || sidebarTab === 'contractor-rates' ? 'is-summary' : ''} ${selectedWork || showingAllWork ? 'has-work-details' : ''}`} inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen || !!rateTransfer}>
         {phoneLayout && <div className="phone-workspace-controls" data-stage-control><button type="button" aria-expanded={phoneSidebarOpen} aria-controls="workspace-controls" onClick={()=>{cancelTouchView();setPhoneSidebarOpen(value=>!value)}}>{phoneSidebarOpen ? 'Hide controls' : 'Controls'}</button>{sidebarTab==='measure' && <button type="button" aria-expanded={phoneToolsOpen} onClick={()=>setPhoneToolsOpen(value=>!value)}>{phoneToolsOpen ? 'Hide tools' : 'Measure'}</button>}</div>}
         <aside className="sidebar" id="workspace-controls">
           <div className="sidebar-fixed">
@@ -4461,7 +4553,7 @@ export default function App() {
             </div>)}
             {!measuredCategorySummaries.length && <p className="length-note">No categories measured yet.</p>}
             {measuredCategorySummaries.length>0 && priceSubtotals(measuredCategorySummaries,'whole plot')}
-            {measuredCategorySummaries.length>0 && <div className="plot-price-total"><span>{unpricedCategories ? 'Priced subcontractor subtotal' : 'Plot subcontractor total'}</span><strong>{pounds(plotPriceTotal)}</strong>{unpricedCategories>0 && <p>{unpricedCategories} categories awaiting a rate or valid quantities.</p>}<p>49p or less rounds down; 50p or more rounds up. Totals add the rounded category values. LM is not charged separately.</p>{measuredCategorySummaries.some(category=>category.wallsWithoutHeight>0) && <p>Lengths without wall heights are excluded from m² pricing.</p>}</div>}</>}{summaryPresentation==='simplified' && <p className="length-note">Whole-plot figures and drawing / floor breakdowns are shown in the tables.</p>}
+            {measuredCategorySummaries.length>0 && <div className="plot-price-total"><span>{unpricedCategories ? 'Priced subcontractor subtotal' : 'Plot subcontractor total'}</span><strong>{pounds(plotPriceTotal)}</strong>{unpricedCategories>0 && <p>{unpricedCategories} categories awaiting a rate or valid quantities.</p>}<p>Measured work: 49p or less rounds down; 50p or more rounds up. Point-marker prices keep pounds and pence. Totals add the category values. LM is not charged separately.</p>{measuredCategorySummaries.some(category=>category.wallsWithoutHeight>0) && <p>Lengths without wall heights are excluded from m² pricing.</p>}</div>}</>}{summaryPresentation==='simplified' && <p className="length-note">Whole-plot figures and drawing / floor breakdowns are shown in the tables.</p>}
             <p className="length-note">{groups.filter((group) => !group.categoryId).length} work items are uncategorised. Assign categories in Measured Work settings to include them above. Ungrouped geometry is also excluded.</p>
             <details className="category-settings"><summary>Edit category names and colours</summary>
               {categories.map((category) => <div className="category-editor" key={category.id}>
@@ -5360,6 +5452,7 @@ export default function App() {
           <footer><button type="button" onClick={cancelPageImport}>Cancel</button><button type="button" className="primary-button" disabled={!importSelection.length} onClick={confirmPageImport}>Import Selected Pages ({importSelection.length})</button></footer>
         </section>
       </div>}
+      {rateTransfer && <div className="measurement-dialog-backdrop" onKeyDown={event=>{if(event.key==='Escape'){event.stopPropagation();setRateTransfer(null)}}}><section className="measurement-dialog rate-transfer-dialog" role="dialog" aria-modal="true" aria-labelledby="rate-transfer-title"><h2 id="rate-transfer-title">{rateTransfer.mode==='copy' ? 'Copy Rates' : 'Import Rates'} · {rateTransfer.kind==='contractor' ? 'Contractor' : 'Subcontractor'}</h2><p>{rateTransfer.mode==='copy' ? 'Select the text and copy it. Import it into another house type.' : 'Paste copied rates. Matching entries replace their current values; unmatched entries are kept and listed for checking.'}</p>{rateTransfer.kind==='contractor' && <p>Work percentages and material settings are transferred. Subcontractor cost rates and house-specific quantities are not changed.</p>}{rateTransferMessages.length>0 && <p role="alert">{rateTransferMessages[0]}</p>}<textarea autoFocus aria-label="Copied rates" rows={12} readOnly={rateTransfer.mode==='copy'} value={rateTransfer.text} onFocus={event=>{if(rateTransfer.mode==='copy')event.target.select()}} onChange={event=>setRateTransfer({...rateTransfer,text:event.target.value})} /><div className="dialog-actions">{rateTransfer.mode==='import' && <button type="button" disabled={!rateTransfer.text.trim()} onClick={importRateTemplate}>Import Matching Rates</button>}<button type="button" onClick={()=>setRateTransfer(null)}>Close</button></div></section></div>}
       {newDescriptionOpen && <div className="measurement-dialog-backdrop" onKeyDown={event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setNewDescriptionOpen(false)}}}>
         <form className="measurement-dialog new-description-dialog" role="dialog" aria-modal="true" aria-labelledby="new-description-title" onSubmit={event=>{event.preventDefault();saveNewDescription()}}>
           <h2 id="new-description-title">Create New Work Description</h2>
@@ -5436,4 +5529,76 @@ export default function App() {
       </div>}
     </div>
   )
+}
+
+
+type HousePricing={pricingModel?:2;workCharge?:number;materialCharge?:number;contractor:number;subcontractor:number;materials:number;contractorMissing:number;subcontractorMissing:number;materialMissing:number;measured:boolean;calculatedAt:string}
+type HouseSnapshot={takeoff:TakeoffFile;pricing:HousePricing}
+type TenderHouse={id:string;name:string;quantity:number;plots:string;snapshot:HouseSnapshot|null}
+type SiteProject={id:string;name:string;updatedAt:string;houses:TenderHouse[]}
+function newProjectId(){return typeof crypto!=='undefined' && crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36)+'-'+Math.random().toString(36).slice(2)}
+function plotNumbers(text:string):number[]{if(!text.trim())return [];const values:number[]=[];for(const token of text.split(',').map(part=>part.trim())){const match=/^(\d+)(?:\s*-\s*(\d+))?$/.exec(token);if(!match)throw Error('Enter plot numbers as 1, 2, 5-12.');const first=Number(match[1]),last=Number(match[2] ?? match[1]);if(first<1 || last<first || last>100000 || last-first>10000)throw Error('Use plot numbers from 1 to 100000 and ranges of at most 10000.');for(let value=first;value<=last;value++){if(values.includes(value))throw Error('A plot number is listed more than once.');values.push(value)}}return values}
+function validateHouseAllocation(house:TenderHouse,others:TenderHouse[]){if(!house.name.trim())throw Error('Enter a house-type name.');if(!Number.isSafeInteger(house.quantity) || house.quantity<1 || house.quantity>100000)throw Error('Enter a whole number of houses from 1 to 100000.');if(others.some(other=>other.name.trim().toLowerCase()===house.name.trim().toLowerCase()))throw Error('This house-type name is already used in the project.');const plots=plotNumbers(house.plots);if(plots.length>house.quantity)throw Error('There are more plot numbers than houses. Increase the quantity or correct the plot list.');const assigned=new Set(others.flatMap(other=>plotNumbers(other.plots)));if(plots.some(number=>assigned.has(number)))throw Error('One of these plot numbers is already assigned to another house type.')}
+function moneyAmount(value:number){if(!Number.isFinite(value) || !Number.isSafeInteger(Math.round(value*100)))throw Error('Tender value is too large. Reduce the quantity or rates.');return Math.round((value+Number.EPSILON)*100)/100}
+function tenderTotals(houses:TenderHouse[]){let contractor=0,subcontractor=0,materials=0,quantity=0,incomplete=0;for(const house of houses){quantity+=house.quantity;const price=house.snapshot?.pricing;if(!price || !price.measured){incomplete++;continue}contractor=moneyAmount(contractor+price.contractor*house.quantity);subcontractor=moneyAmount(subcontractor+price.subcontractor*house.quantity);materials=moneyAmount(materials+price.materials*house.quantity);if(price.pricingModel!==2 || price.contractorMissing || price.subcontractorMissing || price.materialMissing)incomplete++}const difference=incomplete ? null : moneyAmount(contractor-subcontractor-materials),labourDifference=incomplete ? null : moneyAmount(contractor-subcontractor);return {contractor,subcontractor,materials,totalCost:moneyAmount(subcontractor+materials),quantity,incomplete,difference,labourDifference,margin:difference===null || subcontractor+materials===0 ? null : difference/(subcontractor+materials)*100}}
+function readSiteProject(raw:any):SiteProject {if(!raw || typeof raw!=='object' || typeof raw.id!=='string' || !raw.id || typeof raw.name!=='string' || !raw.name.trim() || raw.name.length>160 || !Array.isArray(raw.houses) || raw.houses.length>2000)throw Error('Choose a valid Holmes QS project backup.');const ids=new Set<string>();const houses:TenderHouse[]=raw.houses.map((house:any)=>{if(!house || typeof house.id!=='string' || !house.id || ids.has(house.id) || typeof house.name!=='string' || house.name.length>120 || typeof house.plots!=='string')throw Error('Invalid house type in project.');ids.add(house.id);let snapshot:HouseSnapshot|null=null;if(house.snapshot){const p=house.snapshot.pricing;if(!p || ['contractor','subcontractor','materials'].some(key=>typeof p[key]!=='number' || p[key]<0 || !Number.isFinite(p[key]) || !Number.isSafeInteger(Math.round(p[key]*100))) || ['contractorMissing','subcontractorMissing','materialMissing'].some(key=>!Number.isSafeInteger(p[key]) || p[key]<0) || typeof p.measured!=='boolean' || typeof p.calculatedAt!=='string' || !Number.isFinite(Date.parse(p.calculatedAt)))throw Error('Invalid saved pricing in project.');if(p.pricingModel!==undefined && p.pricingModel!==2)throw Error('Invalid pricing model.');if(p.pricingModel===2 && (['workCharge','materialCharge'].some(key=>typeof p[key]!=='number' || !Number.isFinite(p[key]) || p[key]<0) || Math.abs(p.contractor-p.workCharge-p.materialCharge)>.011))throw Error('Invalid charge totals.');snapshot={takeoff:readTakeoff(house.snapshot.takeoff),pricing:{...p}}}return {id:house.id,name:house.name.trim(),quantity:house.quantity,plots:house.plots,snapshot}});houses.forEach(house=>validateHouseAllocation(house,houses.filter(other=>other.id!==house.id)));tenderTotals(houses);return {id:raw.id,name:raw.name.trim(),updatedAt:typeof raw.updatedAt==='string' ? raw.updatedAt : new Date().toISOString(),houses}}
+function projectStorage(write?:SiteProject[],expected?:SiteProject[]):Promise<SiteProject[]> {return new Promise((resolve,reject)=>{
+ if(typeof indexedDB==='undefined'){reject(Error('Project storage is unavailable in this browser. Use a browser with storage enabled.'));return}
+ const request=indexedDB.open('holmes-qs-projects',1)
+ request.onupgradeneeded=()=>{if(!request.result.objectStoreNames.contains('projects'))request.result.createObjectStore('projects')}
+ request.onerror=()=>reject(Error('Could not open project storage.'))
+ request.onblocked=()=>reject(Error('Close older Holmes QS tabs, then reopen Projects.'))
+ request.onsuccess=()=>{const db=request.result,tx=db.transaction('projects',write ? 'readwrite' : 'readonly'),store=tx.objectStore('projects');let result:any[]=[],reason='Project storage could not be saved or read. Your open work is kept; download a project backup.'
+  const key=(projectId:string,houseId:string)=>'house:'+JSON.stringify([projectId,houseId])
+  const get=store.get('library')
+  get.onsuccess=()=>{try{
+   const current=get.result ?? [];if(!Array.isArray(current))throw Error()
+   const revision=(items:SiteProject[])=>JSON.stringify(items.map(item=>[item.id,item.updatedAt]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))))
+   if(write && expected && revision(current)!==revision(expected)){reason='Projects changed in another tab. Download a project backup of your open work, then reload before saving.';tx.abort();return}
+   if(write){
+    // Metadata stays small; only changed house-type snapshots rewrite their embedded PDFs.
+    const metadata=write.map(project=>({...project,houses:project.houses.map(house=>{const previous=expected?.find(item=>item.id===project.id)?.houses.find(item=>item.id===house.id),stored=current.find((item:any)=>item.id===project.id)?.houses.find((item:any)=>item.id===house.id);if(house.snapshot && (house.snapshot!==previous?.snapshot || !stored?._snapshotStored))store.put(house.snapshot,key(project.id,house.id));if(!house.snapshot && previous?.snapshot)store.delete(key(project.id,house.id));return {...house,snapshot:null,_snapshotStored:!!house.snapshot}})}))
+    for(const project of expected ?? [])for(const house of project.houses)if(!write.find(item=>item.id===project.id)?.houses.some(item=>item.id===house.id))store.delete(key(project.id,house.id))
+    store.put(metadata,'library');result=write
+   } else {result=current;for(const project of result){if(!Array.isArray(project.houses))throw Error();for(const house of project.houses){if(!house._snapshotStored)continue;const snapshot=store.get(key(project.id,house.id));snapshot.onsuccess=()=>{if(!snapshot.result){reason='A saved house type is missing. Open your project backup to restore it.';tx.abort();return}house.snapshot=snapshot.result}}}}
+  }catch{tx.abort()}}
+  tx.oncomplete=()=>{db.close();try{resolve(write ? write : result.map(readSiteProject))}catch{reject(Error('Project data could not be restored. Open a project backup.'))}}
+  tx.onerror=tx.onabort=()=>{db.close();reject(Error(reason))}
+ }
+})}
+function standaloneStorage(takeoff?:TakeoffFile,write=false):Promise<TakeoffFile|undefined>{return new Promise((resolve,reject)=>{if(typeof indexedDB==='undefined'){reject(Error('Browser storage is unavailable. Download your measure before leaving.'));return}const request=indexedDB.open('holmes-qs-projects',1);request.onupgradeneeded=()=>{if(!request.result.objectStoreNames.contains('projects'))request.result.createObjectStore('projects')};request.onerror=()=>reject(Error('Could not open standalone storage.'));request.onsuccess=()=>{const db=request.result,tx=db.transaction('projects',write ? 'readwrite' : 'readonly'),store=tx.objectStore('projects');let value:TakeoffFile|undefined=takeoff;if(write){if(takeoff)store.put(takeoff,'standalone');else store.delete('standalone')}else{const get=store.get('standalone');get.onsuccess=()=>{try{value=get.result===undefined ? undefined : readTakeoff(get.result)}catch{tx.abort()}}}tx.oncomplete=()=>{db.close();resolve(value)};tx.onerror=tx.onabort=()=>{db.close();reject(Error('Could not save standalone work. Download your measure before leaving.'))}}})}
+function downloadProject(project:SiteProject){const blob=new Blob([JSON.stringify({format:'holmes-qs-project',version:2,project})],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=project.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g,'-')+'.project.json';document.body.appendChild(link);link.click();link.remove();window.setTimeout(()=>URL.revokeObjectURL(url),60000)}
+export default function App(){
+ useEffect(()=>{document.title='Holmes QS'},[])
+ const [libraryHealthy,setLibraryHealthy]=useState(false),[standaloneReady,setStandaloneReady]=useState(false)
+ const [projects,setProjects]=useState<SiteProject[]>([]),[loaded,setLoaded]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[selected,setSelected]=useState<string|null>(null),[active,setActive]=useState<{projectId:string;houseId:string}|'standalone'|null>(null),[standalone,setStandalone]=useState<TakeoffFile|undefined>(undefined),[newName,setNewName]=useState(''),[houseEditor,setHouseEditor]=useState<{id:string;name:string;quantity:string;plots:string}|null>(null),[rename,setRename]=useState(''),[renaming,setRenaming]=useState(false),[projectScreen,setProjectScreen]=useState<'welcome'|'create'|'existing'>('welcome')
+ useEffect(()=>{let alive=true;void projectStorage().then(items=>{if(alive){setProjects(items);setLibraryHealthy(true)}}).catch(failure=>{if(alive)setError(failure.message)}).finally(()=>{if(alive)setLoaded(true)});void standaloneStorage().then(takeoff=>{if(alive){setStandalone(takeoff);setStandaloneReady(true)}}).catch(failure=>{if(alive)setError(failure.message)});return()=>{alive=false}},[])
+ const project=projects.find(item=>item.id===selected)
+ async function persist(next:SiteProject[]){if(!libraryHealthy)throw Error('Project storage is not ready. Reload this page before changing projects.');setBusy(true);try{await projectStorage(next,projects);setProjects(next);setError('')}finally{setBusy(false)}}
+ async function createProject(){if(!newName.trim())return;const item:SiteProject={id:newProjectId(),name:newName.trim().slice(0,160),updatedAt:new Date().toISOString(),houses:[]};try{await persist([...projects,item]);setSelected(item.id);setNewName('')}catch(failure:any){setError(failure.message)}}
+ async function saveHouse(){if(!project || !houseEditor)return;try{const existing=project.houses.find(house=>house.id===houseEditor.id);const house:TenderHouse={id:houseEditor.id || newProjectId(),name:houseEditor.name.trim().slice(0,120),quantity:Number(houseEditor.quantity),plots:houseEditor.plots.trim(),snapshot:existing?.snapshot ?? null};tenderTotals([...project.houses.filter(other=>other.id!==house.id),house]);validateHouseAllocation(house,project.houses.filter(other=>other.id!==house.id));await persist(projects.map(item=>item.id===project.id ? {...item,updatedAt:new Date().toISOString(),houses:existing ? item.houses.map(other=>other.id===house.id ? house : other) : [...item.houses,house]} : item));setHouseEditor(null)}catch(failure:any){setError(failure.message)}}
+ async function removeHouse(id:string){if(!project || !window.confirm('Delete this house type and its saved take-off from the project?'))return;try{await persist(projects.map(item=>item.id===project.id ? {...item,updatedAt:new Date().toISOString(),houses:item.houses.filter(house=>house.id!==id)} : item))}catch(failure:any){setError(failure.message)}}
+ async function importProject(file:File){try{const raw=JSON.parse(await file.text());if(raw.format!=='holmes-qs-project' || ![1,2].includes(raw.version))throw Error('Choose a Holmes QS .project.json backup.');const restored=readSiteProject(raw.project);if(projects.some(item=>item.id===restored.id)){if(!window.confirm('Replace the project on this device with this backup?'))return}await persist([...projects.filter(item=>item.id!==restored.id),restored]);setSelected(restored.id);setHouseEditor(null)}catch(failure:any){setError(failure.message)}}
+ async function storeSnapshot(snapshot:HouseSnapshot|null,leave:boolean,download=false){if(active==='standalone'){await standaloneStorage(snapshot?.takeoff,true);setStandalone(snapshot?.takeoff);if(leave)setActive(null);return}if(!active)return;const target=projects.find(item=>item.id===active.projectId);if(!target)throw Error('The project is missing. Download your measure before leaving.');const updated={...target,updatedAt:new Date().toISOString(),houses:target.houses.map(house=>house.id===active.houseId ? {...house,snapshot:snapshot ?? house.snapshot} : house)};tenderTotals(updated.houses);if(download){downloadProject(updated);return}await persist(projects.map(item=>item.id===updated.id ? updated : item));if(leave){setSelected(target.id);setActive(null)}}
+ if(active){const target=active==='standalone' ? undefined : projects.find(item=>item.id===active.projectId),house=active==='standalone' ? undefined : target?.houses.find(item=>item.id===active.houseId);return <TakeoffWorkspace key={active==='standalone' ? 'standalone' : active.houseId} initialTakeoff={house?.snapshot?.takeoff ?? (active==='standalone' ? standalone : undefined)} projectContext={target && house ? {site:target.name,houseType:house.name} : undefined} onProjectSave={(snapshot,download)=>storeSnapshot(snapshot,false,download)} onLeave={snapshot=>storeSnapshot(snapshot,true)} />}
+ let totals:ReturnType<typeof tenderTotals>|null=null;let totalsError='';try{if(project)totals=tenderTotals(project.houses)}catch(failure:any){totalsError=failure.message}
+ const currency=(value:number|null)=>value===null ? 'Awaiting complete pricing' : value.toLocaleString('en-GB',{style:'currency',currency:'GBP'})
+ const projectFileButton=<label className="project-file-button">Open Project<input type="file" accept=".json,.project.json,application/json" disabled={busy || !loaded || !libraryHealthy} onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void importProject(file)}} /></label>
+ return <div className={'projects-shell'+(!project && projectScreen==='welcome' ? ' projects-welcome' : '')}>
+ <header className="projects-banner"><button type="button" className="project-brand-home" onClick={()=>{setSelected(null);setProjectScreen('welcome');setHouseEditor(null);setError('')}}>Holmes QS</button>{(project || projectScreen!=='welcome') && <><span>{project ? project.name : projectScreen==='create' ? 'Create New Project' : 'Existing Projects'}</span><button disabled={busy || !loaded || !standaloneReady} onClick={()=>setActive('standalone')}>Standalone Measure</button></>}</header>
+ <main className="projects-main">
+ {!project && projectScreen==='welcome' ? <section className="project-welcome-panel"><p className="welcome-kicker">Your measuring and estimating workspace</p><h1>Holmes QS</h1><div className="welcome-actions"><button aria-label="Create New Project" disabled={busy || !loaded || !libraryHealthy} onClick={()=>{setProjectScreen('create');setError('')}}><span className="welcome-action-symbol" aria-hidden="true">＋</span><strong>Create New Project</strong><small>Start a new site tender</small></button><button aria-label="Existing Projects" disabled={!loaded} onClick={()=>{setProjectScreen('existing');setError('')}}><span className="welcome-action-symbol welcome-houses-icon" aria-hidden="true"><svg viewBox="0 0 80 48" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" focusable="false"><path d="M17 24 40 4l23 20M22 21v24h36V21M2 25l12-12 10 10M5 23v22h17m35-22 9-10 12 12M58 45h17V23M34 45V32h12v13M10 45V34h7v11m46 0V34h7v11"/><path d="M28 25h5v5h-5zm19 0h5v5h-5z"/></svg></span><strong>Existing Projects</strong><small>Open your sites and house types</small></button><button aria-label="Standalone Measure" disabled={busy || !loaded || !standaloneReady} onClick={()=>setActive('standalone')}><span className="welcome-action-symbol" aria-hidden="true">↗</span><strong>Standalone Measure</strong><small>Go straight to your take-off workspace</small></button></div></section> : <>
+ <div className="project-page-heading"><div><h1>{project ? project.name : projectScreen==='create' ? 'Create New Project' : 'Existing Projects'}</h1><p>{project ? 'Complete-house totals for the entire site.' : projectScreen==='create' ? 'Give your site a name, then add its house types.' : 'Choose a site to view its house types and tender.'}</p></div><div className="project-actions">{project ? <><button disabled={busy} onClick={()=>{setSelected(null);setProjectScreen('existing');setHouseEditor(null);setError('')}}>← All Projects</button><button disabled={busy} onClick={()=>{setRename(project.name);setRenaming(true)}}>Rename Project</button><button onClick={()=>downloadProject(project)}>Download Project</button></> : <><button onClick={()=>setProjectScreen('welcome')}>← Home</button>{projectScreen==='existing' && <button onClick={()=>setProjectScreen('create')}>Create New Project</button>}</>}{projectFileButton}</div></div>
+ {!project ? projectScreen==='create' ? <form className="project-create" onSubmit={event=>{event.preventDefault();void createProject()}}><label>Site project name<input autoFocus aria-label="New project name" value={newName} maxLength={160} onChange={event=>setNewName(event.target.value)} placeholder="e.g. Oak Meadow" /></label><button disabled={busy || !loaded || !libraryHealthy || !newName.trim()}>Create Project</button></form> : <><div className="project-cards">{projects.map(item=><button key={item.id} className="project-card" onClick={()=>{setSelected(item.id);setError('')}}><strong>{item.name}</strong><span>{item.houses.length} house types · {item.houses.reduce((sum,house)=>sum+house.quantity,0)} houses</span><small>Updated {new Date(item.updatedAt).toLocaleDateString('en-GB')}</small></button>)}</div>{loaded && !projects.length && <p>No projects yet. Create a new project or open a project backup.</p>}</> : <>
+ <div className="project-meta-actions"><button disabled={busy} onClick={()=>{if(window.confirm('Delete this site project and all its house types from this device? Download a backup first if you need to keep it.'))void persist(projects.filter(item=>item.id!==project.id)).then(()=>{setSelected(null);setProjectScreen('existing')}).catch(failure=>setError(failure.message))}}>Delete Project</button></div>
+ {totals && <><div className="tender-kpis"><article><span>Houses</span><strong>{totals.quantity}</strong></article><article><span>Total Cost Subcontractor</span><strong>{currency(totals.subcontractor)}</strong></article><article><span>Total Cost Materials</span><strong>{currency(totals.materials)}</strong></article><article><span>{totals.incomplete ? 'Total Cost · priced subtotal' : 'Total Cost'}</span><strong>{currency(totals.totalCost)}</strong></article><article><span>{totals.incomplete ? 'Total Charge · priced subtotal' : 'Total Charge'}</span><strong>{currency(totals.contractor)}</strong></article><article><span>Margin %</span><strong>{totals.margin===null ? 'Awaiting pricing' : totals.margin.toFixed(2)+'%'}</strong></article></div>{totals.incomplete>0 && <p className="project-warning">{totals.incomplete} house types need measurements, costs or pricing review. Figures are priced subtotals. Open older house types, review the cost + Margin % rates and save them before using the tender total.</p>}<p className="project-calculation-note">Total Charge includes work and material charges. Margin % = (Total Charge − combined costs) ÷ combined costs × 100. This is the percentage added to cost, before overheads and other costs.</p></>}
+ <div className="project-section-title"><h2>House Types</h2><button disabled={busy} onClick={()=>{setHouseEditor({id:'',name:'',quantity:'1',plots:''});setError('')}}>Add House Type</button></div>
+ {houseEditor && <form className="house-editor" onSubmit={event=>{event.preventDefault();void saveHouse()}}><h3>{houseEditor.id ? 'Edit house type' : 'New house type'}</h3><label>House type<input aria-label="House type name" maxLength={120} value={houseEditor.name} onChange={event=>setHouseEditor({...houseEditor,name:event.target.value})} /></label><label>Number of houses<input type="number" min="1" max="100000" step="1" aria-label="House type quantity" value={houseEditor.quantity} onChange={event=>setHouseEditor({...houseEditor,quantity:event.target.value})} /></label><label>Plot numbers<input aria-label="Assigned plot numbers" placeholder="e.g. 1-20, 61-80" value={houseEditor.plots} onChange={event=>setHouseEditor({...houseEditor,plots:event.target.value})} /></label><p>Plot numbers can be added later. Every assigned plot must belong to one house type only.</p><button disabled={busy}>Save House Type Details</button><button type="button" onClick={()=>setHouseEditor(null)}>Cancel</button></form>}
+ <div className="project-table-wrap"><table className="project-house-table"><thead><tr><th>House type / plots</th><th>Quantity</th><th>Total Cost Subcontractor</th><th>Total Cost Materials</th><th>Total Cost</th><th>Total Charge</th><th>Margin %</th><th>Actions</th></tr></thead><tbody>{project.houses.map(house=>{const p=house.snapshot?.pricing,total=tenderTotals([house]),assigned=plotNumbers(house.plots).length;return <tr key={house.id}><th><button className="house-open" disabled={busy} onClick={()=>setActive({projectId:project.id,houseId:house.id})}>{house.name}</button><small>Plots: {house.plots || 'Not assigned'}</small>{assigned<house.quantity && <small>{house.quantity-assigned} plot numbers still to assign</small>}<small>{!p?.measured ? 'Not measured' : p.pricingModel!==2 ? 'Review cost + margin pricing' : total.incomplete ? 'Pricing incomplete' : 'Priced'}</small>{p && <small>Per complete house:<br/>{currency(p.subcontractor)} subcontractor<br/>{currency(p.materials)} materials<br/><strong>{currency(moneyAmount(p.subcontractor+p.materials))} total cost</strong><br/>{currency(p.contractor)} charge</small>}</th><td>{house.quantity}</td><td>{p ? currency(total.subcontractor) : '—'}</td><td>{p ? currency(total.materials) : '—'}</td><td>{p ? currency(total.totalCost) : '—'}</td><td>{p ? currency(total.contractor) : '—'}</td><td>{total.margin===null ? 'Awaiting pricing' : total.margin.toFixed(2)+'%'}</td><td><button disabled={busy} onClick={()=>setActive({projectId:project.id,houseId:house.id})}>Open Take-off</button><button disabled={busy} onClick={()=>{setHouseEditor({id:house.id,name:house.name,quantity:String(house.quantity),plots:house.plots});setError('')}}>Edit Details</button><button disabled={busy} onClick={()=>void removeHouse(house.id)}>Delete</button></td></tr>})}</tbody></table></div>{!project.houses.length && <p>Add a house type, then open its take-off to import drawings or use Open Measure for an existing saved measure.</p>}
+ </>}
+ </>}
+ <p className="project-storage-note">Projects are saved in this browser on this device. Download a project backup to keep a separate copy or move it to your iPad.</p>{(error || totalsError) && <p role="alert" className="project-error">{error || totalsError}</p>}{!loaded && <p role="status">Loading projects…</p>}
+ </main>
+ {renaming && project && <div className="project-modal-backdrop" onKeyDown={event=>{if(event.key==='Escape')setRenaming(false)}}><form className="project-rename-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-project-title" onSubmit={event=>{event.preventDefault();if(!rename.trim())return;void persist(projects.map(item=>item.id===project.id ? {...item,name:rename.trim().slice(0,160),updatedAt:new Date().toISOString()} : item)).then(()=>{setRenaming(false);setRename('')}).catch(failure=>setError(failure.message))}}><h2 id="rename-project-title">Rename Project</h2><label>Project name<input autoFocus aria-label="Rename project" maxLength={160} value={rename} onChange={event=>setRename(event.target.value)} /></label><div className="dialog-actions"><button disabled={busy || !rename.trim()}>Save Name</button><button type="button" disabled={busy} onClick={()=>setRenaming(false)}>Cancel</button></div>{error && <p role="alert">{error}</p>}</form></div>}
+ </div>
 }
