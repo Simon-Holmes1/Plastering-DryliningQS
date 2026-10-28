@@ -100,6 +100,7 @@ type PinchPreview={ratio:number;pan:Point;width:number;height:number;scale:numbe
 type TouchOrigin={point:Point;pan:Point;at:number;handle:boolean}
 type TouchPinch={distance:number;scale:number;width:number;height:number;anchor:Point;pan:Point}
 type MaterialTrade='all'|WorkHeading
+function isPhoneLayout(userAgent:string,platform:string,touchPoints:number,width:number,height:number) {return !(/iPad/i.test(userAgent) || platform==='MacIntel' && touchPoints>1) && (/iPhone|iPod|Android.*Mobile/i.test(userAgent) || touchPoints>0 && Math.min(width,height)<600)}
 function isIpadLandscape(userAgent:string,platform:string,touchPoints:number,width:number,height:number) {return (/iPad/i.test(userAgent) || platform==='MacIntel' && touchPoints>1) && width>=768 && width>height}
 type MaterialCoverage = {adhesive:number;skim:number;insulation:Record<string,number>}
 const defaultInsulationCoverage:Record<string,number>={'50':15.6,'65':12,'100':11,'200':6}
@@ -785,6 +786,11 @@ export default function App() {
   const [materialDrawingKey,setMaterialDrawingKey]=useState('all')
   const [tabletLandscape,setTabletLandscape]=useState(()=>typeof navigator!=='undefined' && typeof window!=='undefined' && isIpadLandscape(navigator.userAgent,navigator.platform,navigator.maxTouchPoints,window.innerWidth,window.innerHeight))
   const [tabletSidebarOpen,setTabletSidebarOpen]=useState(true)
+  const [phoneLayout,setPhoneLayout]=useState(()=>typeof navigator!=='undefined' && typeof window!=='undefined' && isPhoneLayout(navigator.userAgent,navigator.platform,navigator.maxTouchPoints,window.innerWidth,window.innerHeight))
+  const [phoneSidebarOpen,setPhoneSidebarOpen]=useState(false)
+  const [phoneBannerHidden,setPhoneBannerHidden]=useState(false)
+  const [phoneFooterHidden,setPhoneFooterHidden]=useState(false)
+  const [phoneToolsOpen,setPhoneToolsOpen]=useState(false)
   const [materialWasteText,setMaterialWasteText]=useState('10')
   const [materialWasteDrafts,setMaterialWasteDrafts]=useState<Record<string,string>>({})
   const [insulationCoverageTexts,setInsulationCoverageTexts]=useState<Record<string,string>>({'50':'15.6','65':'12','100':'11','200':'6'})
@@ -3659,7 +3665,7 @@ export default function App() {
   const materialScopePage=materialDrawingKey==='all' ? undefined : drawingPages.findIndex(page=>page.source+':'+page.page===materialDrawingKey)+1 || undefined
   useEffect(()=>{if(materialDrawingKey!=='all' && !drawingPages.some(page=>page.source+':'+page.page===materialDrawingKey))setMaterialDrawingKey('all')},[drawingPages,materialDrawingKey])
   useEffect(()=>{
-    const update=()=>{if(typeof navigator!=='undefined')setTabletLandscape(isIpadLandscape(navigator.userAgent,navigator.platform,navigator.maxTouchPoints,window.innerWidth,window.innerHeight))}
+    const update=()=>{if(typeof navigator!=='undefined'){setTabletLandscape(isIpadLandscape(navigator.userAgent,navigator.platform,navigator.maxTouchPoints,window.innerWidth,window.innerHeight));setPhoneLayout(isPhoneLayout(navigator.userAgent,navigator.platform,navigator.maxTouchPoints,window.innerWidth,window.innerHeight))}}
     update();window.addEventListener('resize',update);window.visualViewport?.addEventListener('resize',update)
     return ()=>{window.removeEventListener('resize',update);window.visualViewport?.removeEventListener('resize',update)}
   },[])
@@ -4186,8 +4192,9 @@ export default function App() {
   const zoomPercent = Math.max(25, Math.min(1500, Math.round(scale * 100)))
 
   return (
-    <div className={`app-shell${tabletLandscape ? ' ipad-landscape' : ''}`} style={{'--measure-bar-height':toolbarBarHeight+'px'} as React.CSSProperties} aria-busy={isFileBusy}>
-      <header ref={toolbarHeaderRef} className="topbar" inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen}>
+    <div className={`app-shell${tabletLandscape ? ' ipad-landscape' : ''}${phoneLayout ? ' phone-layout'+(phoneBannerHidden ? ' phone-banner-hidden' : '')+(phoneFooterHidden ? ' phone-footer-hidden' : '')+(phoneToolsOpen ? '' : ' phone-tools-hidden') : ''}`} style={{'--measure-bar-height':toolbarBarHeight+'px'} as React.CSSProperties} aria-busy={isFileBusy}>
+      {phoneLayout && <button type="button" className="phone-banner-toggle" aria-expanded={!phoneBannerHidden} aria-controls="main-banner" disabled={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen} onClick={()=>{cancelTouchView();setPhoneBannerHidden(value=>!value)}}>{phoneBannerHidden ? 'Show banner' : 'Hide banner'}</button>}
+      <header id="main-banner" ref={toolbarHeaderRef} className="topbar" inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen}>
         <div className="brand-and-project">
           <div className="takeoff-brand">
             <svg className="brand-mark" viewBox="0 0 34 38" aria-hidden="true"><path fill="#21d4ce" d="M17 1 32 9 17 18 2 10z" /><path fill="#00a8a4" d="m2 13 12 7v14L2 27z" /><path fill="#19d1c7" d="m19 20 13-8v15l-13 9z" /><path fill="#6ce8df" d="m8 17 7 4-7 12z" /></svg>
@@ -4270,7 +4277,8 @@ export default function App() {
 </section>
       </header>
 
-      <main ref={workspaceRef} className={`workspace${tabletLandscape && !tabletSidebarOpen ? ' tablet-controls-hidden' : ''}  ${sidebarTab === 'summary' || sidebarTab === 'materials' || sidebarTab === 'export' || sidebarTab === 'rates' || sidebarTab === 'contractor-rates' ? 'is-summary' : ''} ${selectedWork || showingAllWork ? 'has-work-details' : ''}`} inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen}>
+      <main ref={workspaceRef} className={`workspace${tabletLandscape && !tabletSidebarOpen ? ' tablet-controls-hidden' : ''}${phoneLayout && !phoneSidebarOpen ? ' phone-controls-hidden' : ''}  ${sidebarTab === 'summary' || sidebarTab === 'materials' || sidebarTab === 'export' || sidebarTab === 'rates' || sidebarTab === 'contractor-rates' ? 'is-summary' : ''} ${selectedWork || showingAllWork ? 'has-work-details' : ''}`} inert={isFileBusy || !!measurementChooser || heightPromptOpen || !!duplicateRequest || newDescriptionOpen}>
+        {phoneLayout && <div className="phone-workspace-controls" data-stage-control><button type="button" aria-expanded={phoneSidebarOpen} aria-controls="workspace-controls" onClick={()=>{cancelTouchView();setPhoneSidebarOpen(value=>!value)}}>{phoneSidebarOpen ? 'Hide controls' : 'Controls'}</button>{sidebarTab==='measure' && <button type="button" aria-expanded={phoneToolsOpen} onClick={()=>setPhoneToolsOpen(value=>!value)}>{phoneToolsOpen ? 'Hide tools' : 'Measure'}</button>}</div>}
         <aside className="sidebar" id="workspace-controls">
           <div className="sidebar-fixed">
           <nav className="sidebar-tabs" aria-label="Take-off sections">
@@ -5184,6 +5192,7 @@ export default function App() {
           )}
           {pdf && touchControlsAvailable && <div className="touch-view-tools" data-stage-control><button type="button" aria-label="Precision crosshair" aria-pressed={precisionCrosshair} onClick={togglePrecisionCrosshair}><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="6" fill="none" stroke="currentColor" strokeWidth="1.8" /><path d="M12 1v7m0 8v7M1 12h7m8 0h7" stroke="currentColor" strokeWidth="1.8" /></svg>Crosshair</button>{precisionCrosshair && <span>{selectedEditPoint ? 'Point selected · Pan to aim · Double-tap to move' : 'Pan to aim · Double-tap to mark'}</span>}</div>}
           {pdf && touchControlsAvailable && precisionCrosshair && <div className="precision-crosshair" aria-label="Drawing centre crosshair"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M32 3v22m0 14v22M3 32h22m14 0h22" className="crosshair-outline" /><path d="M32 3v22m0 14v22M3 32h22m14 0h22" className="crosshair-stroke" /><circle cx="32" cy="32" r="4" className="crosshair-dot" /></svg></div>}
+          {phoneLayout && pdf && <button type="button" className="phone-footer-toggle" data-stage-control aria-expanded={!phoneFooterHidden} onClick={()=>{cancelTouchView();setPhoneFooterHidden(value=>!value)}}>{phoneFooterHidden ? 'Show status' : 'Hide status'}</button>}
           {pdf && <div className="drawing-footer" onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
             <div className={`drawing-scale-badge ${lengthCalibrationValid ? 'is-ready' : ''}`}><UiIcon name="lock" /><span>{lengthCalibrationValid ? 'Scale locked' : 'Calibration required'}</span></div>
             <span className="footer-zoom">{Math.round(scale * 100)}%</span>
