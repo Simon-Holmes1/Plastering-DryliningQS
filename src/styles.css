@@ -3001,3 +3001,108 @@ canvas { box-shadow: 0 3px 24px #1b39421c; }
 .welcome-houses-icon svg { display:block; width:74px; height:44px; }
 @media(max-width:1100px) { .tender-kpis { grid-template-columns:repeat(3,minmax(0,1fr)); } }
 @media(max-width:700px) { .tender-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+
+/* Compact, centred rate and material tables. Footer totals remain left aligned. */
+.rates-workspace .quantity-table th, .rates-workspace .quantity-table td,
+.materials-workspace .material-table th, .materials-workspace .material-table td { text-align:center; vertical-align:middle; padding:10px 8px; }
+.rates-workspace .quantity-table input, .rates-workspace .quantity-table select,
+.materials-workspace .material-table input { display:block; box-sizing:border-box; width:100%; max-width:110px; min-width:0; margin:5px auto 0; padding:7px 6px; min-height:36px; text-align:center; font-size:14px; }
+.rates-workspace .quantity-table select { max-width:150px; margin-top:0; }
+.rates-workspace .contractor-work-table { min-width:1040px; }
+.rates-workspace .contractor-work-table th:first-child { width:23%; }
+.rates-workspace .contractor-work-table th:nth-child(5) { width:16%; }
+.rates-workspace .quantity-table td:last-child { color:#63e9d8; font-weight:700; font-variant-numeric:tabular-nums; }
+.rates-workspace .charge-totals { text-align:left; }
+.materials-workspace .material-table .material-row-waste { max-width:80px; }
+/* Two rows put quantity and value on the same baseline in every summary card. */
+.summary-work-card { display:grid; grid-template-columns:minmax(0,1fr) max-content; grid-template-rows:minmax(28px,auto) minmax(26px,auto); align-items:center; gap:4px 10px; min-height:62px; font-variant-numeric:tabular-nums; }
+.summary-work-title { display:flex; align-items:center; gap:7px; min-width:0; font-size:12px; line-height:1.35; color:#e4eef5; }
+.summary-work-title .work-legend-swatches { flex-shrink:0; }
+.summary-card-rate { justify-self:end; font-size:11px; }
+.summary-card-quantities { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; color:#63e9d8; font-size:14px; font-weight:700; }
+.summary-card-value { justify-self:end; text-align:right; font-size:16px; font-weight:750; color:#63e9d8; }
+.summary-work-card .work-price-detail { display:contents; }
+.summary-work-card .work-rate { font-size:10px; color:#b9cedd; white-space:nowrap; }
+.summary-work-card .work-price { color:#63e9d8; white-space:nowrap; }
+.summary-work-card .work-price.is-unpriced { color:#ffd0b5; font-size:10px; white-space:normal; max-width:115px; display:inline-block; }
+.sidebar .summary-panel .category-summary { padding:8px 10px; }
+.summary-page-quantities .summary-page-quantity { padding:8px 0; }
+.summary-work-card + .skim-source-note, .summary-page-quantity > .skim-source-note { margin:3px 0 0; font-size:10px; }
+/* The eye stays accessible independently of the editing accordion. */
+.work-member-row { position:relative; }
+.work-member-row .work-member-card { margin:0; }
+.work-member-row .work-member-card summary { padding-right:35px; min-height:32px; }
+.work-member-eye { position:absolute; z-index:1; top:7px; right:7px; width:32px; min-height:32px; display:grid; place-items:center; padding:5px; background:#193145; border:1px solid #527586; border-radius:5px; color:#c8dce8; }
+.work-member-eye[aria-pressed="true"] { border-color:#22d3ce; color:#3ce1d7; background:#163e49; }
+.work-member-eye:focus-visible { outline:2px solid #63e9d8; outline-offset:2px; }
+/* Overview hides annotation boxes as well as their text; coloured geometry stays. */
+.measurement-overlay.overview-drawing .length-dimension,
+.measurement-overlay.overview-drawing .door-head-dimension { display:none; }
+.duplicate-board-popover { z-index:1010; }
+.duplicate-wall-options { padding:10px; border:1px solid #527586; border-radius:6px; margin:10px 0; }
+.duplicate-wall-options .board-spec-value { width:100%; white-space:normal; }
+.duplicate-dialog { max-height:calc(100dvh - 32px); overflow-y:auto; }
+@media (pointer:coarse) {
+  .rates-workspace .quantity-table input, .rates-workspace .quantity-table select,
+  .materials-workspace .material-table input { min-height:42px; font-size:16px; }
+  .work-member-eye { width:40px; min-height:40px; }
+  .work-member-row .work-member-card summary { padding-right:44px; min-height:40px; }
+}
+.summary-work-card { grid-template-rows:34px 26px; min-height:64px; }
+.summary-work-title strong { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.summary-category-entry > .summary-trade-heading { margin:10px 0 5px; padding:0 8px; }
+/* New charge controls and duplicate options follow the established navy palette. */
+.rates-workspace .contractor-work-table select { color:#e2f2f5; background:#102739; border:1px solid #547487; border-radius:5px; font:inherit; }
+.rates-workspace .contractor-work-table label { display:block; color:#b6cddb; font-size:11px; }
+.duplicate-dialog { background:var(--workspace-banner-bg,#1b3043); border:1px solid #527586; color:#e4eef5; }
+.duplicate-dialog h2, .duplicate-dialog strong, .duplicate-dialog label { color:#e4eef5; }
+.duplicate-dialog p, .duplicate-dialog .length-note { color:#b9cedd; }
+.duplicate-dialog input:not([type="radio"]), .duplicate-dialog select { background:#102739; border-color:#527586; color:#e4eef5; }
+.duplicate-dialog .board-spec-value { background:#102739; border-color:#527586; color:#3ce1d7; font-weight:700; }
+.duplicate-dialog .dialog-actions button { background:#21465c; border-color:#527586; color:#e4eef5; }
+.duplicate-dialog .dialog-actions .run-finish { background:#147f75; border-color:#3ce1d7; color:#fff; }
+.duplicate-dialog .calibration-warning { color:#ffd0b5; }
+/* Unit selectors use the same turquoise selection style throughout Rates. */
+.rate-basis-buttons { display:flex; justify-content:center; flex-wrap:wrap; gap:5px; margin:3px auto; }
+.rates-workspace .rate-basis-buttons button { display:inline-flex; align-items:center; justify-content:center; min-height:34px; padding:6px 9px; border:1px solid #527586; border-radius:5px; color:#c5d8e6; background:#102739; font:inherit; font-size:12px; font-weight:700; white-space:nowrap; cursor:pointer; }
+.rates-workspace .rate-basis-buttons button[aria-pressed="true"] { color:#3ce1d7; border-color:#25d6cb; background:#12454d; box-shadow:inset 0 -2px 0 #25d6cb; }
+.rates-workspace .rate-basis-buttons button:hover:not(:disabled) { color:#63e9d8; border-color:#63e9d8; }
+.rates-workspace .rate-basis-buttons button:focus-visible { outline:2px solid #63e9d8; outline-offset:2px; }
+.rates-workspace .rate-basis-buttons button:disabled { opacity:.35; cursor:not-allowed; }
+.rates-workspace .contractor-work-table { min-width:1140px; }
+.rates-workspace .contractor-work-table th:first-child { width:21%; }
+.rates-workspace .contractor-work-table th:nth-child(5) { width:18%; }
+.rates-workspace .contractor-work-table th:nth-child(6) { width:17%; }
+.rates-workspace .contractor-work-table td, .rates-workspace .contractor-work-table th { vertical-align:middle; }
+.linked-work-fields { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px; align-items:center; justify-items:center; }
+.linked-work-fields label { width:100%; text-align:center; font-size:11px; line-height:1.4; }
+.rates-workspace .linked-work-fields input { max-width:100px; margin:5px auto 0; }
+.linked-work-fields small { grid-column:1/-1; color:#b9cedd; font-size:10px; }
+.rates-workspace .contractor-work-table .contractor-total-charge { color:#63e9d8; font-size:19px; font-weight:800; font-variant-numeric:tabular-nums; }
+.contractor-total-charge:not(:has(*)) { overflow-wrap:normal; }
+.subcontractor-rate-field .rate-basis-buttons { margin-bottom:8px; }
+@media(pointer:coarse) { .rates-workspace .rate-basis-buttons button { min-height:42px; padding:8px 9px; } }
+.rates-workspace .rate-basis-buttons button[aria-pressed="false"] { color:#c5d8e6; border-color:#527586; background:#102739; box-shadow:none; font-style:normal; }
+.rates-workspace .rate-basis-buttons button[aria-pressed="true"] { font-style:normal; }
+/* Keep subcontractor basis controls beside the input, with compact single-height rows. */
+.rates-workspace .rates-table { min-width:900px; }
+.rates-table .quantity-col-work { width:30%; }
+.rates-table .quantity-col-area, .rates-table .quantity-col-length { width:10%; }
+.rates-table .quantity-col-count { width:7%; }
+.rates-table .quantity-col-basis { width:16%; }
+.rates-table .quantity-col-rate { width:14%; }
+.rates-table .quantity-col-value { width:13%; }
+.rates-workspace .rates-table th, .rates-workspace .rates-table td { padding:6px 8px; }
+.rates-table .rate-basis-buttons { flex-wrap:nowrap; margin:0 auto; }
+.rates-workspace .rates-table .rate-table-field input { margin:0 auto; }
+/* Planned exports use the existing navy and turquoise styling. */
+.export-options { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin:20px 0; }
+.export-option { display:flex; flex-direction:column; align-items:center; gap:12px; padding:22px 14px; border:1px solid #527586; border-radius:8px; color:#b9cedd; background:#102739; }
+.export-option button:disabled { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; min-height:48px; padding:10px; border:1px solid #3c969b; border-radius:6px; background:#183e4b; color:#63e9d8; font:inherit; font-size:16px; font-weight:700; opacity:1; cursor:default; }
+.export-option .ui-icon { width:24px; height:24px; flex-shrink:0; }
+.export-option > span { font-size:12px; }
+@media(max-width:800px) { .export-options { grid-template-columns:1fr; } }
+/* Currency remains outside the editable numeric value, preserving number entry. */
+.rates-table .rate-currency-input { position:relative; display:block; width:110px; max-width:100%; margin:0 auto; }
+.rates-table .rate-currency-prefix { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:#dfeef3; font-size:14px; font-weight:700; pointer-events:none; }
+.rates-workspace .rates-table .rate-currency-input input { width:100%; padding-left:25px; padding-right:12px; }
