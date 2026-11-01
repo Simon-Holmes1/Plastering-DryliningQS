@@ -3565,3 +3565,138 @@ body:has(.manager-fullscreen-drawing) { overflow:hidden; }
 .manager-shell .about-me-incomplete { animation:about-me-attention 1.8s ease-in-out infinite; color:#63e9d8; }
 @media(prefers-reduced-motion:reduce) { .manager-shell .about-me-incomplete { animation:none; outline:2px solid #3ce1d7; outline-offset:2px; } }
 @media(max-width:650px) { .invoice-history-row { grid-template-columns:minmax(0,1fr) auto 34px; gap:10px; } .booking-history .invoice-history-open { grid-column:1/-1; } .invoice-history-amount { font-size:18px; } }
+/* Shared hover treatment: the active page keeps its existing selected styling. */
+button:not(:disabled):not([aria-pressed="true"]):not([aria-selected="true"]):not(.active):not(.is-active):not(.selected):not(.welcome-actions button):is(:hover,:active) {
+ background-color:transparent !important; color:#3ce1d7 !important; border-color:#3ce1d7 !important; box-shadow:0 0 0 1px #3ce1d733,0 0 12px #25d6cb30;
+}
+button:focus-visible { outline:2px solid #3ce1d7; outline-offset:2px; }
+.subcontractor-houses { display:block; width:70px; height:42px; color:#48e2d2; }
+.subcontractor-houses svg { display:block; width:100%; height:100%; }
+.booking-banner .booking-year-panel { gap:22px; }
+.booking-year-panel .booking-pending-total strong { color:#ffbf69; }
+.booking-year-panel > div { flex-shrink:0; }
+.invoice-payment-cell { display:flex; flex-direction:column; align-items:stretch; gap:5px; text-align:center; }
+.invoice-payment-cell small { font-size:11px; color:#bed2de; white-space:nowrap; }
+.invoice-payment-dialog label { display:flex; flex-direction:column; gap:10px; margin:20px 0; }
+.invoice-payment-dialog input[type="date"] { min-height:44px; width:100%; color-scheme:dark; }
+.manager-shell .payment-date-na[aria-pressed="true"], .booking-methods button[aria-pressed="true"], .manager-shell .booking-work-select[aria-pressed="true"] { background:#12454d; color:#63e9d8; border-color:#25d6cb; box-shadow:inset 0 -2px 0 #25d6cb; }
+.invoice-party-editor [readonly] { cursor:default; background:#122b3d; color:#e4eef5; border-color:#3c586c; resize:none; }
+.invoice-party-editor [readonly]:focus { outline:none; box-shadow:none; }
+.booking-floor-choice h3 { margin:18px 0 10px; font-size:14px; }
+.booking-floors { flex-wrap:wrap; }
+.booking-work-table { min-width:0; table-layout:fixed; }
+.booking-work-table th:first-child { width:52%; }
+.booking-work-table td { text-align:right; white-space:nowrap; }
+.booking-work-table th:not(:first-child) { text-align:right; }
+.manager-shell .booking-work-select { width:100%; min-height:62px; display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:6px; text-align:left; padding:10px 12px; white-space:normal; }
+.booking-work-select strong { font-size:14px; }
+.booking-work-select .booking-work-meta { font-size:12px; font-weight:400; color:inherit; line-height:1.5; }
+.booking-work-meta > span { white-space:nowrap; }
+.booking-variation-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; }
+.booking-variation-heading h3 { margin:0; font-size:15px; }
+.booking-variation-heading button { flex-shrink:0; }
+@media(max-width:1050px) { .booking-banner .booking-year-panel { gap:14px; } .booking-year-panel strong { font-size:24px; } .booking-shell .booking-year-panel select { width:210px; } }
+@media(max-width:700px) {
+ .booking-banner { flex-wrap:wrap; }
+ .booking-banner .booking-year-panel { flex-basis:100%; margin-left:0; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+ .booking-year-panel strong { font-size:24px; }
+ .booking-shell .booking-year-panel select { width:100%; }
+ .booking-year-panel label { flex-basis:100%; }
+ .booking-work-table { font-size:11px; }
+ .booking-work-table th,.booking-work-table td { padding:8px 5px; }
+ .booking-work-table th:first-child { width:46%; }
+ .manager-shell .booking-work-select { padding:9px 7px; }
+ .booking-work-select strong { font-size:12px; }
+ .booking-work-select .booking-work-meta { font-size:11px; }
+ .booking-variation-heading { gap:8px; }
+ .booking-variation-heading h3 { font-size:13px; }
+}
+/* Modern and Bold use a clean document surface and light row separators. */
+.booking-invoice:is(.invoice-template-modern,.invoice-template-bold) { background:#fff; color:#172d40; padding:32px; border:0; border-radius:4px; box-shadow:0 3px 18px #06172422; }
+.booking-invoice:is(.invoice-template-modern,.invoice-template-bold) :is(h1,h2,h3,p,strong,span,td,th) { color:#172d40; }
+.booking-invoice.invoice-template-modern > header { padding:0 0 24px; margin-bottom:26px; border:0; border-bottom:2px solid var(--invoice-accent); }
+.booking-invoice.invoice-template-bold > header { background:transparent; padding:10px 0 10px 24px; margin-bottom:30px; border:0; border-left:5px solid var(--invoice-accent); border-radius:0; }
+.booking-invoice.invoice-template-bold > header, .booking-invoice.invoice-template-bold > header * { color:#172d40 !important; }
+.booking-invoice.invoice-template-modern .invoice-document-heading :is(h1,h2) { font-size:40px; font-weight:600; letter-spacing:-1.2px; }
+.booking-invoice.invoice-template-bold .invoice-document-heading :is(h1,h2) { font-size:44px; font-weight:800; letter-spacing:-1.5px; }
+.booking-invoice:is(.invoice-template-modern,.invoice-template-bold) .invoice-addresses h3 { text-transform:uppercase; letter-spacing:.9px; font-size:10px; color:#65788b; }
+.booking-invoice:is(.invoice-template-modern,.invoice-template-bold) .invoice-addresses { margin-bottom:30px; }
+.booking-invoice:is(.invoice-template-modern,.invoice-template-bold) .invoice-creator-table { border-collapse:collapse; }
+.booking-invoice:is(.invoice-template-modern,.invoice-template-bold) .invoice-creator-table :is(th,td) { border:0; padding:14px 10px; background:transparent; }
+.booking-invoice:is(.invoice-template-modern,.invoice-template-bold) .invoice-creator-table thead { background:var(--invoice-accent-soft); }
+.booking-invoice:is(.invoice-template-modern,.invoice-template-bold) .invoice-creator-table thead th { font-size:10px; text-transform:uppercase; letter-spacing:.3px; font-weight:700; }
+.booking-invoice:is(.invoice-template-modern,.invoice-template-bold) .invoice-creator-table tbody tr { border-bottom:1px solid #e2e8ee; background:transparent; }
+.booking-invoice.invoice-template-bold .invoice-creator-table tbody th { font-weight:600; }
+.booking-invoice:is(.invoice-template-modern,.invoice-template-bold) .booking-invoice-total { border:0; margin-top:24px; font-size:15px; }
+.booking-invoice:is(.invoice-template-modern,.invoice-template-bold) .booking-invoice-total strong { font-size:32px; }
+.booking-invoice:is(.invoice-template-modern,.invoice-template-bold) .invoice-document-footer { color:#65788b; }
+.booking-invoice:is(.invoice-template-modern,.invoice-template-bold) .invoice-document-footer :is(p,span) { color:inherit; }
+@media print {
+ .booking-invoice:is(.invoice-template-modern,.invoice-template-bold) { box-shadow:none; padding:0; }
+ .booking-invoice.invoice-template-modern > header { padding:0 0 18px; }
+ .booking-invoice.invoice-template-bold > header { background:transparent; padding:6px 0 6px 18px; }
+ .booking-invoice:is(.invoice-template-modern,.invoice-template-bold) .invoice-document-heading :is(h1,h2) { font-size:32px; }
+ .booking-invoice:is(.invoice-template-modern,.invoice-template-bold) .invoice-creator-table :is(th,td) { padding:11px 7px; }
+ .booking-invoice:is(.invoice-template-modern,.invoice-template-bold) .invoice-creator-table thead { print-color-adjust:exact; }
+ .booking-invoice:is(.invoice-template-modern,.invoice-template-bold) .invoice-creator-table tbody tr { background:transparent; }
+}
+
+/* All document previews share the navy surface, outlines and rounded corners. */
+@media screen {
+ .booking-invoice[class*="invoice-template-"] { background:transparent; color:#e4eef5; border:1px solid #527586; border-radius:12px; box-shadow:none; }
+ .booking-invoice[class*="invoice-template-"] :is(h1,h2,h3,p,strong,span,td,th) { color:#e4eef5; }
+ .booking-invoice.invoice-template-bold > header, .booking-invoice.invoice-template-bold > header * { color:#e4eef5 !important; }
+ .booking-invoice[class*="invoice-template-"] > header { background:transparent; border-radius:8px; }
+ .booking-invoice[class*="invoice-template-"] .invoice-creator-table thead { background:#203e52; }
+ .booking-invoice[class*="invoice-template-"] .invoice-creator-table thead th { color:#bed2de; }
+ .booking-invoice[class*="invoice-template-"] .invoice-creator-table tbody tr { border-bottom-color:#425e72; }
+ .booking-invoice[class*="invoice-template-"] .invoice-creator-table :is(th,td) { border-color:#425e72; }
+ .booking-invoice[class*="invoice-template-"] .invoice-addresses h3 { color:#bed2de; }
+ .booking-invoice[class*="invoice-template-"] .booking-invoice-total strong { color:#3ce1d7; }
+ .booking-invoice[class*="invoice-template-"] .invoice-document-footer :is(p,span) { color:#bed2de; }
+}
+.booking-invoice[class*="invoice-template-"] { border-radius:12px; }
+.booking-work-table tbody th:first-child { padding:0; vertical-align:middle; }
+.manager-shell .booking-work-table .booking-work-select { width:100%; min-height:80px; height:100%; border-radius:6px; padding:12px; }
+.booking-work-table tbody th:first-child:has(.booking-work-select[aria-pressed="true"]) { background:#12454d; }
+.booking-work-table tbody td:first-of-type { font-size:18px; font-weight:700; color:#3ce1d7; }
+.booking-existing-balance { color:#ffbf69; font-size:11px; font-weight:400; line-height:1.4; }
+.subcontractor-shell .manager-prices .tabular-summary-totals { display:block; width:100%; margin:16px auto 0; }
+.subcontractor-shell .manager-prices .tabular-summary-totals .trade-subtotals { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:0; padding:0; border:0; background:transparent; }
+.subcontractor-shell .manager-prices .tabular-summary-totals .trade-subtotal { display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; min-height:78px; gap:7px; margin:0; padding:12px 8px; border:1px solid #527586; border-radius:8px; font-size:12px; }
+.subcontractor-shell .manager-prices .tabular-summary-totals .trade-subtotal strong { color:#3ce1d7; font-size:20px; }
+.subcontractor-project-nav { position:sticky; top:var(--subcontractor-banner-height,70px); z-index:9; display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:0 0 20px; padding:12px; border:1px solid #4d7488; border-radius:8px; background:#142a3c; }
+@media(max-width:700px) {
+ .booking-work-table tbody td:first-of-type { font-size:15px; }
+ .manager-shell .booking-work-table .booking-work-select { padding:10px 7px; }
+ .subcontractor-shell .manager-prices .tabular-summary-totals .trade-subtotals { gap:6px; }
+ .subcontractor-shell .manager-prices .tabular-summary-totals .trade-subtotal { padding:10px 5px; font-size:10px; }
+ .subcontractor-shell .manager-prices .tabular-summary-totals .trade-subtotal strong { font-size:17px; }
+}
+
+
+/* Shared invoice columns adapt to whether a variation is present. */
+.booking-invoice .invoice-creator-table :is(th,td) { width:auto; vertical-align:top; }
+.invoice-line-work { line-height:1.5; }
+.booking-invoice .invoice-line-variation { display:block; margin-top:7px; font-size:11px; font-weight:400; line-height:1.5; color:#bed2de; white-space:pre-line; overflow-wrap:anywhere; }
+@media print { .booking-invoice .invoice-line-variation { font-size:10px; color:#43556a !important; } }
+
+@media print { .booking-invoice tr.invoice-long-variation-row { break-inside:auto; page-break-inside:auto; } .booking-invoice .invoice-line-variation { break-inside:avoid; } }
+
+/* Whole-row work choices retain table headings and a keyboard-operable button. */
+.booking-selection-controls { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 3px; }
+.manager-shell .booking-selection-controls button { min-height:32px; padding:6px 11px; font-size:11px; }
+.booking-work-table { border-collapse:separate; border-spacing:0 8px; }
+.booking-work-table .booking-selectable-row { cursor:pointer; -webkit-tap-highlight-color:transparent; }
+.booking-work-table .booking-selectable-row > :is(th,td) { border-top:1px solid #4d7488; border-bottom:1px solid #4d7488; background:transparent; transition:background-color 140ms,border-color 140ms; }
+.booking-work-table .booking-selectable-row > th:first-child { border-left:1px solid #4d7488; border-radius:8px 0 0 8px; }
+.booking-work-table .booking-selectable-row > td:last-child { border-right:1px solid #4d7488; border-radius:0 8px 8px 0; }
+.booking-work-table .booking-selectable-row:is(:hover,:focus-within) > :is(th,td) { border-color:#3ce1d7; }
+.booking-work-table .booking-selectable-row.is-selected > :is(th,td) { background:#12454d; border-color:#25d6cb; }
+.manager-shell .booking-work-table .booking-work-select, .manager-shell .booking-work-table .booking-work-select:is(:hover,:active,:focus-visible) { background:transparent !important; border-color:transparent !important; box-shadow:none !important; border-radius:0; }
+.booking-work-table .booking-work-select:focus-visible { outline:none; }
+.booking-work-table .has-booked-value .booking-original-value { color:#a9c4d5; font-size:13px; font-weight:400; }
+.booking-work-table .has-booked-value .booking-original-value s { text-decoration-thickness:1px; }
+.booking-work-table .has-booked-value .booking-remaining-value { font-size:18px; font-weight:700; color:#3ce1d7; }
+@media(max-width:700px) { .booking-work-table .has-booked-value .booking-original-value { font-size:11px; } .booking-work-table .has-booked-value .booking-remaining-value { font-size:15px; } }
+@media(pointer:coarse) { .manager-shell .booking-selection-controls button { min-height:44px; } }
