@@ -3700,3 +3700,61 @@ button:focus-visible { outline:2px solid #3ce1d7; outline-offset:2px; }
 .booking-work-table .has-booked-value .booking-remaining-value { font-size:18px; font-weight:700; color:#3ce1d7; }
 @media(max-width:700px) { .booking-work-table .has-booked-value .booking-original-value { font-size:11px; } .booking-work-table .has-booked-value .booking-remaining-value { font-size:15px; } }
 @media(pointer:coarse) { .manager-shell .booking-selection-controls button { min-height:44px; } }
+/* Activated by positive phone detection only. Desktop and iPad keep their DOM/layout. */
+@media screen {
+ .manager-shell.sub-phone-portrait { padding-top:var(--sub-phone-chrome-height,0px); padding-bottom:calc(80px + env(safe-area-inset-bottom,0px)); scroll-padding-top:calc(var(--sub-phone-chrome-height,0px) + 12px); }
+ .sub-phone-chrome { position:fixed; inset:0 0 auto; z-index:70; width:100%; padding-top:env(safe-area-inset-top,0px); background:#102737; box-shadow:0 3px 12px #06172440; transform:translateY(0); transition:transform 180ms ease; }
+ .sub-phone-chrome-collapsed > .sub-phone-chrome { transform:translateY(-105%); pointer-events:none; }
+ .sub-phone-chrome > :is(.manager-banner,.invoice-cart-bar,.subcontractor-project-nav) { position:static; top:auto; width:100%; margin:0; border-radius:0; box-shadow:none; }
+ .sub-phone-chrome > .manager-banner { min-height:0; padding:10px 12px; gap:8px; flex-wrap:wrap; }
+ .sub-phone-chrome > .manager-banner > div:first-child { gap:8px; }
+ .sub-phone-chrome > .manager-banner strong { font-size:20px; }
+ .sub-phone-chrome > .manager-banner > .manager-view-badge { display:none; }
+ .sub-phone-chrome > .manager-banner > button { margin-left:0; min-height:40px; padding:8px 10px; font-size:11px; }
+ .sub-phone-chrome > .booking-banner .booking-year-panel { display:grid; grid-template-columns:1fr 1fr 1fr; flex-basis:100%; gap:10px; margin-left:0; }
+ .sub-phone-chrome .booking-year-panel > div > span { font-size:9px; }
+ .sub-phone-chrome .booking-year-panel strong { font-size:21px; }
+ .sub-phone-chrome .booking-year-panel label { font-size:9px; gap:4px; }
+ .sub-phone-chrome .booking-year-panel select { width:100%; min-height:38px; padding:6px 8px; font-size:12px; }
+ .sub-phone-chrome > :is(.invoice-cart-bar,.subcontractor-project-nav) { display:flex; flex-wrap:nowrap; align-items:center; gap:7px; overflow-x:auto; padding:8px 10px; border:0; border-top:1px solid #3c6579; border-bottom:1px solid #3c6579; scrollbar-width:none; }
+ .sub-phone-chrome > :is(.invoice-cart-bar,.subcontractor-project-nav)::-webkit-scrollbar { display:none; }
+ .sub-phone-chrome > :is(.invoice-cart-bar,.subcontractor-project-nav) > button { flex-shrink:0; min-height:40px; padding:8px 10px; font-size:11px; white-space:nowrap; }
+ .sub-phone-portrait .sub-phone-back, .sub-phone-portrait .sub-phone-back:is(:hover,:active,:focus-visible) { position:fixed; left:max(12px,env(safe-area-inset-left,0px)); bottom:calc(14px + env(safe-area-inset-bottom,0px) + var(--sub-phone-keyboard-inset,0px)); z-index:10001; display:grid; place-items:center; width:48px; height:48px; min-height:48px; padding:0; border:1px solid #3ce1d7 !important; border-radius:50%; background:#102737 !important; color:#63e9d8 !important; box-shadow:0 4px 14px #06172480; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+ .sub-phone-back svg { width:23px; height:23px; }
+ .sub-phone-portrait .sub-phone-back:disabled { opacity:.45; }
+ .sub-phone-portrait:has(.manager-fullscreen-drawing) > .sub-phone-chrome { display:none; }
+ .sub-phone-portrait:has(.manager-fullscreen-drawing) .sub-phone-back { bottom:calc(42px + env(safe-area-inset-bottom,0px)); }
+ @media(prefers-reduced-motion:reduce) { .sub-phone-chrome { transition:none; } }
+}
+@media print { .sub-phone-chrome,.sub-phone-back { display:none !important; } }
+/* Compact subcontractor navigation and booking context, shared across devices. */
+.manager-shell .subcontractor-home-button { display:inline-grid; place-items:center; width:42px; padding:8px; flex-shrink:0; }
+.subcontractor-home-button svg { width:22px; height:22px; }
+.manager-shell .manager-banner > .subcontractor-account-button { margin-left:auto; flex:0 0 auto; align-self:flex-start; }
+.booking-banner > .subcontractor-account-button { order:0; }
+.booking-work-heading { margin:20px 0 24px; }
+.booking-work-heading .booking-project-name { color:#63e9d8; font-size:20px; font-weight:750; line-height:1.35; margin:0 0 10px; }
+.booking-work-heading h1 { font-size:26px; line-height:1.25; margin:0 0 16px; }
+.booking-context-buttons { display:flex; gap:10px; flex-wrap:wrap; }
+.booking-context-buttons button { color:#63e9d8; font-size:16px; }
+.booking-option-heading { font-size:18px; line-height:1.35; margin:0 0 12px; }
+@media screen {
+ .sub-phone-portrait { touch-action:pan-x pan-y; }
+ .sub-phone-portrait input:not([type="color"]):not([type="range"]), .sub-phone-portrait textarea, .sub-phone-portrait select { font-size:16px; }
+ .sub-phone-chrome > .manager-banner > div:not(.booking-year-panel) { flex:1 1 auto; min-width:0; }
+ .sub-phone-chrome > .manager-banner > button:not(.subcontractor-account-button):not(.subcontractor-home-button) { order:2; margin-left:0; }
+ .sub-phone-chrome > .manager-banner > .subcontractor-account-button { margin-left:auto; order:0; font-size:12px; }
+ .sub-phone-chrome > .booking-banner .booking-year-panel { order:1; }
+ .sub-phone-chrome .booking-year-panel select { font-size:16px; }
+ .sub-phone-chrome > .invoice-cart-bar { gap:5px; padding-inline:8px; }
+ .sub-phone-chrome > .invoice-cart-bar > button { padding-inline:8px; font-size:11px; }
+ .sub-phone-chrome > .invoice-cart-bar > .subcontractor-home-button { width:38px; }
+ .sub-phone-portrait .booking-work-heading .booking-project-name { font-size:18px; }
+ .sub-phone-portrait .booking-work-heading h1 { font-size:23px; }
+ .sub-phone-portrait .booking-option-heading { font-size:17px; }
+ .sub-phone-portrait .booking-context-buttons button { font-size:15px; }
+ .sub-phone-portrait .booking-methods { gap:6px; }
+ .sub-phone-portrait .booking-methods button { font-size:12px; padding-inline:9px; }
+ .sub-phone-portrait .manager-viewer-stage { touch-action:none; }
+}
+
