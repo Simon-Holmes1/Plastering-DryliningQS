@@ -3758,3 +3758,199 @@ button:focus-visible { outline:2px solid #3ce1d7; outline-offset:2px; }
  .sub-phone-portrait .manager-viewer-stage { touch-action:none; }
 }
 
+/* Phone-only subcontractor screens. Desktop and iPad retain their existing layout. */
+.account-symbol { display:none; }
+.phone-preview-account { margin-left:auto; }
+@media screen {
+ .sub-phone-portrait { --phone-navy:#102737; --phone-card:#1e3b50; --phone-teal:#25d6cb; }
+ .sub-phone-portrait .manager-preview-note, .sub-phone-portrait .manager-save-status { display:none; }
+ .sub-phone-portrait > .manager-main { padding:22px 16px 30px; }
+ .sub-phone-portrait .phone-new-header { box-shadow:0 1px 0 #416073; }
+ .phone-new-header > header { display:flex; align-items:center; gap:10px; padding:10px 16px; min-height:60px; }
+ .phone-new-header strong { font-size:21px; color:#e4eef5; letter-spacing:-.5px; }
+ .phone-new-header strong > span { color:#25d6cb; }
+ .sub-phone-portrait .phone-new-header button { background:transparent; border:0; min-height:42px; padding:8px; }
+ .phone-new-header > header > button:first-child:not(.subcontractor-account-button) { width:36px; }
+ .phone-new-header svg, .phone-bottom-nav svg { width:24px; height:24px; }
+ .sub-phone-portrait .phone-new-header .subcontractor-account-button { margin-left:auto; padding:8px; width:42px; }
+ .sub-phone-portrait .account-label { display:none; }
+ .sub-phone-portrait .account-symbol { display:flex; }
+ .phone-bottom-nav { position:fixed; z-index:75; inset:auto 0 0; display:grid; grid-template-columns:repeat(4,1fr); gap:2px; padding:7px 8px calc(7px + env(safe-area-inset-bottom,0px)); border-top:1px solid #416073; background:#102737; transition:transform 180ms ease; }
+ .manager-shell .phone-bottom-nav button { border:0; border-radius:8px; min-height:54px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; background:transparent; font-size:11px; font-weight:500; padding:6px; }
+ .manager-shell .phone-bottom-nav button[aria-current="page"] { color:#25d6cb; background:#25d6cb0b; }
+ .sub-phone-chrome-collapsed > .phone-bottom-nav { transform:translateY(110%); pointer-events:none; }
+ .sub-phone-portrait:has(.manager-fullscreen-drawing) > .phone-bottom-nav { display:none; }
+ .sub-phone-portrait .sub-phone-back { display:none; }
+ .phone-home-feed h1 { font-size:25px; line-height:1.25; margin:2px 0 7px; letter-spacing:-.6px; }
+ .phone-home-feed > p { color:#c3d9e6; font-size:14px; margin:0 0 30px; }
+ .phone-home-feed h2 { font-size:19px; }
+ .phone-feed-empty { border:1px solid #416073; border-radius:14px; background:#1a3348; padding:28px 22px; text-align:center; }
+ .phone-feed-empty svg { width:48px; height:48px; color:#25d6cb; }
+ .phone-feed-empty h3 { font-size:19px; }
+ .phone-feed-empty p { color:#bed2de; font-size:14px; line-height:1.6; }
+ .sub-phone-portrait .phone-wide { width:100%; margin:12px 0 0; min-height:50px; font-size:15px; border-radius:9px; }
+ .sub-phone-portrait .booking-primary { background:#25d6cb; color:#082331; border-color:#25d6cb; box-shadow:none; }
+ .sub-phone-portrait .booking-primary:disabled { opacity:.4; }
+ .phone-progress { display:flex; justify-content:space-between; gap:0; margin:0 0 22px; position:relative; }
+ .phone-progress::before { content:''; position:absolute; top:16px; left:10%; right:10%; height:1px; background:#527586; }
+ .manager-shell .phone-progress button { position:relative; z-index:1; display:flex; flex-direction:column; align-items:center; gap:7px; padding:0; border:0; background:transparent; font-weight:500; width:20%; color:#c3d9e6; opacity:1; }
+ .phone-progress button > span { border:1px solid #7694a6; border-radius:50%; width:32px; height:32px; display:grid; place-items:center; background:#102737; font-size:14px; }
+ .phone-progress button > span.is-reached { background:#25d6cb; border-color:#25d6cb; color:#102737; }
+ .phone-progress small { font-size:10px; }
+ .phone-booking-context { font-size:13px; line-height:1.5; color:#c3d9e6; margin-bottom:10px; }
+ .phone-booking-work h1, .phone-invoice-builder h1 { font-size:24px; letter-spacing:-.5px; margin:12px 0 18px; }
+ .phone-booking-work h2 { font-size:18px; }
+ .phone-trade-choices { display:grid; gap:12px; }
+ .manager-shell .phone-trade-choices button { display:flex; align-items:center; gap:16px; min-height:68px; border-radius:12px; background:#1e3b50; padding:16px; text-align:left; font-size:17px; }
+ .phone-selection-dot { display:block; width:21px; height:21px; border:1px solid #91aabb; border-radius:50%; flex:0 0 21px; box-shadow:inset 0 0 0 4px #1e3b50; background:transparent; }
+ .manager-shell :is(.phone-trade-choices,.phone-work-cards) > button[aria-pressed="true"] { border:2px solid #25d6cb; background:#164252; color:#e4eef5; }
+ [aria-pressed="true"] > .phone-selection-dot { background:#25d6cb; border-color:#25d6cb; }
+ .phone-step-note { text-align:center; font-size:12px; color:#bed2de; margin-top:24px; }
+ .sub-phone-portrait .phone-booking-methods { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+ .sub-phone-portrait .phone-booking-methods button { min-width:0; min-height:58px; font-size:11px; padding:8px 4px; white-space:normal; }
+ .phone-work-cards { display:grid; gap:12px; margin:16px 0; }
+ .manager-shell .phone-work-cards > button { display:flex; align-items:center; width:100%; gap:11px; min-height:90px; padding:14px 12px; background:#1e3b50; border-radius:12px; text-align:left; }
+ .phone-work-copy { display:flex; flex:1; min-width:0; flex-direction:column; gap:7px; }
+ .phone-work-copy > strong { font-size:14px; line-height:1.35; }
+ .phone-work-copy small { font-size:11px; font-weight:400; color:#c3d9e6; line-height:1.5; overflow-wrap:anywhere; }
+ .phone-work-price { display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+ .phone-work-price > strong { font-size:17px; color:#25d6cb; white-space:nowrap; }
+ .phone-work-price s { color:#a6bac7; font-size:11px; font-weight:400; }
+ .sub-phone-portrait .booking-selection-controls { justify-content:flex-end; gap:8px; }
+ .sub-phone-portrait .booking-selection-controls button { min-height:40px; font-size:11px; padding:8px; }
+ .sub-phone-portrait .booking-variations { padding:0; border:0; margin:18px 0; }
+ .sub-phone-portrait .booking-variations form { display:grid; gap:12px; margin-top:14px; }
+ .phone-total { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:17px 12px; margin:20px 0 6px; border:1px solid #527586; border-radius:10px; font-size:14px; }
+ .phone-total strong { color:#25d6cb; font-size:23px; }
+ .phone-booking-card { border:1px solid #527586; border-radius:12px; padding:16px; background:#1e3b50; display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin:14px 0; }
+ .phone-booking-card > div { flex:1; min-width:0; }
+ .phone-booking-card h2 { font-size:17px; margin:0 0 5px; }
+ .phone-booking-card p, .phone-booking-card span { font-size:13px; line-height:1.6; color:#c3d9e6; margin:5px 0 10px; overflow-wrap:anywhere; }
+ .phone-booking-card strong { display:block; font-size:19px; color:#25d6cb; }
+ .manager-shell .phone-remove { border:0; color:#f58e83; background:transparent; width:38px; min-height:38px; padding:3px; font-size:26px; }
+ .phone-invoice-details { display:grid; gap:14px; margin-top:24px; }
+ .phone-invoice-details label { display:grid; gap:8px; font-size:13px; }
+ .sub-phone-portrait .phone-reset { display:block; margin:20px auto; font-size:12px; background:transparent; }
+ .sub-phone-portrait .phone-draft-shortcut { width:100%; color:#25d6cb; margin:0 0 20px; min-height:44px; border-color:#25d6cb; text-align:right; }
+ .sub-phone-portrait .phone-account-readonly { margin-top:15px; }
+ .sub-phone-portrait .phone-account-readonly { display:none; }
+ .sub-phone-portrait.details-shell .manager-main > p:first-of-type { display:none; }
+ .phone-profile-card { display:flex; align-items:center; gap:12px; border:1px solid #527586; border-radius:12px; padding:20px 16px; background:#1e3b50; margin:20px 0; }
+ .phone-profile-card > div { flex:1; min-width:0; }
+ .phone-profile-card h2 { font-size:18px; margin:0 0 9px; overflow-wrap:anywhere; }
+ .phone-profile-card p { font-size:13px; margin:4px 0; white-space:pre-line; overflow-wrap:anywhere; }
+ .phone-profile-card small { font-size:12px; }
+ .phone-profile-card button { flex:0 0 auto; font-size:11px; padding:8px; }
+ .phone-account-readonly :is(input,textarea) { border-color:transparent !important; background:transparent !important; padding-left:0 !important; resize:none; }
+ .phone-account-readonly .booking-actions { display:none; }
+ .phone-account-finances { margin-top:26px; padding:18px; background:#1e3b50; border:1px solid #527586; border-radius:12px; }
+ .phone-account-finances > label { display:flex; justify-content:space-between; align-items:center; gap:12px; font-size:14px; }
+ .phone-account-finances select { max-width:125px; }
+ .phone-finance-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:18px 0 10px; }
+ .phone-finance-grid > div { min-width:0; padding:12px 8px; border:1px solid #527586; border-radius:9px; }
+ .phone-finance-grid span { font-size:12px; display:block; margin-bottom:10px; }
+ .phone-finance-grid strong { font-size:20px; color:#25d6cb; overflow-wrap:anywhere; }
+ .phone-finance-grid .phone-pending strong { color:#ffad52; }
+ .phone-account-finances > small { font-size:11px; color:#bed2de; }
+ .phone-account-finances > button { width:100%; margin-top:18px; }
+ .phone-invoice-preview { position:fixed; z-index:10010; inset:0; height:100dvh; display:flex; flex-direction:column; gap:8px; padding:calc(8px + env(safe-area-inset-top,0px)) 10px calc(10px + env(safe-area-inset-bottom,0px)); background:#102737; color:#e4eef5; }
+ .phone-invoice-preview > header { display:flex; gap:12px; align-items:center; flex:0 0 auto; }
+ .phone-invoice-preview > header h1 { font-size:19px; margin:5px 0; }
+ .phone-invoice-preview > header button { width:40px; padding:8px; background:transparent; border:0; }
+ .phone-invoice-preview svg { width:24px; height:24px; }
+ .phone-preview-controls { flex:0 0 auto; }
+ .phone-template-choices { display:flex; gap:6px; overflow:auto; padding:2px 0 7px; }
+ .manager-shell .phone-template-choices button { flex:0 0 auto; font-size:11px; min-height:34px; padding:7px 9px; }
+ .phone-template-choices button[aria-pressed="true"] { color:#25d6cb; border-color:#25d6cb; }
+ .phone-accent-choices { display:flex; align-items:center; justify-content:center; gap:12px; }
+ .manager-shell .phone-accent-choices > button { min-height:24px; width:24px; padding:0; border-radius:50%; }
+ .phone-accent-choices > button[aria-pressed="true"] { outline:2px solid #25d6cb; outline-offset:3px; }
+ .phone-accent-choices label { display:flex; align-items:center; gap:6px; font-size:10px; }
+ .phone-accent-choices input[type="color"] { width:28px; height:28px; min-height:28px; padding:0; }
+ .phone-invoice-fit { flex:1 1 auto; min-height:0; position:relative; overflow:hidden; touch-action:none; border:1px solid #527586; border-radius:10px; }
+ .phone-invoice-fit > .booking-invoice { position:absolute; top:50%; left:50%; width:760px; min-width:760px; min-height:1020px; margin:0; padding:32px; border:1px solid #527586; border-radius:14px; transform-origin:center center; }
+ .phone-invoice-fit .booking-invoice .invoice-creator-table { min-width:0; }
+ .phone-invoice-fit .booking-invoice header { flex-direction:row; }
+ .phone-invoice-fit .booking-invoice .invoice-document-heading h1 { font-size:34px; }
+ .phone-invoice-fit .invoice-creator-table { font-size:13px; }
+ .phone-invoice-fit .booking-invoice .invoice-document-footer { margin-top:auto; }
+ .phone-preview-paging { display:flex; align-items:center; justify-content:center; gap:10px; flex:0 0 auto; }
+ .phone-preview-paging span { font-size:11px; }
+ .manager-shell .phone-preview-paging button { min-height:32px; font-size:11px; padding:6px 10px; }
+ .phone-invoice-preview > footer { flex:0 0 auto; }
+ .phone-invoice-preview > footer button { margin:0; }
+ .phone-invoice-preview > footer small { font-size:11px; display:block; margin-top:5px; color:#ffbd79; }
+ @media(prefers-reduced-motion:reduce) { .phone-bottom-nav { transition:none; } }
+}
+@media print { .phone-bottom-nav,.phone-new-header,.phone-invoice-preview { display:none !important; } }
+/* Booking refinements and the shared invoice identity form. */
+.invoice-details-form fieldset { min-width:0; border:1px solid #527586; border-radius:10px; padding:16px; display:grid; gap:14px; }
+.invoice-details-form legend { color:#63e9d8; font-weight:700; padding:0 7px; }
+.invoice-details-form .account-company-toggle { display:flex; gap:10px; }
+.account-company-toggle button { min-width:80px; }
+.account-company-toggle button[aria-pressed="true"] { border-color:#25d6cb; color:#25d6cb; background:#164252; }
+.booking-invoice .invoice-document-heading { display:block; }
+.booking-invoice .invoice-document-date { text-align:left; }
+.booking-invoice .invoice-document-date p { margin:5px 0; }
+@media screen {
+ .sub-phone-portrait .phone-plot-project { font-size:24px; margin:0 0 22px; }
+ .phone-plot-heading { display:grid; gap:20px; }
+ .phone-plot-heading .manager-search { width:100%; font-size:12px; }
+ .phone-plot-heading .manager-search input { width:100%; }
+ .phone-plot-heading h2 { font-size:22px; margin:0 0 12px; }
+ .sub-phone-portrait.booking-shell :is(.manager-project-card,.booking-plots button):is(:hover,:active,:focus-visible) { background:#1e3b50 !important; border-color:#25d6cb !important; color:#e4eef5 !important; }
+ .phone-dialog-backdrop { position:fixed; z-index:11000; inset:0; display:flex; justify-content:center; align-items:center; padding:16px; background:#06172499; backdrop-filter:blur(7px); -webkit-backdrop-filter:blur(7px); }
+ .phone-dialog { width:min(100%,480px); max-height:78dvh; overflow:auto; padding:22px; border:1px solid #527586; border-radius:16px; background:#142a3c; color:#e4eef5; box-shadow:0 12px 60px #0008; }
+ .phone-dialog h2 { font-size:22px; margin:0 0 20px; }
+ .phone-dialog form { display:grid; gap:16px; }
+ .phone-dialog label { display:grid; gap:8px; font-size:14px; }
+ .phone-dialog :is(input,textarea) { width:100%; border:1px solid #527586; border-radius:8px; background:#102737; color:#e4eef5; padding:12px; font-size:16px; }
+ .phone-dialog textarea { min-height:90px; resize:vertical; }
+ .phone-dialog textarea, .invoice-details-form textarea { font-family:inherit; }
+ .manager-shell .phone-danger { border-color:#e47f74; color:#ffada4; background:#6f282e; }
+ .manager-shell .phone-danger:is(:hover,:focus-visible,:active) { border-color:#ffada4 !important; color:#ffada4 !important; background:#6f282e !important; }
+ .phone-work-variation { display:flex; align-items:center; gap:12px; background:#1e3b50; border:1px solid #25d6cb; border-radius:12px; padding:15px 12px; margin:12px 0; }
+ .phone-work-variation > div { flex:1; min-width:0; }
+ .phone-work-variation strong { font-size:14px; }
+ .phone-work-variation > strong { color:#25d6cb; font-size:17px; white-space:nowrap; }
+ .phone-work-variation small { display:block; font-size:11px; color:#bed2de; margin-top:7px; }
+ .phone-work-variation button { color:#ffada4; border:0; background:transparent; min-height:36px; padding:5px; }
+ .phone-variation-total { margin-top:8px; }
+ .phone-draft-notice { border:1px solid #527586; border-radius:8px; padding:12px; font-size:13px; line-height:1.5; }
+ .phone-invoice-builder .phone-wide .ui-icon { width:18px; height:18px; vertical-align:middle; margin-right:7px; }
+ .phone-template-choices { flex-wrap:wrap; justify-content:center; overflow:visible; }
+ .phone-complete-actions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; }
+ .phone-complete-actions:not(:has(button:nth-child(3))) { grid-template-columns:repeat(2,minmax(0,1fr)); }
+ .phone-complete-actions button { min-height:48px; min-width:0; padding:8px 4px; font-size:11px; border-color:#25d6cb; }
+ .phone-white-preview .phone-paper-image { padding:0; display:flex; justify-content:center; align-items:center; touch-action:pan-y; border:0; border-radius:0; }
+ .phone-paper-image img { display:block; width:100%; height:100%; object-fit:contain; min-height:0; -webkit-user-select:none; user-select:none; }
+ .phone-preview-error { margin:0; padding:9px 12px; border:1px solid #cf8b68; border-radius:7px; font-size:12px; color:#ffcfaf; }
+ .phone-invoice-complete .phone-preview-account { font-size:26px; }
+ .phone-invoice-complete > header h1 { font-size:23px; }
+ .phone-white-preview .phone-review-zoom { touch-action:none; overflow:hidden; cursor:grab; }
+ .phone-review-zoom:active { cursor:grabbing; }
+ .phone-review-zoom img { transform-origin:center; pointer-events:none; will-change:transform; }
+ .manager-shell.phone-invoice-portal { position:fixed; inset:0; z-index:10010; height:100dvh; min-height:0; padding:0; overflow:hidden; isolation:isolate; }
+ .phone-invoice-portal .phone-invoice-preview { position:absolute; }
+ .phone-invoice-portal .phone-paper-image img { transform:translateZ(0); backface-visibility:hidden; }
+ .manager-shell.phone-account-edit-portal { position:fixed; inset:0; z-index:11000; height:100dvh; min-height:0; padding:0; overflow:hidden; background:transparent; }
+ body:has(.phone-account-edit-portal) .details-shell .phone-account-finances { visibility:hidden; }
+ .phone-account-edit-portal .invoice-details-form { margin:0; padding:0; background:transparent; border:0; box-shadow:none; }
+ .phone-account-edit-portal .invoice-details-form .booking-actions { display:grid; grid-template-columns:1fr; }
+ .phone-account-edit-portal .invoice-details-form .booking-actions button { justify-content:center; min-height:48px; }
+}
+.history-sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+.invoice-history-swipe { position:relative; overflow:hidden; border-radius:8px; touch-action:pan-y; }
+.invoice-history-swipe .invoice-history-row { position:relative; }
+.booking-history .invoice-history-row-hit, .booking-history .invoice-history-row-hit:is(:hover,:active,:focus-visible) { position:absolute; z-index:1; inset:0; width:100%; height:100%; min-height:0; margin:0; padding:0; border:0; border-radius:8px; background:transparent !important; box-shadow:none !important; }
+.invoice-history-row :is(.invoice-history-open,.invoice-history-amount,.is-cancelled) { pointer-events:none; }
+.invoice-history-row:has(.invoice-history-row-hit:is(:hover,:focus-visible)) { border-color:#25d6cb; }
+.invoice-history-row-hit:focus-visible { outline:2px solid #25d6cb; outline-offset:-3px; }
+.invoice-history-row [data-history-control] { position:relative; z-index:2; }
+.booking-history .invoice-history-options { width:34px; height:34px; min-height:34px; padding:0; justify-content:center; align-items:center; border-color:#527586; font-size:23px; }
+.booking-history .invoice-history-swipe-action, .booking-history .invoice-history-swipe-action:is(:hover,:active,:focus-visible) { position:absolute; z-index:3; inset:0 0 0 auto; width:50%; height:100%; padding:12px; border:1px solid #e89b94; border-radius:0 8px 8px 0; display:flex; flex-direction:column; justify-content:center; align-items:center; gap:5px; background:#a7333e !important; color:#fff !important; transform:translateX(100%); visibility:hidden; pointer-events:none; transition:transform 160ms ease,visibility 160ms; }
+.invoice-history-swipe-action > span { font-size:32px; line-height:1; }
+.invoice-history-swipe-action strong { font-size:13px; }
+.booking-history .is-revealed > .invoice-history-swipe-action { transform:translateX(0); visibility:visible; pointer-events:auto; }
+.is-revealed .invoice-history-row [data-history-control] { visibility:hidden; }
+@media(prefers-reduced-motion:reduce) { .booking-history .invoice-history-swipe-action { transition:none; } }
