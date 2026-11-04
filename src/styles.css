@@ -4305,3 +4305,10 @@ button:focus-visible { outline:2px solid #3ce1d7; outline-offset:2px; }
  .phone-notifications-portal .phone-dialog > p { font-size:14px; line-height:1.6; }
 }
 @media screen { .manager-shell.sub-phone-portrait .phone-bottom-nav button { font-size:clamp(9px,2.5vw,11px); padding-inline:2px; } }
+
+/* Keep History cards navy after touch dialogs close; retain keyboard focus rings. */
+@media screen {
+ .manager-shell.sub-phone-portrait .phone-history-menu .welcome-actions > button { -webkit-tap-highlight-color:transparent; background:#1e3b50; }
+ .manager-shell.sub-phone-portrait .phone-history-menu .welcome-actions > button:is(:hover,:active,:focus) { background:#1e3b50; }
+ .manager-shell.sub-phone-portrait .phone-history-menu .welcome-actions > button:is(:hover,:active) { color:#25d6cb; border-color:#25d6cb; }
+}
