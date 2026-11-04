@@ -3566,7 +3566,7 @@ body:has(.manager-fullscreen-drawing) { overflow:hidden; }
 @media(prefers-reduced-motion:reduce) { .manager-shell .about-me-incomplete { animation:none; outline:2px solid #3ce1d7; outline-offset:2px; } }
 @media(max-width:650px) { .invoice-history-row { grid-template-columns:minmax(0,1fr) auto 34px; gap:10px; } .booking-history .invoice-history-open { grid-column:1/-1; } .invoice-history-amount { font-size:18px; } }
 /* Shared hover treatment: the active page keeps its existing selected styling. */
-button:not(:disabled):not([aria-pressed="true"]):not([aria-selected="true"]):not(.active):not(.is-active):not(.selected):not(.welcome-actions button):not(.invoice-payment-dialog .booking-primary):not(.payment-date-choices button):is(:hover,:active) {
+button:not(:disabled):not([aria-pressed="true"]):not([aria-selected="true"]):not(.active):not(.is-active):not(.selected):not(.welcome-actions button):not(.invoice-payment-dialog .booking-primary):not(.payment-date-choices button):not(.phone-install-info.is-standalone):not(.subcontractor-account-button[aria-current="page"]):is(:hover,:active) {
  background-color:transparent !important; color:#3ce1d7 !important; border-color:#3ce1d7 !important; box-shadow:0 0 0 1px #3ce1d733,0 0 12px #25d6cb30;
 }
 button:focus-visible { outline:2px solid #3ce1d7; outline-offset:2px; }
@@ -4286,3 +4286,22 @@ button:focus-visible { outline:2px solid #3ce1d7; outline-offset:2px; }
 .invoice-payment-dialog input[type="date"]::-webkit-datetime-edit-text {
  color:#fff !important; -webkit-text-fill-color:#fff !important; background:transparent !important;
 }
+
+/* Phone navigation and Home Screen spacing. */
+@media screen {
+ .sub-phone-portrait > .phone-bottom-nav { grid-template-columns:repeat(5,minmax(0,1fr)); }
+ .manager-shell.sub-phone-portrait .phone-bottom-nav button { display:grid; grid-template-rows:24px 14px; gap:4px; justify-items:center; align-content:center; }
+ .sub-phone-portrait .phone-bottom-nav button > svg { grid-row:1; }
+ .sub-phone-portrait .phone-bottom-nav button > span { grid-row:2; }
+ .manager-shell.sub-phone-portrait.sub-phone-standalone { padding-bottom:calc(80px + max(24px,env(safe-area-inset-bottom,0px))); }
+ .sub-phone-standalone > .phone-bottom-nav { padding-bottom:calc(7px + max(24px,env(safe-area-inset-bottom,0px))); }
+ .manager-shell.sub-phone-portrait .phone-brand-row > .phone-install-info { justify-self:end; }
+ .manager-shell.sub-phone-portrait .phone-brand-row > .phone-install-info.is-standalone { animation:none; color:#fff !important; box-shadow:none; }
+ .manager-shell.sub-phone-portrait .subcontractor-account-button[aria-current="page"] { animation:none; color:#25d6cb; }
+ .manager-shell.phone-notifications-portal { position:fixed; inset:0; z-index:11000; height:100dvh; min-height:0; padding:0; overflow:hidden; background:transparent; }
+ .phone-notifications-portal .phone-dialog { position:relative; padding-top:24px; }
+ .phone-notifications-portal .phone-dialog > h2 { padding-right:36px; }
+ .manager-shell.phone-notifications-portal .phone-notifications-close { position:absolute; top:12px; right:12px; width:44px; height:44px; padding:0; background:transparent; border:0; color:#f58e83; font-size:28px; }
+ .phone-notifications-portal .phone-dialog > p { font-size:14px; line-height:1.6; }
+}
+@media screen { .manager-shell.sub-phone-portrait .phone-bottom-nav button { font-size:clamp(9px,2.5vw,11px); padding-inline:2px; } }
